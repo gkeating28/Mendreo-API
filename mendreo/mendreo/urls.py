@@ -15,7 +15,16 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.urls import path, include
+from django.http import JsonResponse
+
+def home(_request):
+    return JsonResponse({
+        "service": "mendreo-api",
+        "status": "ok",
+        "docs": "DRF endpoints live under /sessions, /consumers, etc.",
+    })
 
 urlpatterns = [
+    path("", home, name="home"),
     path("", include('api.urls')),
 ]
