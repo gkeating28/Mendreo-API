@@ -34,7 +34,7 @@ SECRET_KEY = os.environ.get('GENERAL_SECRET_KEY', 'dev-insecure-secret-change-me
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = [os.environ.get('GENERAL_HOST_DOMAIN', '*'), '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + ['127.0.0.1', 'localhost']
 
 APPEND_SLASH = False
 

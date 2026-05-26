@@ -16,8 +16,9 @@ DATABASE_NAME = "mendreo"
 DATABASE_USER = "romendreo"
 DATABASE_PASSWORD = "m7fUiD0hJwnU"
 GENERAL_DEBUG = "False"
-GENERAL_HOST_DOMAIN = "*"
+GENERAL_HOST_DOMAIN = ".replit.app,.replit.dev"
 BROKER_URL = "rediss://default:gQAAAAAAAYUEAAIgcDFkNzJiMjY2NTJhZDk0YmNhOGNlNmJhYjY1ZjY2YmNlZA@sunny-sawfly-99588.upstash.io:6379"
+GENERAL_SECRET_KEY = "DCqk2VAwwP9KKWniSsnESeDus_LSVbJZHnL3XrPu6F_4cFl_EhRzJWLVKScPxoSggYUpWDKbLbTAGn3Nn2fjEg"
 
 [workflows]
 runButton = "Project"
