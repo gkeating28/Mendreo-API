@@ -1,4 +1,4 @@
-modules = ["python-3.13"]
+modules = ["python-3.13", "postgresql-16"]
 [nix]
 channel = "stable-25_05"
 packages = ["cacert", "cargo", "freetype", "gitFull", "glibcLocales", "grpc", "lcms2", "libffi", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "openssl", "pgadmin4", "pkg-config", "postgresql", "rustc", "tcl", "tk", "xcodebuild", "zlib"]
