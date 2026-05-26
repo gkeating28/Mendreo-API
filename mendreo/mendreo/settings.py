@@ -29,12 +29,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['GENERAL_SECRET_KEY']
+SECRET_KEY = os.environ.get('GENERAL_SECRET_KEY', 'dev-insecure-secret-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ['GENERAL_DEBUG'] == 'True'
+DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = [os.environ['GENERAL_HOST_DOMAIN'], '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = [os.environ.get('GENERAL_HOST_DOMAIN', '*'), '127.0.0.1', 'localhost']
 
 APPEND_SLASH = False
 
@@ -96,12 +96,12 @@ WSGI_APPLICATION = 'mendreo.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 default_db = {
-    'ENGINE': os.environ['DATABASE_ENGINE'],
-    'NAME': os.environ['DATABASE_NAME'],
-    'USER': os.environ['DATABASE_USER'],
-    'PASSWORD': os.environ['DATABASE_PASSWORD'],
-    'HOST': os.environ['DATABASE_HOST'],
-    'PORT': os.environ['DATABASE_PORT'],
+    'ENGINE': os.environ.get('DATABASE_ENGINE', 'django.db.backends.postgresql'),
+    'NAME': os.environ.get('DATABASE_NAME', 'postgres'),
+    'USER': os.environ.get('DATABASE_USER', 'postgres'),
+    'PASSWORD': os.environ.get('DATABASE_PASSWORD', ''),
+    'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
+    'PORT': os.environ.get('DATABASE_PORT', '5432'),
 }
 
 default_db["TEST"] = {
@@ -181,7 +181,7 @@ REST_FRAMEWORK = {
 }
 
 # Celery - controls the background/async tasks used
-CELERY_BROKER_URL = os.environ['BROKER_URL']
+CELERY_BROKER_URL = os.environ.get('BROKER_URL', 'memory://')
 # celery - makes tasks synchronous for tests/local when DEBUG is true
 CELERY_TASK_ALWAYS_EAGER = DEBUG
 
@@ -191,7 +191,7 @@ INTERNAL_IPS = ['127.0.0.1']
 ADMINS = [("keith", "keith@mosaic.ie")]
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_HOST_USER = "apikey"
-EMAIL_HOST_PASSWORD = os.environ['SENDGRID_API_KEY']
+EMAIL_HOST_PASSWORD = os.environ.get('SENDGRID_API_KEY', '')
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 SERVER_EMAIL = "notifications@mendreo.com"
@@ -199,17 +199,17 @@ SERVER_EMAIL = "notifications@mendreo.com"
 # used by XMLTestRunner, name is as expected in github yaml
 TEST_OUTPUT_FILE_NAME = "test-results.xml"
 
-SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ['GOOGLE_OAUTH2_KEY']
-SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ['GOOGLE_OAUTH2_SECRET']
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get('GOOGLE_OAUTH2_KEY', '')
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('GOOGLE_OAUTH2_SECRET', '')
 
-SOCIAL_AUTH_APPLE_TEAM_ID = os.environ["APPLE_TEAM_ID"]
-SOCIAL_AUTH_APPLE_CLIENT_ID = os.environ["APPLE_CLIENT_ID"]
-SOCIAL_AUTH_APPLE_REDIRECT_URI = os.environ["APPLE_REDIRECT_URI"]
-SOCIAL_AUTH_APPLE_KEY_ID = os.environ["APPLE_KEY_ID"]
-SOCIAL_AUTH_APPLE_KEY_SECRET = os.environ["APPLE_KEY_SECRET"]
+SOCIAL_AUTH_APPLE_TEAM_ID = os.environ.get("APPLE_TEAM_ID", '')
+SOCIAL_AUTH_APPLE_CLIENT_ID = os.environ.get("APPLE_CLIENT_ID", '')
+SOCIAL_AUTH_APPLE_REDIRECT_URI = os.environ.get("APPLE_REDIRECT_URI", '')
+SOCIAL_AUTH_APPLE_KEY_ID = os.environ.get("APPLE_KEY_ID", '')
+SOCIAL_AUTH_APPLE_KEY_SECRET = os.environ.get("APPLE_KEY_SECRET", '')
 
-SOCIAL_AUTH_FACEBOOK_KEY = os.environ['FACEBOOK_CLIENT_ID']
-SOCIAL_AUTH_FACEBOOK_SECRET = os.environ['FACEBOOK_CLIENT_SECRET_KEY']
+SOCIAL_AUTH_FACEBOOK_KEY = os.environ.get('FACEBOOK_CLIENT_ID', '')
+SOCIAL_AUTH_FACEBOOK_SECRET = os.environ.get('FACEBOOK_CLIENT_SECRET_KEY', '')
 SOCIAL_AUTH_USER_FIELDS = ['email', 'username']
 SOCIAL_AUTH_FACEBOOK_SCOPE = ['email', ]
 SOCIAL_AUTH_FACEBOOK_PROFILE_EXTRA_PARAMS = {'fields': 'id, name, email'}
