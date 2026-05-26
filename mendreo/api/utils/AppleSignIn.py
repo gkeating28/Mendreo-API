@@ -88,4 +88,4 @@ class AppleOAuth2(BaseOAuth2):
 
 class AppleWebOAuth2(AppleOAuth2):
     name = 'apple-web'
-    APPLE_CLIENT_ID = os.environ["APPLE_SERVICES_ID"]
+    APPLE_CLIENT_ID = os.environ.get("APPLE_SERVICES_ID", "")

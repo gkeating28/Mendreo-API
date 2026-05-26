@@ -88,6 +88,6 @@ def _send_email(mail):
     try:
         SendGrid.send(mail)
     except Exception as e:
-        if not os.environ["GENERA_DEBUG"] == "True":
+        if not os.environ.get("GENERAL_DEBUG", "False") == "True":
             print(f"error while sending email with content: {mail.content}", e)
         raise APIException(Message.create(e))

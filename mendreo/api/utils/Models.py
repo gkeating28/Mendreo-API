@@ -36,7 +36,7 @@ class SoftDeletionManager(models.Manager):
             kwargs.pop("defaults", None)
             first = super(SoftDeletionManager, self).filter(**kwargs).first()
 
-            if not os.environ["GENERAL_DEBUG"] == "True":
+            if not os.environ.get("GENERAL_DEBUG", "False") == "True":
                 warning = f"Warning: {self} get_or_create returned multiple objects matching: {kwargs}, " \
                           f"with error: {e}, will fallback to first match: {first}"
 

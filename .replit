@@ -5,3 +5,48 @@ packages = ["cacert", "cargo", "freetype", "gitFull", "glibcLocales", "grpc", "l
 
 [agent]
 expertMode = true
+
+[userenv]
+
+[userenv.shared]
+DATABASE_ENGINE = "django.db.backends.postgresql"
+DATABASE_HOST = "staging.clm6cs2ok8j7.eu-west-1.rds.amazonaws.com"
+DATABASE_PORT = "5432"
+DATABASE_NAME = "mendreo"
+DATABASE_USER = "romendreo"
+DATABASE_PASSWORD = "m7fUiD0hJwnU"
+GENERAL_DEBUG = "False"
+GENERAL_HOST_DOMAIN = "*"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd mendreo && ../.venv/bin/gunicorn mendreo.wsgi --bind 0.0.0.0:5000 --log-file - --error-logfile - --access-logfile -"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["bash", "-c", "cd mendreo && gunicorn mendreo.wsgi --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile -"]
+build = ["bash", "-c", "pip install -r requirements.txt && cd mendreo && python manage.py migrate --noinput && python manage.py collectstatic --noinput || true"]
