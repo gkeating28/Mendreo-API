@@ -50,5 +50,5 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "cd mendreo && gunicorn mendreo.wsgi --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile -"]
+run = ["bash", "-c", "cd mendreo && python -m gunicorn mendreo.wsgi --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile -"]
 build = ["bash", "-c", "pip install -r requirements.txt && cd mendreo && python manage.py migrate --noinput && python manage.py collectstatic --noinput || true"]
