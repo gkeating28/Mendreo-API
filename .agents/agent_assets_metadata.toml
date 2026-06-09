@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "yEdR1m-h2o2TV5JRYrh3j"
+uri = "file://docs/API.md"
+type = "text"
+title = "Mendreo API Reference"
