@@ -22,11 +22,14 @@ dev DB was only used as an intermediate restore target and still holds the prod
 copy — including PostGIS objects that rode along from prod RDS. The publish diff
 tries to recreate that PostGIS view in the Replit prod DB and fails.
 
-**Fix / how to apply:** if the app does not use the Replit-managed DB, remove it
-so Publish stops running any DB migration. There is no agent tool to delete a
-Replit DB (skill only exposes checkDatabase/createDatabase/executeSql) — the user
-deletes it in the Database pane. Data is safe: backed up in `backups/*.dump` and
-seeded into Supabase. Interim stopgap (less clean): drop the PostGIS objects from
-the Replit *dev* DB via executeSql(development) so the diff no longer emits the
-failing CREATE VIEW — but this still diffs the remaining tables to the unused
-Replit prod DB on every publish.
+**Fix / how to apply:** if the app does not use the Replit-managed DB, make the
+publish diff a no-op. There is no agent tool to delete a Replit DB (skill only
+exposes checkDatabase/createDatabase/executeSql) and the Database pane often shows
+NO delete option. What worked: empty the Replit *dev* DB via
+executeSql(development) with `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`
+(+ re-grant to current_user and PUBLIC). When the Replit *prod* DB is already
+empty (verify with executeSql environment:"production"), the diff becomes
+empty→empty = clean no-op with zero destructive prod ops. Data is safe: backed up
+in `backups/*.dump` and seeded into Supabase; nothing in the app touches this DB.
+**Why:** publish only runs a DB migration because a Replit DB is provisioned;
+emptying it (can't delete it) neutralizes the diff.
