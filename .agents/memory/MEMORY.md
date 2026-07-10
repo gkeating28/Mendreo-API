@@ -1,1 +1,2 @@
 - [Supabase on Replit](supabase-on-replit.md) — Replit has no IPv6; use Supabase Session pooler host (pooler.supabase.com), never the direct db.<ref>.supabase.co endpoint.
+- [Publish-time DB migration](publish-time-db-migration.md) — Publish diffs the Replit-managed DB dev→prod whenever it's provisioned, even if the app uses Supabase; remove the vestigial Replit DB to stop it (e.g. PostGIS geography_columns failure).
