@@ -7,4 +7,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 source "$ROOT/set_db_env.sh"
 
 cd "$ROOT/mendreo"
-exec "$ROOT/.venv/bin/gunicorn" mendreo.wsgi --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile -
+
+# --preload imports the (heavy) app once in the master before forking workers,
+# so cold start is faster/leaner and the autoscale startup probe gets a 200 sooner.
+# Generous timeouts keep workers from being killed during the ~13s import.
+exec "$ROOT/.venv/bin/python" -m gunicorn mendreo.wsgi \
+  --bind 0.0.0.0:5000 \
+  --workers 2 \
+  --preload \
+  --timeout 120 \
+  --graceful-timeout 120 \
+  --access-logfile - \
+  --error-logfile -
