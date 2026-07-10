@@ -1,0 +1,1 @@
+- [Supabase on Replit](supabase-on-replit.md) — Replit has no IPv6; use Supabase Session pooler host (pooler.supabase.com), never the direct db.<ref>.supabase.co endpoint.

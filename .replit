@@ -41,7 +41,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd mendreo && DATABASE_HOST=$PGHOST DATABASE_PORT=$PGPORT DATABASE_USER=$PGUSER DATABASE_PASSWORD=$PGPASSWORD DATABASE_NAME=$PGDATABASE ../.venv/bin/gunicorn mendreo.wsgi --bind 0.0.0.0:5000 --workers 2 --access-logfile - --error-logfile -"
+args = "bash run_dev.sh"
 waitForPort = 5000
 
 [[ports]]
