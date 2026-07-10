@@ -2,6 +2,8 @@
 
 Base URL: your dev URL (Replit `.replit.dev`) in development, or your `.replit.app` domain in production. All paths below are relative.
 
+> For a deep dive into the models behind each endpoint and exactly how each one reads from and writes to the database (including the shared `Smart*` view machinery, soft-deletes, transactions, PII obscuring, and the session/message/LLM/upload/subscription flows), see [`API_DATABASE_DEEP_DIVE.md`](./API_DATABASE_DEEP_DIVE.md).
+
 ## Conventions (from the `Smart*` base views)
 
 - **Auth**: Most endpoints require a JWT bearer token. Permission classes distinguish Admin vs Consumer access.
