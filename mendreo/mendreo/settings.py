@@ -183,8 +183,13 @@ REST_FRAMEWORK = {
 
 # Celery - controls the background/async tasks used
 CELERY_BROKER_URL = os.environ.get('BROKER_URL', 'memory://')
-# celery - makes tasks synchronous for tests/local when DEBUG is true
-CELERY_TASK_ALWAYS_EAGER = DEBUG
+# celery - makes tasks synchronous for tests/local when DEBUG is true.
+# On Replit there is no Celery worker/broker, so CELERY_TASK_ALWAYS_EAGER=True
+# is set in the environment to run tasks inline in the web process.
+CELERY_TASK_ALWAYS_EAGER = (
+    DEBUG
+    or os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1')
+)
 
 # django debug toolbar
 INTERNAL_IPS = ['127.0.0.1']
