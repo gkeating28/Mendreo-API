@@ -25,9 +25,15 @@ app.autodiscover_tasks()
 
 class TransactionAwareTask(Task):
     def delay_on_commit(self, *args, **kwargs):
-        return transaction.on_commit(
-            lambda: self.delay(*args, **kwargs)
-        )
+        def _safe_delay():
+            # A failure to dispatch a background task (e.g. email) must never
+            # crash the request that triggered it - log loudly instead.
+            try:
+                self.delay(*args, **kwargs)
+            except Exception:
+                logger.exception(f"Failed to dispatch task '{self.name}'")
+
+        return transaction.on_commit(_safe_delay)
 
 
 class PeriodicTask(Task):
