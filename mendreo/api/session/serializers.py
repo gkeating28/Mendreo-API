@@ -27,7 +27,9 @@ class SessionListSerializer(ListModelSerializer):
             "exercise",
             "consumer__user",
             "last_message__sender__consumer__user",
-            "last_message__sender__agent"
+            "last_message__sender__agent",
+            "last_message__sender__agent__avatar",
+            "last_message__asset__image",
         ]
 
     def get_exercise(self, session):

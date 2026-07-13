@@ -33,6 +33,10 @@ class List(SmartPaginationAPIView):
     role_permission = True  
 
     def add_filters(self, queryset, request):
+        # Nested ExerciseListSerializer renders steps/questions per session;
+        # prefetch to avoid N+1 round-trips to the remote database.
+        queryset = queryset.prefetch_related("exercise__steps", "exercise__questions")
+
         exercise_id = QueryParams.get_str(request, "exercise_id")
         consumer_id = QueryParams.get_str(request, "consumer_id")
         risk_level = QueryParams.get_str(request, "risk_level")
