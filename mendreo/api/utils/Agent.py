@@ -13,7 +13,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google import GoogleProvider
 
 from .AI import AI
@@ -214,14 +214,25 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     schema = ExerciseResponse if session.exercise else GeneralResponse
 
+    model_name = consumer.agent.model
+
+    # Minimize latency: disable/limit "thinking". Gemini 3.x models support
+    # thinking_level (they think by default, adding 10s+ per reply); 2.x models
+    # reject thinking_level and require thinking_budget instead.
+    if model_name.startswith(("gemini-3", "gemini-4")):
+        thinking_config = {"thinking_level": "minimal"}
+    else:
+        thinking_config = {"thinking_budget": 0, "include_thoughts": False}
+
     agent: Agent[Dependencies, BaseModel] = Agent(
         GoogleModel(
-            model_name=consumer.agent.model,
+            model_name=model_name,
             provider=GoogleProvider(api_key=Api.GOOGLE_API_KEY),
         ),
         deps_type=Dependencies,
         output_type=schema,
         system_prompt=prompt,
+        model_settings=GoogleModelSettings(google_thinking_config=thinking_config),
     )
 
     dependencies = Dependencies(

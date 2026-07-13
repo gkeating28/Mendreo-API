@@ -1,3 +1,4 @@
 - [Supabase on Replit](supabase-on-replit.md) — Replit has no IPv6; use Supabase Session pooler host (pooler.supabase.com), never the direct db.<ref>.supabase.co endpoint.
 - [Publish-time DB migration](publish-time-db-migration.md) — Publish diffs the Replit-managed DB dev→prod whenever it's provisioned, even if the app uses Supabase; remove the vestigial Replit DB to stop it (e.g. PostGIS geography_columns failure).
 - [Celery on Replit](celery-on-replit.md) — no broker/worker on Replit; tasks run eager (env flag), dispatch failures are non-fatal; periodic tasks still do not run.
+- [Gemini model choice](gemini-models-mendreo.md) — chat model is a DB row; 3.x models benchmarked slower than 2.5-flash on structured output; thinking_level vs thinking_budget rules.
