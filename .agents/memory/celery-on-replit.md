@@ -30,3 +30,14 @@ that message.
   default). Needed for verification-code and password-reset emails.
 - Stale `BROKER_URL` still sits in `.replit [userenv.shared]`; harmless in eager
   mode but should be cleaned with the other plaintext creds there.
+
+## Heroku config vars still missing on Replit
+Crashes traced to Heroku config vars never copied over: `GOOGLE_API_KEY`
+(Gemini — exercise chat POST /messages and /sessions/start 500'd; fixed, user
+added it) and `SENDGRID_API_KEY` (still missing — login/reset emails silently
+fail). Others referenced in code and likely still unset: AWS_ACCESS_KEY_ID /
+AWS_SECRET_ACCESS_KEY / AWS_CLOUD_FRONT_DOMAIN (avatar URLs render as
+"https:///..." with empty host), STRIPE_SECRET_KEY, APPLE_*, GOOGLE_OAUTH2_*,
+FACEBOOK_*. When a new prod 500 appears, check for a missing env var FIRST.
+Note: Django logs "Internal Server Error: /path" without the HTTP method — a
+"GET" 500 may actually be a POST (check OPTIONS preflights nearby).
