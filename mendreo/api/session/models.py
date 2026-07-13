@@ -88,12 +88,15 @@ class Session(SmartModel):
         if exercise:
             SessionStep.create(session, exercise)
 
-            questions = exercise.questions.all()
+            from ..question.models import Question
+            from cuid import cuid
+
+            questions = list(exercise.questions.all())
             for question in questions:
-                question.id = None
+                question.id = cuid()
                 question.exercise = None
                 question.session = session
-                question.save()
+            Question.objects.bulk_create(questions)
 
         consumer_participant, _ = Participant.create_participants(session=session)
 

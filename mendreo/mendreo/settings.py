@@ -102,6 +102,10 @@ default_db = {
     'PASSWORD': os.environ.get('DATABASE_PASSWORD', ''),
     'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
     'PORT': os.environ.get('DATABASE_PORT', '5432'),
+    # Reuse DB connections across requests: the Supabase pooler is in another
+    # region, so a fresh TLS connection costs ~0.6s per request without this.
+    'CONN_MAX_AGE': int(os.environ.get('DATABASE_CONN_MAX_AGE', '300')),
+    'CONN_HEALTH_CHECKS': True,
 }
 
 default_db["TEST"] = {

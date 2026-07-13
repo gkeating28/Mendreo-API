@@ -40,6 +40,10 @@ class ListCreate(SmartPaginationAPIView):
     role_permission = True
 
     def add_filters(self, query, request):
+        # Serializers render nested steps/questions; prefetch to avoid N+1
+        # (each extra query costs a full round-trip to the remote database).
+        query = query.prefetch_related("steps", "questions")
+
         status_ = QueryParams.get_str(request, "status")
         search_term = QueryParams.get_str(request, "search_term")
 

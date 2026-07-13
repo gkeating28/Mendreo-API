@@ -31,3 +31,11 @@ system table Supabase owns and pre-populates).
 programmatically (deleteEnvVars only touches env vars, not global secrets). If a secret holds
 a wrong value, the user must edit/delete it in the Secrets tab UI — the requestEnvVar prompt
 won't overwrite an existing key.
+
+## Cross-region latency (measured Jul 2026)
+Replit deployment ↔ Supabase eu-west-1 pooler: ~0.6s per new TLS connection,
+~0.2s per query round-trip. Mitigations applied: CONN_MAX_AGE=300 +
+CONN_HEALTH_CHECKS in Django settings, prefetch/bulk_create to cut query
+counts. Replit publish geography is PERMANENT after first publish — place the
+future prod Supabase project near the deployment region (or accept latency for
+EU residency). Baseline per-request floor remains a few queries × 0.2s.
