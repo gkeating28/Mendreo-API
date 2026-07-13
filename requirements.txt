@@ -27,7 +27,7 @@ cryptography==45.0.5
 cuid==0.4
 defusedxml==0.7.1
 distro==1.9.0
-Django==5.2.4
+Django==5.2.16
 django-charid-field==0.5
 django-cors-headers==4.7.0
 django-debug-toolbar==5.2.0
@@ -45,7 +45,7 @@ fsspec==2025.9.0
 genai-prices==0.0.28
 google-api-core==2.25.1
 google-api-python-client==2.176.0
-google-auth==2.40.3
+google-auth==2.55.2
 google-auth-httplib2==0.2.0
 google-genai==1.75.0
 googleapis-common-protos==1.70.0
