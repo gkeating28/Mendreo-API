@@ -19,7 +19,8 @@ class SessionListSerializer(ListModelSerializer):
     
     class Meta:
         model = Session
-        fields = '__all__'
+        # Internal AI state — large blobs (100s of KB) that must never go to clients.
+        exclude = ["cached_prompt", "cached_history"]
     
     @classmethod
     def get_select_related_fields(cls):
@@ -63,7 +64,7 @@ class SessionDetailSerializer(SessionListSerializer):
     steps = SessionStepListSerializer(source="session_steps", many=True, order_by="order")
 
     class Meta(SessionListSerializer.Meta):
-        fields = '__all__'
+        pass
 
     def get_exercise(self, session):
         from ..question.serializers import Question, QuestionExerciseDetailSerializer

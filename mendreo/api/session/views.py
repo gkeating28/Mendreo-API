@@ -37,6 +37,10 @@ class List(SmartPaginationAPIView):
         # prefetch to avoid N+1 round-trips to the remote database.
         queryset = queryset.prefetch_related("exercise__steps", "exercise__questions")
 
+        # Internal AI-state blobs (100s of KB per session) — never serialized
+        # for lists, so skip pulling them from the remote database entirely.
+        queryset = queryset.defer("cached_prompt", "cached_history")
+
         exercise_id = QueryParams.get_str(request, "exercise_id")
         consumer_id = QueryParams.get_str(request, "consumer_id")
         risk_level = QueryParams.get_str(request, "risk_level")
