@@ -55,6 +55,7 @@ env/*
 
 ve/*
 venv/*
+.venv/*
 */__pycache__/*
 
 .coverage
