@@ -1,15 +1,20 @@
 """
 WSGI config for mendreo project.
 
-Vercel imports this file as mendreo.mendreo.wsgi, which breaks mendreo.settings
-resolution. Delegate to the repo-root wsgi shim instead.
+It exposes the WSGI callable as a module-level variable named ``application``.
 """
+
+import os
 import sys
 from pathlib import Path
 
-_repo_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_repo_root))
+# Ensure Django apps (api/, etc.) and settings shims resolve on serverless.
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root))
 
-from wsgi import app, application  # noqa: F401
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 
-__all__ = ("application", "app")
+from django.core.wsgi import get_wsgi_application
+
+application = get_wsgi_application()
+app = application
