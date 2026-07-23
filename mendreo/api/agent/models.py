@@ -27,7 +27,7 @@ class Agent(SmartModel):
 
     default = models.BooleanField(default=False)
 
-    description = models.CharField()
+    description = models.CharField(max_length=255)
 
     model = models.CharField(max_length=255, default="gemini-2.5-flash")
 

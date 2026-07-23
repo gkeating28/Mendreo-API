@@ -20,7 +20,7 @@ class Step(SmartModel):
     instructions = models.TextField()
 
     completion_criteria = models.TextField()
-    completion_label = models.CharField()
+    completion_label = models.CharField(max_length=255)
     completion_prompt = models.TextField()
 
     order = models.PositiveIntegerField(default=0)
