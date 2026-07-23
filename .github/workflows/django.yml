@@ -83,7 +83,7 @@ jobs:
 
       - name: Set PYTHONPATH
         run: |
-          echo "PYTHONPATH=$PYTHONPATH:$(pwd)" >> $GITHUB_ENV
+          echo "PYTHONPATH=$(pwd)/backend" >> $GITHUB_ENV
 
       - name: Set Environment Variables
         run: |
@@ -128,6 +128,19 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
       - name: Print Dynamic Multiline Variable
         run: echo "$APPLE_KEY_SECRET"
+
+      - name: Apply CI fallbacks for empty secrets
+        run: |
+          [ -n "$DATABASE_ENGINE" ] || echo "DATABASE_ENGINE=django.db.backends.postgresql" >> $GITHUB_ENV
+          [ -n "$DATABASE_NAME" ] || echo "DATABASE_NAME=mendreo" >> $GITHUB_ENV
+          [ -n "$DATABASE_USER" ] || echo "DATABASE_USER=postgres" >> $GITHUB_ENV
+          [ -n "$DATABASE_PASSWORD" ] || echo "DATABASE_PASSWORD=1234" >> $GITHUB_ENV
+          [ -n "$DATABASE_HOST" ] || echo "DATABASE_HOST=localhost" >> $GITHUB_ENV
+          [ -n "$DATABASE_PORT" ] || echo "DATABASE_PORT=5432" >> $GITHUB_ENV
+          [ -n "$GENERAL_SECRET_KEY" ] || echo "GENERAL_SECRET_KEY=ci-test-secret-key" >> $GITHUB_ENV
+          [ -n "$GENERAL_DEBUG" ] || echo "GENERAL_DEBUG=True" >> $GITHUB_ENV
+          [ -n "$BROKER_URL" ] || echo "BROKER_URL=memory://" >> $GITHUB_ENV
+
       - name: Run Migrations
         run: |
           source venv/bin/activate
