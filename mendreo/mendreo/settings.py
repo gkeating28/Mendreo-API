@@ -76,7 +76,6 @@ INSTALLED_APPS = [
     'social_django',
     'rest_social_auth',
     'api',
-    'celery',
 ]
 
 if DEBUG:

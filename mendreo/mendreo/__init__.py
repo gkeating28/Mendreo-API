@@ -1,7 +1,15 @@
 from __future__ import absolute_import, unicode_literals
 
-# This will make sure the app is always imported when
-# Django starts so that shared_task will use this app.
-from .celerySettings import app as celery_app
+import os
 
-__all__ = ('celery_app',)
+# Defer Celery import on Vercel to reduce cold-start memory and import time.
+if os.environ.get("DEPLOYMENT_TARGET") == "vercel":
+    def __getattr__(name):
+        if name == "celery_app":
+            from .celerySettings import app as celery_app
+            return celery_app
+        raise AttributeError(name)
+else:
+    from .celerySettings import app as celery_app
+
+    __all__ = ('celery_app',)
