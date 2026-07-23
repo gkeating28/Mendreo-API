@@ -1,2 +1,0 @@
-[tool.vercel.scripts]
-build = "cd mendreo && python manage.py migrate --noinput && python manage.py collectstatic --noinput"
