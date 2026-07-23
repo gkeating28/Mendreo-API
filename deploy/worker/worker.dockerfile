@@ -13,7 +13,7 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY mendreo ./mendreo
+COPY backend ./backend
 COPY set_db_env.sh ./set_db_env.sh
 COPY deploy/worker/start.sh ./start.sh
 

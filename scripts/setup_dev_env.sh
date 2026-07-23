@@ -31,7 +31,7 @@ if [ ! -x "$ROOT/.venv/bin/python" ]; then
 fi
 
 echo "Running migrations..."
-cd "$ROOT/mendreo"
+cd "$ROOT/backend"
 "$ROOT/.venv/bin/python" manage.py migrate --noinput
 
 echo "Collecting static files..."

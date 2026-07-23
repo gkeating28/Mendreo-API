@@ -66,15 +66,15 @@ Health check: `curl http://127.0.0.1:5000/` → `{"service":"mendreo-api","statu
 | Command | Description |
 |---|---|
 | `bash run_dev.sh` | Gunicorn web server on `:5000` |
-| `cd mendreo && ../.venv/bin/python manage.py migrate` | Apply DB migrations |
-| `cd mendreo && ../.venv/bin/celery -A mendreo worker` | Celery worker (needs Redis) |
-| `cd mendreo && ../.venv/bin/celery -A mendreo beat` | Celery scheduler |
+| `cd backend && ../.venv/bin/python manage.py migrate` | Apply DB migrations |
+| `cd backend && ../.venv/bin/celery -A mendreo worker` | Celery worker (needs Redis) |
+| `cd backend && ../.venv/bin/celery -A mendreo beat` | Celery scheduler |
 
 ## Tests
 
 ```bash
 source .env.local
-cd mendreo
+cd backend
 ../.venv/bin/python manage.py test api.tests
 ```
 

@@ -14,7 +14,7 @@ fi
 # then launch gunicorn. Used by both the dev workflow and the deployment run step.
 source "$ROOT/set_db_env.sh"
 
-cd "$ROOT/mendreo"
+cd "$ROOT/backend"
 
 # --preload imports the (heavy) app once in the master before forking workers,
 # so cold start is faster/leaner and the autoscale startup probe gets a 200 sooner.

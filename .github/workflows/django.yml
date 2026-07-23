@@ -131,13 +131,13 @@ jobs:
       - name: Run Migrations
         run: |
           source venv/bin/activate
-          cd mendreo
+          cd backend
           python manage.py migrate
 
       - name: Run Tests and Generate Report
         run: |
           source venv/bin/activate
-          cd mendreo
+          cd backend
           coverage run --source='.' manage.py test api.tests --testrunner=xmlrunner.extra.djangotestrunner.XMLTestRunner
           coverage combine
           coverage xml
@@ -147,4 +147,4 @@ jobs:
         if: always()
         with:
           files: |
-            mendreo/test-results.xml
+            backend/test-results.xml

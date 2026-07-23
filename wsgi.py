@@ -1,29 +1,12 @@
 """
-Vercel entrypoint shim.
-
-Django lives under mendreo/ (manage.py is there). Vercel may run from the repo
-root, so this file adds mendreo/ to sys.path before booting Django.
+Vercel entrypoint shim (optional fallback if Vercel uses repo-root wsgi.py).
 """
-import importlib.util
 import os
 import sys
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parent / "mendreo"
-_INNER_PKG = _PROJECT_ROOT / "mendreo"
-
-sys.path.insert(0, str(_PROJECT_ROOT))
-
-
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_load_module("mendreo.settings", _INNER_PKG / "settings.py")
+_project_root = Path(__file__).resolve().parent / "backend"
+sys.path.insert(0, str(_project_root))
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 

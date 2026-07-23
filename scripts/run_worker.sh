@@ -18,7 +18,7 @@ source "$ROOT/set_db_env.sh"
 export DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-worker}"
 export PORT="${PORT:-8000}"
 
-cd "$ROOT/mendreo"
+cd "$ROOT/backend"
 
 echo "worker: starting Gunicorn on :${PORT}"
 "$ROOT/.venv/bin/python" -m gunicorn mendreo.wsgi \

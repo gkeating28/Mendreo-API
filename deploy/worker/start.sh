@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /app/mendreo
+cd /app/backend
 
 echo "worker: running migrations"
 python manage.py migrate --noinput

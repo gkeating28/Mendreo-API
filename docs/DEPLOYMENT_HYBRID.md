@@ -150,7 +150,7 @@ STRIPE_SECRET_KEY=...
 # OAuth / survey vars as needed
 ```
 
-5. Deploy. Vercel uses `requirements-vercel.txt` (slim deps — AI runs on the worker), `vercel.json` for migrate/collectstatic/timeouts + cron, and root `wsgi.py` as the entrypoint shim.
+5. Deploy. Vercel uses `backend/mendreo/wsgi.py` as the entrypoint, `requirements-vercel.txt`, and `vercel.json` for migrate/collectstatic/timeouts + cron.
 
 ### Vercel Cron
 
@@ -231,4 +231,4 @@ bash run_dev.sh
 | Emails not sending | Confirm `BROKER_URL` and worker Celery process are running |
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
-| `FUNCTION_INVOCATION_FAILED` / `No module named 'mendreo.settings'` | Redeploy latest commit. `mendreo/mendreo/wsgi.py` preloads settings/urls by file path before Django starts (Vercel imports it as `mendreo.mendreo.wsgi`). Set `DEPLOYMENT_TARGET=vercel`. Do **not** set `PYTHONPATH=mendreo`. |
+| `FUNCTION_INVOCATION_FAILED` / `No module named 'mendreo.settings'` | Redeploy latest commit. The Django app lives under `backend/` (not repo-root `mendreo/`) to avoid Python package shadowing on Vercel. Set `DEPLOYMENT_TARGET=vercel`. Do **not** set `PYTHONPATH`. |
