@@ -7,10 +7,12 @@
   },
   "functions": {
     "wsgi.py": {
-      "maxDuration": 120
+      "maxDuration": 120,
+      "memory": 1024
     },
     "mendreo/mendreo/wsgi.py": {
-      "maxDuration": 120
+      "maxDuration": 120,
+      "memory": 1024
     }
   },
   "crons": [

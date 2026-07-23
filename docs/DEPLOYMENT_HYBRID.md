@@ -142,6 +142,7 @@ AI_WORKER_URL=https://mendreo-worker.up.railway.app
 INTERNAL_API_SECRET=<same-as-worker>
 CRON_SECRET=<random-for-vercel-cron>
 AI_WORKER_TIMEOUT=120
+VERCEL_SUPPORT_LARGE_FUNCTIONS=1
 GOOGLE_API_KEY=...
 AWS_*=...
 SENDGRID_API_KEY=...
@@ -149,7 +150,7 @@ STRIPE_SECRET_KEY=...
 # OAuth / survey vars as needed
 ```
 
-5. Deploy. Vercel uses `pyproject.toml` for build/migrate/collectstatic and `vercel.json` for timeouts + cron.
+5. Deploy. Vercel uses `requirements-vercel.txt` (slim deps — AI runs on the worker), `vercel.json` for migrate/collectstatic/timeouts + cron, and root `wsgi.py` as the entrypoint shim.
 
 ### Vercel Cron
 
@@ -230,3 +231,4 @@ bash run_dev.sh
 | Emails not sending | Confirm `BROKER_URL` and worker Celery process are running |
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
+| `FUNCTION_INVOCATION_FAILED` on deploy | Redeploy latest commit; confirm `DEPLOYMENT_TARGET=vercel` and DB/secret env vars are set. Vercel uses `requirements-vercel.txt` (no AI packages). If bundle still exceeds 500MB, set `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` on the project. Check **Runtime Logs** (not Build logs) for the actual Python traceback. |

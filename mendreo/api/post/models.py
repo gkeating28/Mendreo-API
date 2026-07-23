@@ -9,7 +9,6 @@ from ..utils.Models import SmartModel
 from ..utils.Fields import CharIDField, EnumField
 
 from ..utils import Constants
-from ..utils.AI import AI
 from ..user.models import User
 
 
@@ -52,6 +51,8 @@ class Post(SmartModel):
 
     @staticmethod
     def _generate_article(post, optional_extra: str = ""):
+        from ..utils.AI import AI
+
         article_data = AI.generate_article(optional_extra)
 
         article_image = Image.generate(
