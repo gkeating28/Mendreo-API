@@ -4,7 +4,7 @@
     "PYTHONPATH": "mendreo"
   },
   "functions": {
-    "mendreo/mendreo/wsgi.py": {
+    "wsgi.py": {
       "maxDuration": 120
     }
   },
