@@ -17,3 +17,4 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 from django.core.wsgi import get_wsgi_application
 
 application = get_wsgi_application()
+app = application  # Vercel may look for either name
