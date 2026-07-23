@@ -55,9 +55,7 @@ DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 
 DEPLOYMENT_TARGET = os.environ.get('DEPLOYMENT_TARGET', 'local')
 
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + ['127.0.0.1', 'localhost']
-if DEPLOYMENT_TARGET == 'vercel':
-    ALLOWED_HOSTS.append('.vercel.app')
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + ['127.0.0.1', 'localhost', '.vercel.app']
 
 APPEND_SLASH = False
 

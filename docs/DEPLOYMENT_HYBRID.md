@@ -231,4 +231,4 @@ bash run_dev.sh
 | Emails not sending | Confirm `BROKER_URL` and worker Celery process are running |
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
-| `FUNCTION_INVOCATION_FAILED` on deploy | Redeploy latest commit. Do **not** set `PYTHONPATH=mendreo` on Vercel (it breaks imports). Confirm `DEPLOYMENT_TARGET=vercel` and DB/secret env vars are set. Check **Runtime Logs** for tracebacks. Set `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` only if bundle size errors persist. |
+| `FUNCTION_INVOCATION_FAILED` on deploy | Redeploy latest commit. Vercel must use **root** `wsgi.py` (set via `pyproject.toml` `[tool.vercel] entrypoint`) — not `mendreo/mendreo/wsgi.py`, because the nested import path breaks `mendreo.settings`. Do **not** set `PYTHONPATH=mendreo`. Check **Runtime Logs** for tracebacks. |
