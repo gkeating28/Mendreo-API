@@ -140,6 +140,11 @@ jobs:
           [ -n "$GENERAL_SECRET_KEY" ] || echo "GENERAL_SECRET_KEY=ci-test-secret-key" >> $GITHUB_ENV
           [ -n "$GENERAL_DEBUG" ] || echo "GENERAL_DEBUG=True" >> $GITHUB_ENV
           [ -n "$BROKER_URL" ] || echo "BROKER_URL=memory://" >> $GITHUB_ENV
+          [ -n "$AWS_ACCESS_KEY_ID" ] || echo "AWS_ACCESS_KEY_ID=testing" >> $GITHUB_ENV
+          [ -n "$AWS_SECRET_ACCESS_KEY" ] || echo "AWS_SECRET_ACCESS_KEY=testing" >> $GITHUB_ENV
+          [ -n "$AWS_S3_BUCKET_NAME" ] || echo "AWS_S3_BUCKET_NAME=ci-test-bucket" >> $GITHUB_ENV
+          [ -n "$AWS_CLOUD_FRONT_DOMAIN" ] || echo "AWS_CLOUD_FRONT_DOMAIN=ci.example.com" >> $GITHUB_ENV
+          [ -n "$AWS_CLOUD_FRONT_RESIZER_DOMAIN" ] || echo "AWS_CLOUD_FRONT_RESIZER_DOMAIN=ci-resizer.example.com" >> $GITHUB_ENV
 
       - name: Run Migrations
         run: |
