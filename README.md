@@ -16,6 +16,7 @@ Optional for full feature parity:
 - **Stripe** — subscriptions
 - **Google API key** — Gemini AI chat and image generation
 - **OAuth keys** — Google, Apple, Facebook social login
+- 
 
 ## Quick start (local)
 
