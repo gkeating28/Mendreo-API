@@ -24,9 +24,8 @@ def _load_module(name: str, path: Path):
     return module
 
 
-# Register settings/urls before Django reads DJANGO_SETTINGS_MODULE.
+# Register settings before Django reads DJANGO_SETTINGS_MODULE.
 _load_module("mendreo.settings", _inner_pkg / "settings.py")
-_load_module("mendreo.urls", _inner_pkg / "urls.py")
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 

@@ -24,7 +24,6 @@ def _load_module(name: str, path: Path):
 
 
 _load_module("mendreo.settings", _INNER_PKG / "settings.py")
-_load_module("mendreo.urls", _INNER_PKG / "urls.py")
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 
