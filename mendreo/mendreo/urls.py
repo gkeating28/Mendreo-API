@@ -26,5 +26,6 @@ def home(_request):
 
 urlpatterns = [
     path("", home, name="home"),
+    path("internal/", include("api.internal.urls")),
     path("", include('api.urls')),
 ]

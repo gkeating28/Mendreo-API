@@ -10,15 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
-import atexit
 import datetime
 import os
-import ssl
 
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-
-from urllib.parse import urlparse
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -34,7 +29,11 @@ SECRET_KEY = os.environ.get('GENERAL_SECRET_KEY', 'dev-insecure-secret-change-me
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 
+DEPLOYMENT_TARGET = os.environ.get('DEPLOYMENT_TARGET', 'local')
+
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + ['127.0.0.1', 'localhost']
+if DEPLOYMENT_TARGET == 'vercel':
+    ALLOWED_HOSTS.append('.vercel.app')
 
 APPEND_SLASH = False
 
@@ -50,18 +49,23 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
-    'debug_toolbar',
     'social_django',
     'rest_social_auth',
     'api',
     'celery',
 ]
 
+if DEBUG:
+    INSTALLED_APPS.insert(9, 'debug_toolbar')
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
+]
+if DEBUG:
+    MIDDLEWARE.append('debug_toolbar.middleware.DebugToolbarMiddleware')
+MIDDLEWARE += [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -102,9 +106,12 @@ default_db = {
     'PASSWORD': os.environ.get('DATABASE_PASSWORD', ''),
     'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
     'PORT': os.environ.get('DATABASE_PORT', '5432'),
-    # Reuse DB connections across requests: the Supabase pooler is in another
-    # region, so a fresh TLS connection costs ~0.6s per request without this.
-    'CONN_MAX_AGE': int(os.environ.get('DATABASE_CONN_MAX_AGE', '300')),
+    # Reuse DB connections across requests on long-lived workers (Gunicorn).
+    # Vercel/serverless should use DATABASE_CONN_MAX_AGE=0 with a pooler.
+    'CONN_MAX_AGE': int(os.environ.get(
+        'DATABASE_CONN_MAX_AGE',
+        '0' if DEPLOYMENT_TARGET == 'vercel' else '300',
+    )),
     'CONN_HEALTH_CHECKS': True,
 }
 
@@ -190,10 +197,20 @@ CELERY_BROKER_URL = os.environ.get('BROKER_URL', 'memory://')
 # celery - makes tasks synchronous for tests/local when DEBUG is true.
 # On Replit there is no Celery worker/broker, so CELERY_TASK_ALWAYS_EAGER=True
 # is set in the environment to run tasks inline in the web process.
+# On Vercel, tasks are dispatched to Redis and handled by the worker service.
 CELERY_TASK_ALWAYS_EAGER = (
-    DEBUG
-    or os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1')
+    DEPLOYMENT_TARGET != 'vercel'
+    and (
+        DEBUG
+        or os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1')
+    )
 )
+
+# Hybrid deployment: Vercel API delegates AI inference to a long-running worker.
+AI_WORKER_URL = os.environ.get('AI_WORKER_URL', '')
+INTERNAL_API_SECRET = os.environ.get('INTERNAL_API_SECRET', '')
+AI_WORKER_TIMEOUT = float(os.environ.get('AI_WORKER_TIMEOUT', '120'))
+CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # django debug toolbar
 INTERNAL_IPS = ['127.0.0.1']

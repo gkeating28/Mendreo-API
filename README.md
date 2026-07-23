@@ -78,3 +78,21 @@ cd mendreo
 ```
 
 CI uses PostGIS Postgres and GitHub environment secrets (see `.github/workflows/django.yml`).
+
+## Production deployment (hybrid)
+
+Recommended layout: **Vercel** for the public API + **Railway/Fly worker** for AI and Celery.
+
+See [`docs/DEPLOYMENT_HYBRID.md`](docs/DEPLOYMENT_HYBRID.md) for step-by-step setup.
+
+| Service | Role | Key env |
+|---|---|---|
+| Vercel | HTTP API | `DEPLOYMENT_TARGET=vercel`, `AI_WORKER_URL`, `BROKER_URL` |
+| Worker | AI + Celery | `DEPLOYMENT_TARGET=worker`, `INTERNAL_API_SECRET` |
+| Supabase | Postgres | Session pooler URL |
+| Upstash | Redis broker | `BROKER_URL` |
+
+```bash
+# Run worker locally
+bash scripts/run_worker.sh
+```

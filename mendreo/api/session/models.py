@@ -54,7 +54,6 @@ class Session(SmartModel):
 
     @staticmethod
     def get_or_create(consumer, exercise: Exercise = None):
-        from ..agent.models import Agent
         from ..participant.models import Participant
         today_date = DateUtils.today()
 
@@ -101,16 +100,8 @@ class Session(SmartModel):
         consumer_participant, _ = Participant.create_participants(session=session)
 
         if exercise:
-            message = Message(
-                session=session,
-                sender=consumer_participant,
-                text="Hi, I'd like to practise this exercise. Can you greet me and explain the exercise please?"
-            )
-            agent_message = Agent.get_response(user_message=message, session=session)
-            session.last_message = agent_message
-            session.messages_no += 1
-            session.agent_messages_no += 1
-            session.save()
+            from ..utils.AIWorkerClient import request_session_greeting
+            request_session_greeting(session)
 
         return session
 
