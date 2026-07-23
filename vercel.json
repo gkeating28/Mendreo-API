@@ -3,7 +3,7 @@
   "installCommand": "pip install -r requirements-vercel.txt",
   "buildCommand": "cd mendreo && python manage.py migrate --noinput && python manage.py collectstatic --noinput",
   "functions": {
-    "wsgi.py": {
+    "mendreo/mendreo/wsgi.py": {
       "maxDuration": 120,
       "memory": 1024
     }
