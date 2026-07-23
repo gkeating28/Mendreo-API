@@ -9,8 +9,9 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent / "mendreo"
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+# Always prepend: repo root contains a mendreo/ directory that shadows the
+# Django package when cwd or PYTHONPATH also reference "mendreo".
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 

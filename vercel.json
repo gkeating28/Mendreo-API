@@ -2,9 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pip install -r requirements-vercel.txt",
   "buildCommand": "cd mendreo && python manage.py migrate --noinput && python manage.py collectstatic --noinput",
-  "env": {
-    "PYTHONPATH": "mendreo"
-  },
   "functions": {
     "wsgi.py": {
       "maxDuration": 120,

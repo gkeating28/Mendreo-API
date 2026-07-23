@@ -231,4 +231,4 @@ bash run_dev.sh
 | Emails not sending | Confirm `BROKER_URL` and worker Celery process are running |
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
-| `FUNCTION_INVOCATION_FAILED` on deploy | Redeploy latest commit; confirm `DEPLOYMENT_TARGET=vercel` and DB/secret env vars are set. Vercel uses `requirements-vercel.txt` (no AI packages). If bundle still exceeds 500MB, set `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` on the project. Check **Runtime Logs** (not Build logs) for the actual Python traceback. |
+| `FUNCTION_INVOCATION_FAILED` on deploy | Redeploy latest commit. Do **not** set `PYTHONPATH=mendreo` on Vercel (it breaks imports). Confirm `DEPLOYMENT_TARGET=vercel` and DB/secret env vars are set. Check **Runtime Logs** for tracebacks. Set `VERCEL_SUPPORT_LARGE_FUNCTIONS=1` only if bundle size errors persist. |
