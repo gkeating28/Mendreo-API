@@ -12,8 +12,32 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import datetime
 import os
+from urllib.parse import unquote, urlparse
 
 from pathlib import Path
+
+
+def _database_settings() -> dict:
+    """Build DB settings from SUPABASE_DEV_DB_URL or individual DATABASE_* vars."""
+    url = os.environ.get("SUPABASE_DEV_DB_URL")
+    if url:
+        parsed = urlparse(url)
+        return {
+            "ENGINE": os.environ.get("DATABASE_ENGINE", "django.db.backends.postgresql"),
+            "NAME": parsed.path.lstrip("/"),
+            "USER": unquote(parsed.username or ""),
+            "PASSWORD": unquote(parsed.password or ""),
+            "HOST": parsed.hostname or "",
+            "PORT": str(parsed.port or 5432),
+        }
+    return {
+        "ENGINE": os.environ.get("DATABASE_ENGINE", "django.db.backends.postgresql"),
+        "NAME": os.environ.get("DATABASE_NAME", "postgres"),
+        "USER": os.environ.get("DATABASE_USER", "postgres"),
+        "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
+        "HOST": os.environ.get("DATABASE_HOST", "localhost"),
+        "PORT": os.environ.get("DATABASE_PORT", "5432"),
+    }
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -100,12 +124,7 @@ WSGI_APPLICATION = 'mendreo.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 default_db = {
-    'ENGINE': os.environ.get('DATABASE_ENGINE', 'django.db.backends.postgresql'),
-    'NAME': os.environ.get('DATABASE_NAME', 'postgres'),
-    'USER': os.environ.get('DATABASE_USER', 'postgres'),
-    'PASSWORD': os.environ.get('DATABASE_PASSWORD', ''),
-    'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
-    'PORT': os.environ.get('DATABASE_PORT', '5432'),
+    **_database_settings(),
     # Reuse DB connections across requests on long-lived workers (Gunicorn).
     # Vercel/serverless should use DATABASE_CONN_MAX_AGE=0 with a pooler.
     'CONN_MAX_AGE': int(os.environ.get(

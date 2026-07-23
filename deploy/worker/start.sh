@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd /app/mendreo
 
+echo "worker: running migrations"
+python manage.py migrate --noinput
+
 echo "worker: starting Gunicorn on :${PORT:-8000}"
 gunicorn mendreo.wsgi \
   --bind "0.0.0.0:${PORT:-8000}" \
