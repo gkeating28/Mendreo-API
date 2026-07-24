@@ -2,11 +2,19 @@
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Load local dev overrides when present (gitignored; not used on Replit deploy).
+if [ -f "$ROOT/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env.local"
+  set +a
+fi
+
 # Derive DATABASE_* from the Supabase dev connection secret (see set_db_env.sh),
 # then launch gunicorn. Used by both the dev workflow and the deployment run step.
 source "$ROOT/set_db_env.sh"
 
-cd "$ROOT/mendreo"
+cd "$ROOT/backend"
 
 # --preload imports the (heavy) app once in the master before forking workers,
 # so cold start is faster/leaner and the autoscale startup probe gets a 200 sooner.

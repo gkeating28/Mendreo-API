@@ -55,6 +55,8 @@ env/*
 
 ve/*
 venv/*
+.venv/*
+mendreo/staticfiles/
 */__pycache__/*
 
 .coverage
