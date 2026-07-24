@@ -3,7 +3,7 @@
 set -euo pipefail
 
 API_URL="${1:-${VERCEL_API_URL:-https://mendreo-api.vercel.app}}"
-WORKER_URL="${2:-${AI_WORKER_URL:-https://web-production-17436.up.railway.app}}"
+WORKER_URL="${2:-${AI_WORKER_URL:-}}"
 INTERNAL_SECRET="${INTERNAL_API_SECRET:-}"
 
 pass=0
@@ -21,6 +21,16 @@ check() {
   fi
 }
 
+if [ -z "$WORKER_URL" ]; then
+  echo "ERROR: Worker URL required."
+  echo
+  echo "Railway gives each service a domain under Settings → Networking."
+  echo "Usage:"
+  echo "  bash scripts/verify_worker.sh https://mendreo-api.vercel.app https://YOUR-SERVICE.up.railway.app"
+  echo "Or set AI_WORKER_URL in the environment."
+  exit 1
+fi
+
 echo "=== Mendreo hybrid deployment checks ==="
 echo "API:    $API_URL"
 echo "Worker: $WORKER_URL"
@@ -30,7 +40,16 @@ api_health="$(curl -sS "$API_URL/" 2>/dev/null || true)"
 echo "$api_health" | rg -q '"status"[[:space:]]*:[[:space:]]*"ok"' && check "Vercel health" 1 || check "Vercel health" 0
 
 worker_health="$(curl -sS "$WORKER_URL/" 2>/dev/null || true)"
-echo "$worker_health" | rg -q '"status"[[:space:]]*:[[:space:]]*"ok"' && check "Worker health" 1 || check "Worker health" 0
+if echo "$worker_health" | rg -q '"message"[[:space:]]*:[[:space:]]*"Application not found"'; then
+  check "Worker health" 0
+  echo "      Hint: $WORKER_URL is dead. Copy the new domain from Railway → Settings → Networking"
+  echo "      and update Vercel AI_WORKER_URL + re-run this script with the new URL."
+elif echo "$worker_health" | rg -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+  check "Worker health" 1
+else
+  check "Worker health" 0
+  echo "      Response: $(echo "$worker_health" | head -c 120)"
+fi
 
 api_sessions_code="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/sessions" 2>/dev/null || echo 000)"
 [ "$api_sessions_code" = "401" ] && check "Vercel /sessions reachable (401 without auth)" 1 || check "Vercel /sessions reachable (got $api_sessions_code)" 0
