@@ -3,11 +3,6 @@ set -euo pipefail
 
 cd /app/backend
 
-if [ -f /app/set_db_env.sh ]; then
-  # shellcheck disable=SC1091
-  source /app/set_db_env.sh
-fi
-
 echo "worker: starting Gunicorn on :${PORT:-8000}"
 gunicorn mendreo.wsgi \
   --bind "0.0.0.0:${PORT:-8000}" \
@@ -17,7 +12,6 @@ gunicorn mendreo.wsgi \
   --error-logfile - &
 WEB_PID=$!
 
-# Bind quickly so Railway health checks pass while migrations run.
 sleep 2
 
 echo "worker: running migrations"

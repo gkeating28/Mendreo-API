@@ -5,7 +5,11 @@
 # empty values over a valid fallback.
 _ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -n "$SUPABASE_DEV_DB_URL" ]; then
-  _DB_EXPORTS="$("$_ROOT/.venv/bin/python" - <<'PY'
+  _PYTHON="$_ROOT/.venv/bin/python"
+  if [ ! -x "$_PYTHON" ]; then
+    _PYTHON="$(command -v python3 || command -v python)"
+  fi
+  _DB_EXPORTS="$("$_PYTHON" - <<'PY'
 import os, shlex, sys, urllib.parse as u
 p = u.urlparse(os.environ["SUPABASE_DEV_DB_URL"])
 host = p.hostname or ""

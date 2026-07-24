@@ -6,18 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime libs for psycopg2/lxml/pillow wheels; no GeoDjango/GDAL in this project.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libpq5 \
-        libxml2 \
-        libxslt1.1 \
-        libjpeg62-turbo \
-        zlib1g \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements-worker.txt ./requirements-worker.txt
-RUN pip install --no-cache-dir -r requirements-worker.txt
+RUN echo "railway-build: installing python dependencies" \
+    && pip install --no-cache-dir -r requirements-worker.txt \
+    && echo "railway-build: python dependencies installed"
 
 COPY backend ./backend
 COPY set_db_env.sh ./set_db_env.sh
