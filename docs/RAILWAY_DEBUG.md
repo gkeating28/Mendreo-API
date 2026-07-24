@@ -35,7 +35,7 @@ Build log must show **`Using detected Dockerfile!`** — not Railpack/Nixpacks.
 | `COPY backend: not found` | Wrong Root Directory | Clear Root Directory |
 | `/app/.venv/bin/python: No such file` | Old start.sh sourced `set_db_env.sh` in Docker | Merge latest worker fix |
 | `SUPABASE_DEV_DB_URL is malformed` | Bad DB URL env var | Use Session pooler URL |
-| Health check failed | Gunicorn not listening | Check Deploy Logs for crash before `Listening at:` |
+| Health check failed / HTTP 499 (~95s) | Gunicorn on wrong port/address, or DB hang on `/` health check | Merge latest worker fix: bind `[::]:\${PORT}`, signed-cookie sessions; confirm Railway `PORT` is not overridden to `8000` |
 
 ## Verify locally (optional)
 
