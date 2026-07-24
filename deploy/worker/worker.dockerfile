@@ -6,12 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gdal-bin libgdal-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-worker.txt ./requirements-worker.txt
+RUN echo "railway-build: installing python dependencies" \
+    && pip install --no-cache-dir -r requirements-worker.txt \
+    && echo "railway-build: python dependencies installed"
 
 COPY backend ./backend
 COPY set_db_env.sh ./set_db_env.sh
