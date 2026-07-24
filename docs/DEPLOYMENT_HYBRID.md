@@ -172,7 +172,7 @@ If Vercel is healthy but chat fails, the worker may still be running a pre-hybri
 1. Open your [Railway project](https://railway.com/dashboard).
 2. Confirm the service is linked to **`gkeating28/mendreo-api`** on branch **`main`**.
 3. **Redeploy** the latest deployment (or push an empty commit to `main` to trigger a build).
-4. Railway builds `deploy/worker/worker.dockerfile` via `railway.toml` and copies `backend/` (not the old `mendreo/` path).
+4. Railway builds `deploy/worker/worker.dockerfile` via `railway.toml` (repo root context; **do not** set Root Directory to `backend/`) and copies `backend/`.
 5. After deploy finishes, run the smoke test below.
 
 ### Worker env checklist (Railway → Variables)
@@ -274,4 +274,8 @@ bash run_dev.sh
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
 | `POST /internal/ai/*` returns HTML 404 | Redeploy Railway from `main` — worker is on a pre-hybrid build without internal routes |
+| Build fails on `COPY backend` | Railway service **Root Directory** must be repo root (empty), not `backend/` |
+| Build fails during `pip install` | Uses `requirements-worker.txt`; confirm build logs for OOM/timeout |
+| Build fails on `gdal-bin` / `libgdal-dev` | Removed — project has no GeoDjango; redeploy latest worker Dockerfile |
+| Deploy fails / health check timeout | Gunicorn starts before migrations; confirm `SUPABASE_DEV_DB_URL` and `BROKER_URL=rediss://...` |
 | `FUNCTION_INVOCATION_FAILED` / `No module named 'mendreo.settings'` | Redeploy latest commit. The Django app lives under `backend/` (not repo-root `mendreo/`) to avoid Python package shadowing on Vercel. Set `DEPLOYMENT_TARGET=vercel`. Do **not** set `PYTHONPATH`. |

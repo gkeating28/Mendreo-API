@@ -3,8 +3,10 @@ set -euo pipefail
 
 cd /app/backend
 
-echo "worker: running migrations"
-python manage.py migrate --noinput
+if [ -f /app/set_db_env.sh ]; then
+  # shellcheck disable=SC1091
+  source /app/set_db_env.sh
+fi
 
 echo "worker: starting Gunicorn on :${PORT:-8000}"
 gunicorn mendreo.wsgi \
@@ -14,6 +16,12 @@ gunicorn mendreo.wsgi \
   --access-logfile - \
   --error-logfile - &
 WEB_PID=$!
+
+# Bind quickly so Railway health checks pass while migrations run.
+sleep 2
+
+echo "worker: running migrations"
+python manage.py migrate --noinput
 
 echo "worker: starting Celery worker"
 celery -A mendreo worker --loglevel=info --concurrency=2 &
