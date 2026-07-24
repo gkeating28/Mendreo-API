@@ -82,16 +82,17 @@ CI uses PostGIS Postgres and GitHub environment secrets (see `.github/workflows/
 
 ## Production deployment (hybrid)
 
-Recommended layout: **Vercel** for the public API + **Railway/Fly worker** for AI and Celery.
+Recommended layout: **GitHub** (source + CI) → **Vercel** (public API) + **Railway** (AI/Celery), with **Supabase** Postgres and **Upstash Redis**.
 
-See [`docs/DEPLOYMENT_HYBRID.md`](docs/DEPLOYMENT_HYBRID.md) for step-by-step setup.
+See [`docs/DEPLOYMENT_HYBRID.md`](docs/DEPLOYMENT_HYBRID.md) for architecture charts and step-by-step setup.
 
 | Service | Role | Key env |
 |---|---|---|
+| GitHub | Source + Actions CI | — |
 | Vercel | HTTP API | `DEPLOYMENT_TARGET=vercel`, `AI_WORKER_URL`, `BROKER_URL` |
-| Worker | AI + Celery | `DEPLOYMENT_TARGET=worker`, `INTERNAL_API_SECRET` |
+| Railway | AI + Celery worker/beat | `DEPLOYMENT_TARGET=worker`, `INTERNAL_API_SECRET` |
 | Supabase | Postgres | Session pooler URL |
-| Upstash | Redis broker | `BROKER_URL` |
+| Upstash | Redis Celery broker | `BROKER_URL` |
 
 ```bash
 # Run worker locally

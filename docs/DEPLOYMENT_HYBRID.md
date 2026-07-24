@@ -1,27 +1,93 @@
-# Hybrid deployment: Vercel + worker
+# Hybrid deployment: Vercel + Railway
 
-This guide covers the recommended production layout:
+This guide covers the recommended production layout for the Mendreo API.
 
-- **Vercel** — public HTTP API (auth, CRUD, uploads metadata)
-- **Worker service** (Railway/Fly/Render) — AI inference + Celery worker + beat
-- **Supabase** — PostgreSQL (Session pooler)
-- **Upstash Redis** — Celery broker
+## Architecture overview
+
+| Component | Platform | Role |
+|---|---|---|
+| **Source + CI** | GitHub | Repo of record; Actions run Django tests on every push |
+| **Public API** | Vercel | Django/DRF HTTP surface (auth, CRUD, uploads metadata, cron) |
+| **AI + jobs** | Railway | Long-running Gunicorn + Celery worker + beat (Gemini AI) |
+| **Database** | Supabase | Managed PostgreSQL via Session pooler |
+| **Queue** | Upstash Redis | Celery broker shared by Vercel (enqueue) and Railway (consume) |
+
+Clients (mobile/web) talk only to Vercel. Vercel forwards AI work to Railway over an authenticated internal HTTP call, and enqueues background jobs onto Redis for the Railway Celery worker. Both runtimes read and write the same Supabase Postgres database.
+
+### Deploy pipeline (GitHub → platforms)
+
+```mermaid
+flowchart LR
+  Dev[Developer] -->|push / PR| GH[GitHub repo]
+  GH -->|CI: migrate + tests| Actions[GitHub Actions]
+  GH -->|connected deploy| Vercel[Vercel API]
+  GH -->|connected deploy| Railway[Railway worker]
+  Vercel --> DB[(Supabase Postgres)]
+  Railway --> DB
+  Vercel -->|BROKER_URL enqueue| Redis[(Upstash Redis)]
+  Redis -->|Celery consume| Railway
+```
+
+GitHub does **not** deploy via Actions. Vercel and Railway each import the repo and build on push (`vercel.json` / `railway.toml`). Actions only validate the codebase (`.github/workflows/django.yml`).
+
+### Runtime request flow
+
+```mermaid
+flowchart TB
+  Client[Mobile / Web client] -->|HTTPS JWT| Vercel
+
+  subgraph vercel_box [Vercel — DEPLOYMENT_TARGET=vercel]
+    API[Django WSGI API]
+    Cron[Vercel Cron — subscription check]
+  end
+
+  subgraph railway_box [Railway — DEPLOYMENT_TARGET=worker]
+    WorkerHTTP[Gunicorn /internal/ai/*]
+    CeleryW[Celery worker]
+    CeleryB[Celery beat]
+  end
+
+  subgraph data [Shared data plane]
+    DB[(Supabase Postgres<br/>Session pooler)]
+    Redis[(Upstash Redis<br/>Celery broker)]
+  end
+
+  Client --> API
+  API -->|SQL| DB
+  WorkerHTTP -->|SQL| DB
+  CeleryW -->|SQL| DB
+  API -->|sync AI proxy<br/>X-Internal-Secret| WorkerHTTP
+  API -->|enqueue email / articles / summaries| Redis
+  Redis --> CeleryW
+  CeleryB --> CeleryW
+  Cron -->|Bearer CRON_SECRET| API
+```
+
+### ASCII overview
 
 ```
-                    ┌─────────────────────┐
-  Mobile / Web  ──► │  Vercel (Django)    │
-                    │  DEPLOYMENT_TARGET= │
-                    │  vercel             │
-                    └─────────┬───────────┘
-                              │ AI HTTP (sync)
-                              │ Celery tasks (async)
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-     ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-     │ Worker API  │  │ Redis       │  │ Supabase    │
-     │ Gunicorn    │  │ (broker)    │  │ Postgres    │
-     │ + Celery    │  └─────────────┘  └─────────────┘
-     └─────────────┘
+                         ┌──────────────────┐
+                         │     GitHub       │
+                         │  source + CI     │
+                         └────────┬─────────┘
+              deploy on push      │      deploy on push
+                 ┌────────────────┼────────────────┐
+                 ▼                                 ▼
+  Client ──► ┌─────────────┐              ┌─────────────────┐
+             │   Vercel    │  AI HTTP     │    Railway      │
+             │ Django API  │ ───────────► │ Gunicorn + AI   │
+             │ + Cron      │  Celery      │ Celery worker   │
+             └──────┬──────┘  enqueue     │ + beat          │
+                    │            │        └────────┬────────┘
+                    │            ▼                 │
+                    │     ┌────────────┐           │
+                    │     │ Upstash    │ ──────────┘
+                    │     │ Redis      │  consume
+                    │     └────────────┘
+                    │            ┌────────────┐
+                    └───────────►│ Supabase   │◄─────────────┘
+                                 │ Postgres   │
+                                 └────────────┘
 ```
 
 ## Why hybrid?
@@ -34,6 +100,42 @@ This guide covers the recommended production layout:
 | CRUD endpoints | Good fit | Still on Vercel |
 
 Client API contracts stay the same — `POST /messages` still returns the agent reply synchronously. Vercel forwards AI work to the worker over HTTP.
+
+## How each service fits
+
+### GitHub
+- Holds the single Django codebase (`backend/`, `vercel.json`, `railway.toml`, `deploy/worker/`).
+- **GitHub Actions** (`.github/workflows/django.yml`) runs on every push: PostGIS Postgres service, migrate, `api.tests` with coverage.
+- Deploy is **not** driven by Actions. Vercel and Railway watch the same repo and ship on push from their dashboards.
+
+### Vercel
+- Public API entrypoint (`backend/mendreo/wsgi.py`, lighter `requirements-vercel.txt`).
+- Handles auth/JWT, CRUD, S3 upload metadata, and daily subscription cron.
+- Sets `DEPLOYMENT_TARGET=vercel`, `AI_WORKER_URL` → Railway, `DATABASE_CONN_MAX_AGE=0`.
+- Enqueues Celery tasks to Upstash Redis; does not run a Celery worker itself.
+
+### Railway
+- Builds `deploy/worker/worker.dockerfile` (full `requirements.txt`).
+- Runs Gunicorn (AI internal routes), Celery worker, and Celery beat via `deploy/worker/start.sh`.
+- Sets `DEPLOYMENT_TARGET=worker`; does **not** set `AI_WORKER_URL` (AI runs in-process).
+- Consumes Redis tasks and serves `/internal/ai/*` for Vercel.
+
+### Supabase (Postgres)
+- Sole application database (users, sessions, messages, subscriptions, etc.).
+- Connect with the **Session pooler** (`*.pooler.supabase.com:5432`) via `SUPABASE_DEV_DB_URL` or `DATABASE_*`.
+- Auth is Django/JWT in-app — not Supabase Auth. File blobs live on AWS S3, not Supabase Storage.
+
+### Redis (Upstash)
+- Celery **broker only** (`BROKER_URL=rediss://…upstash.io:6379`).
+- Same URL on Vercel (publish) and Railway (consume).
+- Tasks include email, chat/daily summaries, article generation, and subscription checks.
+
+### Example: `POST /messages`
+1. Client → **Vercel** with JWT; message row written to **Supabase**.
+2. Vercel calls **Railway** `POST /internal/ai/message-response` with `X-Internal-Secret`.
+3. Railway loads context from Supabase, runs Gemini, writes the agent message, returns its id.
+4. Vercel reloads that message from Supabase and returns it to the client (sync reply).
+5. Side work (email, summaries, articles) goes Vercel → **Redis** → Railway Celery.
 
 ---
 
