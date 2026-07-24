@@ -13,13 +13,16 @@ RUN echo "railway-build: installing python dependencies" \
 
 COPY backend ./backend
 COPY set_db_env.sh ./set_db_env.sh
-COPY deploy/worker/start.sh ./start.sh
+COPY deploy/worker/start.sh ./start-all.sh
+COPY deploy/web/start.sh ./start-web.sh
+COPY deploy/celery-worker/start.sh ./start-celery-worker.sh
+COPY deploy/celery-beat/start.sh ./start-celery-beat.sh
 
-RUN chmod +x ./start.sh
+RUN chmod +x ./start-all.sh ./start-web.sh ./start-celery-worker.sh ./start-celery-beat.sh
 
 ENV DEPLOYMENT_TARGET=worker \
     PORT=8000
 
 EXPOSE 8000
 
-CMD ["./start.sh"]
+CMD ["./start-all.sh"]

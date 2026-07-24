@@ -16,14 +16,37 @@ If Build Logs show `Successfully built` / `COMMIT`, the build succeeded and the 
 
 ## Required Railway settings
 
+### Option A — one service (recommended)
+
+Use a **single** Railway service. It runs Gunicorn, Celery worker, and Celery beat together via `./start-all.sh`.
+
 | Setting | Value |
 |---|---|
-| Source branch | `main` (after merging the worker fix PR) |
+| Source branch | `main` |
 | Root Directory | **empty** (repo root) |
+| Config file | `railway.toml` (default) |
 | Builder | Dockerfile |
 | Dockerfile path | `deploy/worker/worker.dockerfile` |
 
-If Root Directory is `backend/`, the build fails with `COPY backend` or Dockerfile not found.
+**Do not** create separate Railway `web` and `scheduler` services unless you configure them (Option B). Vercel is already your public web API.
+
+### Option B — three Railway services (advanced)
+
+If you already have separate **web**, **worker**, and **scheduler** services, each must point at a different config file:
+
+| Railway service | Config file (Settings → Config file path) | Start command | Health check |
+|---|---|---|---|
+| **web** | `/deploy/railway/web.toml` | `./start-web.sh` | `/` |
+| **worker** | `/deploy/railway/worker.toml` | `./start-celery-worker.sh` | none |
+| **scheduler** | `/deploy/railway/scheduler.toml` | `./start-celery-beat.sh` | none |
+
+All three use the same Dockerfile: `deploy/worker/worker.dockerfile`. Root Directory must be **empty** on every service.
+
+Set `AI_WORKER_URL` on Vercel to the **web** service's public URL (not the celery worker service).
+
+Run **exactly one** scheduler replica (Celery beat).
+
+If web/scheduler fail to build, they are usually missing the config file path above and Railway falls back to Railpack/Nixpacks instead of Docker.
 
 ## Common errors
 
