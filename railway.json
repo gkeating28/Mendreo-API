@@ -5,7 +5,8 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "./start.sh",
+    "preDeployCommand": ["bash", "-lc", "cd backend && python manage.py migrate --noinput"],
+    "startCommand": "bash ./start.sh",
     "healthcheckPath": "/",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE"
