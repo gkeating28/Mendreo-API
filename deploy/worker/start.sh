@@ -4,9 +4,11 @@ set -euo pipefail
 
 cd /app/backend
 
-echo "worker: starting Gunicorn on :${PORT:-8000}"
+# Railway injects PORT (usually 8080) and routes over IPv6; bind [::] for dual-stack.
+LISTEN_PORT="${PORT:-8080}"
+echo "worker: starting Gunicorn on [::]:${LISTEN_PORT}"
 gunicorn mendreo.wsgi \
-  --bind "0.0.0.0:${PORT:-8000}" \
+  --bind "[::]:${LISTEN_PORT}" \
   --workers 2 \
   --timeout 300 \
   --access-logfile - \

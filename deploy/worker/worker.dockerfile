@@ -19,9 +19,9 @@ COPY deploy/worker/start.sh ./start.sh
 
 RUN chmod +x ./start.sh
 
-ENV DEPLOYMENT_TARGET=worker \
-    PORT=8000
+ENV DEPLOYMENT_TARGET=worker
 
-EXPOSE 8000
+# Railway sets PORT at runtime (typically 8080). Do not hardcode it here.
+EXPOSE 8080
 
 CMD ["./start.sh"]

@@ -63,8 +63,8 @@ if DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
     _allowed_extra_hosts.append('.railway.app')
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + _allowed_extra_hosts
 
-if DEPLOYMENT_TARGET == 'vercel':
-    # Avoid a DB round-trip on every request in serverless handlers.
+if DEPLOYMENT_TARGET == 'vercel' or DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
+    # Avoid a DB round-trip on health checks and lightweight HTTP handlers.
     SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
 
 APPEND_SLASH = False
