@@ -1,8 +1,12 @@
+# Default: single Railway service (Gunicorn + Celery worker + beat).
+# For split web/worker/scheduler services, point each service at
+# deploy/railway/web.toml, worker.toml, or scheduler.toml in Settings.
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/worker/worker.dockerfile"
 
 [deploy]
+startCommand = "./start-all.sh"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
