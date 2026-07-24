@@ -43,9 +43,8 @@ yarn-error.log*
 .idea/**/uiDesigner.xml
 .idea/**/dbnavigator.xml
 
-#docker file
-Dockerfile
-docker-compose.yml
+# User-local docker files (production Dockerfile is committed at repo root)
+#docker-compose.yml
 web.env
 database.env
 

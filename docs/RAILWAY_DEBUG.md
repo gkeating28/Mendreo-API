@@ -16,14 +16,16 @@ If Build Logs show `Successfully built` / `COMMIT`, the build succeeded and the 
 
 ## Required Railway settings
 
+See **`docs/RAILWAY_SETUP.md`** for full setup. Quick checklist:
+
 | Setting | Value |
 |---|---|
-| Source branch | `main` (after merging the worker fix PR) |
-| Root Directory | **empty** (repo root) |
-| Builder | Dockerfile |
-| Dockerfile path | `deploy/worker/worker.dockerfile` |
+| Config file path | `/railway.json` |
+| Root Directory | **blank** |
+| Dockerfile | repo-root `Dockerfile` |
+| Backup env var | `RAILWAY_DOCKERFILE_PATH=Dockerfile` |
 
-If Root Directory is `backend/`, the build fails with `COPY backend` or Dockerfile not found.
+Build log must show **`Using detected Dockerfile!`** — not Railpack/Nixpacks.
 
 ## Common errors
 

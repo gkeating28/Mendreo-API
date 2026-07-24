@@ -1,5 +1,3 @@
-# Canonical Railway worker image lives at repo-root Dockerfile.
-# This path is kept for documentation/backward compatibility.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
