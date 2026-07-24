@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Railway worker entrypoint: keep Gunicorn alive even if Celery fails to start.
 set -euo pipefail
 
 cd /app/backend
@@ -14,17 +15,14 @@ WEB_PID=$!
 
 sleep 2
 
-echo "worker: running migrations"
-python manage.py migrate --noinput
+if [ -n "${BROKER_URL:-}" ] && [ "${BROKER_URL}" != "memory://" ]; then
+  echo "worker: starting Celery worker"
+  celery -A mendreo worker --loglevel=info --concurrency=2 &
+  echo "worker: starting Celery beat"
+  celery -A mendreo beat --loglevel=info &
+else
+  echo "worker: BROKER_URL not set — skipping Celery (AI HTTP still works)"
+fi
 
-echo "worker: starting Celery worker"
-celery -A mendreo worker --loglevel=info --concurrency=2 &
-WORKER_PID=$!
-
-echo "worker: starting Celery beat"
-celery -A mendreo beat --loglevel=info &
-BEAT_PID=$!
-
-trap 'kill "$WEB_PID" "$WORKER_PID" "$BEAT_PID" 2>/dev/null || true' EXIT INT TERM
-
-wait -n "$WEB_PID" "$WORKER_PID" "$BEAT_PID"
+echo "worker: Gunicorn pid ${WEB_PID}; waiting"
+wait "$WEB_PID"

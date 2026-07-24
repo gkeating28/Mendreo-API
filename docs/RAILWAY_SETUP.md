@@ -71,7 +71,10 @@ INTERNAL_API_SECRET=<same as Vercel>
 GOOGLE_API_KEY=...
 ```
 
-Do **not** set `AI_WORKER_URL` on Railway.
+**Important:**
+- `DEPLOYMENT_TARGET` must be exactly `worker` (not `worker.railway.internal` or similar)
+- `BROKER_URL` must use **`rediss://`** (TLS) for Upstash, not `redis://`
+- Do **not** set `AI_WORKER_URL` on Railway
 
 ---
 
@@ -124,8 +127,10 @@ The service or domain was deleted. Generate a **new domain** and update Vercel `
 
 Check **Deploy Logs** (not Build Logs):
 
-| Log | Meaning |
+| Log | Fix |
 |---|---|
-| `Listening at: http://0.0.0.0:...` | Gunicorn OK |
-| `SUPABASE_DEV_DB_URL is malformed` | Fix DB URL |
-| `Health check failed` | Missing env vars or crash before Gunicorn binds |
+| `Invalid HTTP_HOST header: 'healthcheck.railway.app'` | Set `DEPLOYMENT_TARGET=worker` exactly; merge latest `main` (adds `healthcheck.railway.app` to ALLOWED_HOSTS) |
+| `service unavailable` on health check | Gunicorn must bind to `$PORT`; check Deploy Logs for `Listening at:` |
+| Celery connection errors | Set `BROKER_URL=rediss://...` (TLS) |
+| `SUPABASE_DEV_DB_URL is malformed` | Fix DB URL in Railway variables |
+| Container exits after Celery starts | Latest `start.sh` keeps Gunicorn alive even if Celery fails — redeploy from `main` |
