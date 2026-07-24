@@ -1,5 +1,7 @@
 # Railway build / deploy debugging
 
+If the public URL returns `"Application not found"`, the Railway service was deleted or lost its domain — see **`docs/RAILWAY_SETUP.md`** to recreate it from scratch.
+
 Railway often labels a failed **deploy** as a failed build. Use these steps to see the real error.
 
 ## Where to find logs

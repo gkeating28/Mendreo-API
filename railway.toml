@@ -1,8 +1,10 @@
+# Mendreo hybrid worker — one service runs Gunicorn + Celery worker + beat.
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/worker/worker.dockerfile"
 
 [deploy]
+startCommand = "./start.sh"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
