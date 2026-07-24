@@ -1,8 +1,10 @@
+# Railway reads this file. Root Dockerfile is auto-detected as a fallback.
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "deploy/worker/worker.dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
+startCommand = "./start.sh"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
