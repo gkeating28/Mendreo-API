@@ -165,17 +165,59 @@ Set `CRON_SECRET` in Vercel env vars (Vercel sends it automatically when configu
 
 ---
 
-## 4. Verify
+## 4. Redeploy worker after merging to `main`
+
+If Vercel is healthy but chat fails, the worker may still be running a pre-hybrid build (no `/internal/` routes).
+
+1. Open your [Railway project](https://railway.com/dashboard).
+2. Confirm the service is linked to **`gkeating28/mendreo-api`** on branch **`main`**.
+3. **Redeploy** the latest deployment (or push an empty commit to `main` to trigger a build).
+4. Railway builds `deploy/worker/worker.dockerfile` via `railway.toml` and copies `backend/` (not the old `mendreo/` path).
+5. After deploy finishes, run the smoke test below.
+
+### Worker env checklist (Railway → Variables)
+
+| Variable | Value |
+|---|---|
+| `DEPLOYMENT_TARGET` | `worker` |
+| `GENERAL_SECRET_KEY` | same as Vercel |
+| `GENERAL_DEBUG` | `False` |
+| `GENERAL_HOST_DOMAIN` | `.railway.app` (optional; `.railway.app` is auto-allowed when `DEPLOYMENT_TARGET=worker`) |
+| `SUPABASE_DEV_DB_URL` | Session pooler URL |
+| `BROKER_URL` | `rediss://...` (Upstash TLS) |
+| `INTERNAL_API_SECRET` | same as Vercel |
+| `GOOGLE_API_KEY` | Gemini key |
+| `AWS_*`, `SENDGRID_*`, `STRIPE_*` | as needed |
+
+Do **not** set `AI_WORKER_URL` on the worker.
+
+Then on **Vercel**, confirm:
+
+```env
+AI_WORKER_URL=https://web-production-17436.up.railway.app
+INTERNAL_API_SECRET=<same-as-worker>
+```
+
+---
+
+## 5. Verify
 
 ```bash
-# Vercel health
-curl https://your-api.vercel.app/
+# Quick smoke test (both services)
+bash scripts/verify_worker.sh
 
-# Worker health
-curl https://your-worker.railway.app/
+# Or manually:
+curl https://mendreo-api.vercel.app/
+curl https://web-production-17436.up.railway.app/
+
+# Internal route must exist (403 without secret — NOT 404)
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  -X POST https://web-production-17436.up.railway.app/internal/ai/message-response \
+  -H "Content-Type: application/json" \
+  -d '{}'
 
 # End-to-end chat (requires auth token)
-curl -X POST https://your-api.vercel.app/messages \
+curl -X POST https://mendreo-api.vercel.app/messages \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello","session":"<session_id>","consumer":"<consumer_id>"}'
@@ -183,7 +225,7 @@ curl -X POST https://your-api.vercel.app/messages \
 
 ---
 
-## 5. Local development
+## 6. Local development
 
 Without a worker, AI runs inline (same as before):
 
@@ -231,4 +273,5 @@ bash run_dev.sh
 | Emails not sending | Confirm `BROKER_URL` and worker Celery process are running |
 | Subscriptions not checked | Confirm Vercel Cron is enabled and `CRON_SECRET` is set |
 | DB connection errors on Vercel | Use Supabase Session pooler; keep `DATABASE_CONN_MAX_AGE=0` |
+| `POST /internal/ai/*` returns HTML 404 | Redeploy Railway from `main` — worker is on a pre-hybrid build without internal routes |
 | `FUNCTION_INVOCATION_FAILED` / `No module named 'mendreo.settings'` | Redeploy latest commit. The Django app lives under `backend/` (not repo-root `mendreo/`) to avoid Python package shadowing on Vercel. Set `DEPLOYMENT_TARGET=vercel`. Do **not** set `PYTHONPATH`. |

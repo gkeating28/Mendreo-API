@@ -55,7 +55,10 @@ DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 
 DEPLOYMENT_TARGET = os.environ.get('DEPLOYMENT_TARGET', 'local')
 
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + ['127.0.0.1', 'localhost', '.vercel.app']
+_allowed_extra_hosts = ['127.0.0.1', 'localhost', '.vercel.app']
+if DEPLOYMENT_TARGET == 'worker':
+    _allowed_extra_hosts.append('.railway.app')
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + _allowed_extra_hosts
 
 if DEPLOYMENT_TARGET == 'vercel':
     # Avoid a DB round-trip on every request in serverless handlers.
