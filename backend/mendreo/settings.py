@@ -51,9 +51,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('GENERAL_SECRET_KEY', 'dev-insecure-secret-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
-
 DEPLOYMENT_TARGET = os.environ.get('DEPLOYMENT_TARGET', 'local')
+
+DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
+# debug_toolbar is dev-only and not installed on worker/Vercel images.
+if DEPLOYMENT_TARGET == 'vercel' or DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
+    DEBUG = False
 
 _allowed_extra_hosts = ['127.0.0.1', 'localhost', 'healthcheck.railway.app', '.vercel.app']
 if DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
