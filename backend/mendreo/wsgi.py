@@ -15,5 +15,24 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mendreo.settings")
 
 from django.core.wsgi import get_wsgi_application
 
-application = get_wsgi_application()
+_HEALTH_PATHS = frozenset(("/", "/healthz"))
+_HEALTH_BODY = b'{"service":"mendreo-api","status":"ok"}'
+
+_django_app = get_wsgi_application()
+
+
+def application(environ, start_response):
+    # Respond before Django URL resolution so health probes never load the full API urlconf.
+    if environ.get("PATH_INFO") in _HEALTH_PATHS:
+        start_response(
+            "200 OK",
+            [
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(_HEALTH_BODY))),
+            ],
+        )
+        return [_HEALTH_BODY]
+    return _django_app(environ, start_response)
+
+
 app = application
