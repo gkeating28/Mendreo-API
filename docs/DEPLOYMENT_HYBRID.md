@@ -194,7 +194,7 @@ Do **not** set `AI_WORKER_URL` on the worker.
 Then on **Vercel**, confirm:
 
 ```env
-AI_WORKER_URL=https://web-production-17436.up.railway.app
+AI_WORKER_URL=https://YOUR-SERVICE.up.railway.app
 INTERNAL_API_SECRET=<same-as-worker>
 ```
 
