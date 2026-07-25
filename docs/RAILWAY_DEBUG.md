@@ -36,7 +36,7 @@ Build log must show **`Using detected Dockerfile!`** — not Railpack/Nixpacks.
 | `/app/.venv/bin/python: No such file` | Old start.sh sourced `set_db_env.sh` in Docker | Merge latest worker fix |
 | `SUPABASE_DEV_DB_URL is malformed` | Bad DB URL env var | Use Session pooler URL |
 | Health check failed / HTTP 499 (~95s) | DB hang on `/` health check (old deploys) | Merge worker session + IPv6 fixes |
-| Health check failed / HTTP 499 (~15s) | Gunicorn accepts TCP but first request loads entire API urlconf | Merge latest fix: WSGI `/healthz` bypass + `--preload` |
+| Health check failed / HTTP 499 (~15s or hangs forever, **every** path) | Gunicorn bound `0.0.0.0` *and* `[::]` on the same port. On Linux, a dual-stack `[::]` socket already accepts IPv4, so the second bind fails with `Address already in use` and gunicorn retries forever — the app never actually serves a single request. Deploy Logs show `[ERROR] Connection in use: ('::', 8080)` repeating. | Merge latest fix: bind **only** `[::]:${PORT}` (dual-stack covers IPv4 too) |
 
 ## Verify locally (optional)
 
