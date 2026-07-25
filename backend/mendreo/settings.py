@@ -236,6 +236,11 @@ CELERY_TASK_ALWAYS_EAGER = (
 AI_WORKER_URL = os.environ.get('AI_WORKER_URL', '')
 INTERNAL_API_SECRET = os.environ.get('INTERNAL_API_SECRET', '')
 AI_WORKER_TIMEOUT = float(os.environ.get('AI_WORKER_TIMEOUT', '120'))
+# Gemini/genai HTTP client timeout in milliseconds. Without this, requests to
+# Google's API have no timeout and a slow/unreachable API permanently blocks
+# whichever Gunicorn worker is handling the request (seen as HTTP 499s piling
+# up on unrelated endpoints once every worker is stuck this way).
+GEMINI_HTTP_TIMEOUT_MS = int(os.environ.get('GEMINI_HTTP_TIMEOUT_MS', str(90 * 1000)))
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # django debug toolbar

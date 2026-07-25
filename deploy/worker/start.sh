@@ -9,14 +9,23 @@ cd /app/backend
 # same port. Binding 0.0.0.0 *and* [::] separately makes gunicorn's IPv6
 # listener fail with "Address already in use" and retry forever, so the app
 # never actually serves any request (this caused the HTTP 499 hangs).
+# Default to 2 workers so a single request stuck on a slow/hanging outbound
+# call doesn't take down health checks for every other request too.
 LISTEN_PORT="${PORT:-8080}"
-WORKERS="${WEB_CONCURRENCY:-1}"
+WORKERS="${WEB_CONCURRENCY:-2}"
 echo "worker: starting Gunicorn (${WORKERS} worker(s)) on [::]:${LISTEN_PORT} (dual-stack: also accepts IPv4)"
+# A short --timeout means a worker stuck on any single request (e.g. a
+# hanging outbound call) is killed and replaced within seconds instead of
+# taking the whole app down for minutes. --max-requests periodically
+# recycles workers to bound memory growth from long-lived processes.
 MENDREO_SKIP_CELERY_IMPORT=1 gunicorn mendreo.wsgi \
   --bind "[::]:${LISTEN_PORT}" \
   --workers "${WORKERS}" \
   --preload \
-  --timeout 300 \
+  --timeout "${GUNICORN_TIMEOUT:-30}" \
+  --graceful-timeout 10 \
+  --max-requests 500 \
+  --max-requests-jitter 100 \
   --access-logfile - \
   --error-logfile - &
 WEB_PID=$!

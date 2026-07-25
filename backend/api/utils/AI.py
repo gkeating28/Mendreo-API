@@ -1,9 +1,19 @@
 from html import escape
 import json
+from django.conf import settings
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from ..utils import Api, Constants
+
+
+def _genai_client() -> genai.Client:
+    # Explicit timeout so a slow/unreachable Gemini API can't hang the
+    # request forever (see settings.GEMINI_HTTP_TIMEOUT_MS).
+    return genai.Client(
+        api_key=Api.GOOGLE_API_KEY,
+        http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
+    )
 
 class ArticleResponse(BaseModel):
     """Response model for AI-generated article content"""
@@ -30,7 +40,7 @@ class AI:
         """
         Sends a prompt to Gemini and returns the raw text response.
         """
-        client = genai.Client(api_key=Api.GOOGLE_API_KEY)
+        client = _genai_client()
 
         response = client.models.generate_content(
             model=model,
@@ -50,8 +60,8 @@ class AI:
         """
         Generate an image using Google's Imagen API.
         """
-        client = genai.Client(api_key=Api.GOOGLE_API_KEY)
-        
+        client = _genai_client()
+
         try:
             response = client.models.generate_images(
                 model='imagen-4.0-generate-001',

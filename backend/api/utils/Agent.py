@@ -7,6 +7,7 @@ from typing import Optional, List, Type
 
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.utils import timezone
 from google import genai
 from google.genai import types
@@ -224,10 +225,19 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     else:
         thinking_config = {"thinking_budget": 0, "include_thoughts": False}
 
+    # Explicit HTTP timeout so a slow/unreachable Gemini API can't hang this
+    # request forever — without it, one bad call permanently occupies a
+    # Gunicorn worker (surfaces as HTTP 499s on unrelated endpoints once
+    # every worker gets stuck this way).
+    genai_client = genai.Client(
+        api_key=Api.GOOGLE_API_KEY,
+        http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
+    )
+
     agent: Agent[Dependencies, BaseModel] = Agent(
         GoogleModel(
             model_name=model_name,
-            provider=GoogleProvider(api_key=Api.GOOGLE_API_KEY),
+            provider=GoogleProvider(client=genai_client),
         ),
         deps_type=Dependencies,
         output_type=schema,
