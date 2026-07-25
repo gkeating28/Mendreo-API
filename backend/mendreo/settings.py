@@ -58,9 +58,15 @@ DEBUG = os.environ.get('GENERAL_DEBUG', 'False') == 'True'
 if DEPLOYMENT_TARGET == 'vercel' or DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
     DEBUG = False
 
-_allowed_extra_hosts = ['127.0.0.1', 'localhost', 'healthcheck.railway.app', '.vercel.app']
-if DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
-    _allowed_extra_hosts.append('.railway.app')
+# Always allow *.railway.app: only a Railway-hosted deployment would ever
+# receive a request with that Host header in the first place, so this is
+# safe regardless of DEPLOYMENT_TARGET's exact value (which can be wrong/
+# unset due to env var typos on the hosting platform -- a DisallowedHost
+# here isn't just a fast 400, see the LOGGING config below for why it's
+# far worse than that if left unguarded).
+_allowed_extra_hosts = [
+    '127.0.0.1', 'localhost', 'healthcheck.railway.app', '.railway.app', '.vercel.app',
+]
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + _allowed_extra_hosts
 
 if DEPLOYMENT_TARGET == 'vercel' or DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
@@ -321,6 +327,16 @@ SOCIAL_AUTH_PIPELINE = (
     'api.user.social_pipeline.send_details',  # custom override to return auth details
 )
 
+# Django's own default logging config attaches a `mail_admins` handler to
+# `django.security.*` (a DIFFERENT logger name from `django.request`, so
+# overriding just the latter below does NOT stop this). That handler
+# synchronously opens an SMTP connection with no timeout on every security
+# exception (DisallowedHost, SuspiciousOperation, etc.) -- e.g. a stray/bot
+# request with an unrecognized Host header. If SMTP is slow or unreachable
+# (as on Railway, where outbound port 587 may be blocked/throttled), this
+# hangs the Gunicorn worker handling that request until gunicorn's own
+# --timeout kills it, surfacing as an unrelated-looking HTTP 500 on whatever
+# request happened to trigger it. Route both loggers to console only.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -330,5 +346,11 @@ LOGGING = {
     "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
         "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.security": {"handlers": ["console"], "level": "ERROR", "propagate": False},
     },
 }
+
+# Defense in depth: if anything else ever does try to send mail synchronously
+# (e.g. mail_admins from a different logger path), don't let it hang a
+# request/worker indefinitely.
+EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '10'))
