@@ -332,7 +332,7 @@ class FacebookCode(SmartAPIView):
                 "client_secret": Api.FACEBOOK_CLIENT_SECRET_KEY,
                 "grant_type": "fb_exchange_token",
                 "fb_exchange_token": access_token
-            })
+            }, timeout=15)
             access_token_response_json = access_token_response.json()
             access_token = access_token_response_json["access_token"]
 
@@ -341,7 +341,7 @@ class FacebookCode(SmartAPIView):
             "client_secret": Api.FACEBOOK_CLIENT_SECRET_KEY,
             "redirect_uri": redirect_uri,
             "access_token": access_token
-        })
+        }, timeout=15)
 
         code_response_json = code_response.json()
 
