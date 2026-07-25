@@ -4,6 +4,20 @@ set -euo pipefail
 
 cd /app/backend
 
+# Celery's own CLI defines "-b/--broker" with envvar=BROKER_URL, and
+# unconditionally does `os.environ['CELERY_BROKER_URL'] = broker` from it
+# BEFORE our app (and Django settings' TLS normalization) is even imported.
+# That silently overrides anything we compute in Python, using the raw env
+# var as-is. Normalize it here, at the shell level, so celery's CLI captures
+# the corrected value in the first place. Upstash (and similar managed Redis)
+# requires TLS on the public endpoint; a plain redis:// URL fails instantly
+# and celery retries it in a tight loop forever, competing for CPU with
+# Gunicorn on a constrained container.
+if [[ "${BROKER_URL:-}" == redis://*.upstash.io* ]]; then
+  echo "worker: upgrading BROKER_URL to rediss:// (TLS) for Upstash"
+  export BROKER_URL="rediss://${BROKER_URL#redis://}"
+fi
+
 # Railway injects PORT (usually 8080) and routes over IPv6. A dual-stack [::]
 # socket (IPV6_V6ONLY=0, the Linux default) accepts BOTH IPv4 and IPv6 on the
 # same port. Binding 0.0.0.0 *and* [::] separately makes gunicorn's IPv6

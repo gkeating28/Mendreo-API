@@ -233,8 +233,22 @@ REST_FRAMEWORK = {
     ),
 }
 
+def _normalize_broker_url(url: str) -> str:
+    """Upgrade redis:// to rediss:// (TLS) for hosts that require it.
+
+    Upstash (and similar managed Redis providers) require TLS on their
+    public endpoint; a plain redis:// URL fails the connection immediately,
+    and Celery/kombu will then retry it forever in a tight loop. On a
+    CPU-constrained host that retry storm can starve other processes
+    (e.g. Gunicorn) sharing the same container of CPU time.
+    """
+    if url.startswith('redis://') and '.upstash.io' in url:
+        return 'rediss://' + url[len('redis://'):]
+    return url
+
+
 # Celery - controls the background/async tasks used
-CELERY_BROKER_URL = os.environ.get('BROKER_URL', 'memory://')
+CELERY_BROKER_URL = _normalize_broker_url(os.environ.get('BROKER_URL', 'memory://'))
 # celery - makes tasks synchronous for tests/local when DEBUG is true.
 # On Replit there is no Celery worker/broker, so CELERY_TASK_ALWAYS_EAGER=True
 # is set in the environment to run tasks inline in the web process.
