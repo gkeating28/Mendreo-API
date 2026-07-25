@@ -132,13 +132,28 @@ WSGI_APPLICATION = 'mendreo.wsgi.application'
 
 default_db = {
     **_database_settings(),
-    # Reuse DB connections across requests on long-lived workers (Gunicorn).
-    # Vercel/serverless should use DATABASE_CONN_MAX_AGE=0 with a pooler.
-    'CONN_MAX_AGE': int(os.environ.get(
-        'DATABASE_CONN_MAX_AGE',
-        '0' if DEPLOYMENT_TARGET == 'vercel' else '300',
-    )),
+    # SUPABASE_DEV_DB_URL points at Supabase's own connection pooler, which
+    # can silently drop idle backend connections. If Django holds onto its
+    # own long-lived connection (CONN_MAX_AGE > 0) past that point, the next
+    # request's query hangs on a half-dead socket for ~30s before finally
+    # erroring out (surfaced as HTTP 500s after a long delay on Railway).
+    # Since the pooler already does connection reuse for us, let Django open
+    # a fresh (pooled) connection per request instead of layering our own
+    # long-lived one on top.
+    'CONN_MAX_AGE': int(os.environ.get('DATABASE_CONN_MAX_AGE', '0')),
     'CONN_HEALTH_CHECKS': True,
+    'OPTIONS': {
+        'connect_timeout': int(os.environ.get('DATABASE_CONNECT_TIMEOUT', '10')),
+        # Detect a silently-dropped connection via TCP keepalive instead of
+        # waiting on OS-default retransmission timeouts (which can be minutes).
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 3,
+        # Cap any single query so a runaway/blocked query can't hang a
+        # Gunicorn worker forever either.
+        'options': f"-c statement_timeout={os.environ.get('DATABASE_STATEMENT_TIMEOUT_MS', '20000')}",
+    },
 }
 
 default_db["TEST"] = {
