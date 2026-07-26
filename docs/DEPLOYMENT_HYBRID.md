@@ -59,6 +59,40 @@ BROKER_URL=rediss://default:<token>@<host>.upstash.io:6379
 
 Use the same `BROKER_URL` on both Vercel and the worker.
 
+### Object storage (Supabase Storage)
+
+All images, uploaded files, and consumer chat logs are stored in **Supabase
+Storage**, accessed through its S3-compatible API (the app still uses
+`boto3` — only the endpoint/credentials changed, not the client library).
+
+1. In the Supabase dashboard: **Storage → Settings → S3 Access Keys** → create a new key pair.
+2. Also on that page, copy the **endpoint** and **region**.
+3. Create **two buckets**:
+   - one **public** bucket for images/files (served via public URLs and the image-render/transform endpoint)
+   - one **private** bucket for chat logs (contains consumer PII — must not be public)
+
+```env
+SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
+SUPABASE_STORAGE_S3_ENDPOINT=https://<project_ref>.storage.supabase.co/storage/v1/s3
+SUPABASE_STORAGE_ACCESS_KEY_ID=<from step 1>
+SUPABASE_STORAGE_SECRET_ACCESS_KEY=<from step 1>
+SUPABASE_STORAGE_REGION=<from step 1>
+SUPABASE_STORAGE_BUCKET=<public bucket name>
+SUPABASE_STORAGE_PRIVATE_BUCKET=<private bucket name>
+```
+
+Use identical values on both Vercel and the worker.
+
+**On-the-fly image resizing** (thumbnail/banner) uses Supabase's
+[image transformation endpoint](https://supabase.com/docs/guides/storage/serving/image-transformations),
+which requires the **Pro plan or above**. If you're on the Free plan, image
+`thumbnail`/`banner` URLs will 400 until you upgrade — `original` still
+works either way.
+
+**Migrating existing data from AWS S3:** run `python scripts/migrate_s3_to_supabase.py`
+(see the script's docstring for required env vars and a `--dry-run` flag) to
+copy every object from the old bucket into the new one before decommissioning AWS.
+
 ### Shared secrets
 
 Generate strong random values for:
@@ -103,7 +137,12 @@ GENERAL_HOST_DOMAIN=.railway.app,your-worker-domain.com
 DATABASE_* or SUPABASE_DEV_DB_URL
 BROKER_URL=rediss://...
 GOOGLE_API_KEY=...
-AWS_*=...
+SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
+SUPABASE_STORAGE_S3_ENDPOINT=https://<project_ref>.storage.supabase.co/storage/v1/s3
+SUPABASE_STORAGE_ACCESS_KEY_ID=...
+SUPABASE_STORAGE_SECRET_ACCESS_KEY=...
+SUPABASE_STORAGE_BUCKET=...          # public bucket: images/files
+SUPABASE_STORAGE_PRIVATE_BUCKET=...  # private bucket: chat logs (PII)
 SENDGRID_API_KEY=...
 STRIPE_SECRET_KEY=...
 INTERNAL_API_SECRET=<same-as-vercel>
@@ -144,7 +183,12 @@ CRON_SECRET=<random-for-vercel-cron>
 AI_WORKER_TIMEOUT=120
 VERCEL_SUPPORT_LARGE_FUNCTIONS=1
 GOOGLE_API_KEY=...
-AWS_*=...
+SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
+SUPABASE_STORAGE_S3_ENDPOINT=https://<project_ref>.storage.supabase.co/storage/v1/s3
+SUPABASE_STORAGE_ACCESS_KEY_ID=...
+SUPABASE_STORAGE_SECRET_ACCESS_KEY=...
+SUPABASE_STORAGE_BUCKET=...          # same values as worker
+SUPABASE_STORAGE_PRIVATE_BUCKET=...  # same values as worker
 SENDGRID_API_KEY=...
 STRIPE_SECRET_KEY=...
 # OAuth / survey vars as needed
@@ -187,7 +231,7 @@ If Vercel is healthy but chat fails, the worker may still be running a pre-hybri
 | `BROKER_URL` | `rediss://...` (Upstash TLS) |
 | `INTERNAL_API_SECRET` | same as Vercel |
 | `GOOGLE_API_KEY` | Gemini key |
-| `AWS_*`, `SENDGRID_*`, `STRIPE_*` | as needed |
+| `SUPABASE_STORAGE_*` (object storage), `SENDGRID_*`, `STRIPE_*` | as needed |
 
 Do **not** set `AI_WORKER_URL` on the worker.
 

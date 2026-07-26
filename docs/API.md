@@ -107,7 +107,7 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 
 | Method | Path | Function |
 |---|---|---|
-| POST | `/files` | Upload a file (returns S3 upload link) |
+| POST | `/files` | Upload a file (returns a presigned Supabase Storage upload link) |
 | GET, PATCH, DELETE | `/files/<id>` | Manage a file record |
 | POST | `/images` | Upload an image |
 | GET, PATCH, DELETE | `/images/<id>` | Manage an image record |

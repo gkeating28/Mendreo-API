@@ -10,7 +10,7 @@ for every API module under `mendreo/api/*`:
 - the shared `Smart*` view machinery that governs filtering, pagination, transactions,
   soft-deletes and PII obscuring, and
 - the non-CRUD flows (sessions, the message → LLM → write loop, exercise duplication,
-  S3 uploads, Stripe subscriptions) and which of their side effects hit the DB vs. an
+  Supabase Storage uploads, Stripe subscriptions) and which of their side effects hit the DB vs. an
   external system.
 
 Everything below was verified against the source in `mendreo/api/`.
@@ -78,8 +78,8 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 
 | Model | Key fields | Relationships |
 |---|---|---|
-| **Image** (`api/image/models.py`) | `id` (`img_`), `original` (S3 path), `name`, `width`, `height`, `blur_hash`, `uploaded`, `extension`, `size`, `token` | `created_by` → `User` (`CASCADE`). `Image.generate()` calls the AI image API and uploads to S3. |
-| **File** (`api/file/models.py`) | `id` (`file_`), `name`, `extension`, `content_type`, `url`, `size`, `duration`, `token`, `uploaded` | `created_by` → `User` (`DO_NOTHING`). `get_url()` prefixes CloudFront domain. |
+| **Image** (`api/image/models.py`) | `id` (`img_`), `original` (Supabase Storage key), `name`, `width`, `height`, `blur_hash`, `uploaded`, `extension`, `size`, `token` | `created_by` → `User` (`CASCADE`). `Image.generate()` calls the AI image API and uploads to Supabase Storage. |
+| **File** (`api/file/models.py`) | `id` (`file_`), `name`, `extension`, `content_type`, `url`, `size`, `duration`, `token`, `uploaded` | `created_by` → `User` (`DO_NOTHING`). `get_url()` prefixes the Supabase Storage public object URL. |
 
 ### 1.6 Billing
 
@@ -372,7 +372,8 @@ Not an endpoint, but the engine behind §7 and summaries.
   renders a template file (`api/utils/files/{general,exercise}_prompt.txt`); then **writes
   `session.cached_prompt`**.
 - **`update_summary(summary, date, freezer)`**: reads a day's sessions+messages
-  (`Session.get_with_messages`), appends a chat log to **S3** (`consumers/<id>/chat_log.txt`),
+  (`Session.get_with_messages`), appends a chat log to **Supabase Storage** (private bucket,
+  `consumers/<id>/chat_log.txt`),
   asks the LLM for updated `detailed`/`observations`/`next_steps` and **saves** the `Summary`.
   Per session it also runs `update_session` which asks the LLM for `subject`/`rating`/
   `rating_reason`/`risk_level`, aggregates message `usage`, and **saves the `Session`**.
@@ -440,15 +441,18 @@ mutations are DB writes.
 
 ---
 
-## 11. Files & images (S3 uploads) — `/files`, `/images`
+## 11. Files & images (Supabase Storage uploads) — `/files`, `/images`
 
-Both follow a **presigned-URL** pattern: the API creates a DB record and returns an S3 PUT URL;
-the client uploads the bytes to S3 directly; a follow-up `PATCH` marks the record uploaded.
+Object storage is **Supabase Storage**, accessed via its S3-compatible API (still `boto3`
+under the hood, just pointed at Supabase's endpoint instead of AWS — see
+`docs/DEPLOYMENT_HYBRID.md`). Both endpoints follow a **presigned-URL** pattern: the API
+creates a DB record and returns a presigned PUT URL; the client uploads the bytes directly
+to storage; a follow-up `PATCH` marks the record uploaded.
 
 ### `POST /files` — `Create` (Admin) / `POST /images` — `Create` (Admin or Consumer)
 - `inject_user(request, "created_by")` stamps the owner.
-- Create serializer inserts the `File`/`Image` row (with the intended S3 path in `url`/`original`).
-- `File.get_upload_link(...)` / `File.get_upload_link(image.original)` generates a **presigned S3
+- Create serializer inserts the `File`/`Image` row (with the intended storage key in `url`/`original`).
+- `File.get_upload_link(...)` / `File.get_upload_link(image.original)` generates a **presigned
   PUT URL** (`api/utils/File.py`, `boto3.generate_presigned_url`, 1-hour expiry). For files a
   `token` (shortuuid) is generated and **saved** for later verification.
 - Response: `{ pre_signed_url, file|image, filename }`. No bytes touch the server.
@@ -458,10 +462,10 @@ the client uploads the bytes to S3 directly; a follow-up `PATCH` marks the recor
   `created_by=request.user` — so only the uploader, holding the token, can finalize the record.
 - `PATCH` (`partial=False`) typically flips `uploaded=True` and stores final metadata.
 - `Image.generate(...)` (used by AI post generation, §12) is a server-side variant: it calls the
-  AI image API, **inserts** an `Image` row, uploads bytes to S3 via `File.upload`, then sets
+  AI image API, **inserts** an `Image` row, uploads bytes to storage via `File.upload`, then sets
   `uploaded=True`.
 
-S3 is the external system here; the `File`/`Image` rows are the DB side.
+Supabase Storage is the external system here; the `File`/`Image` rows are the DB side.
 
 ---
 
@@ -475,7 +479,7 @@ S3 is the external system here; the `File`/`Image` rows are the DB side.
   `Post.generate` → `AI.generate_article` + `Image.generate` and **updates** the post with the
   AI title/subtitle/body and generated banner/thumbnail image.
 - The synchronous response returns the placeholder post; the real content is filled in
-  asynchronously. External systems: the LLM (article text) and AI image API + S3 (banner).
+  asynchronously. External systems: the LLM (article text) and AI image API + Supabase Storage (banner).
 
 ---
 
@@ -510,7 +514,7 @@ S3 is the external system here; the `File`/`Image` rows are the DB side.
 - **External systems** (writes to these are *not* DB writes):
   - **LLM (Google Gemini via pydantic-ai)** — message responses (§7/§8), summaries, article and
     session grading text.
-  - **AWS S3 / CloudFront** — file/image bytes and the appended per-consumer chat logs (§8/§11).
+  - **Supabase Storage** — file/image bytes and the appended per-consumer chat logs (§8/§11).
   - **Stripe / Apple / Google** — subscription lifecycle and receipt validation (§10).
   - **SendGrid (email) via Celery** — verification/reset codes and notifications (task enqueues,
     not DB writes, though the tasks themselves may stamp `verification_code*` on `User`).

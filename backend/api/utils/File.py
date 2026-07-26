@@ -9,17 +9,17 @@ from botocore.config import Config
 # set boto lib debug to critical
 logging.getLogger('boto').setLevel(logging.CRITICAL)
 
-region = "eu-west-1"
-
+# Object storage lives on Supabase Storage, reached via its S3-compatible API
+# (see api/utils/Api.py for env var docs). Supabase's S3 gateway requires
+# path-style addressing ("forcePathStyle") rather than the virtual-hosted
+# style AWS uses by default.
 s3 = boto3.client(
     's3',
-    aws_access_key_id=Api.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=Api.AWS_SECRET_ACCESS_KEY,
-    region_name=region,
-    # todo remove addressing_style and endpoint url in future when S3 dns propagates?
-    # https://github.com/boto/boto3/issues/2989#issuecomment-915011727
-    config=Config(signature_version='s3v4', s3={'addressing_style': 'virtual'}),
-    endpoint_url=f'https://s3.{region}.amazonaws.com',
+    aws_access_key_id=Api.SUPABASE_STORAGE_ACCESS_KEY_ID,
+    aws_secret_access_key=Api.SUPABASE_STORAGE_SECRET_ACCESS_KEY,
+    region_name=Api.SUPABASE_STORAGE_REGION,
+    config=Config(signature_version='s3v4', s3={'addressing_style': 'path'}),
+    endpoint_url=Api.SUPABASE_STORAGE_S3_ENDPOINT,
 )
 
 IMAGE_UPLOAD_ACCEPTABLE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "svg"]
@@ -27,7 +27,7 @@ IMAGE_UPLOAD_ACCEPTABLE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "svg"]
 
 def upload(data, full_path, content_type=None, public=True):
     try:
-        s3.put_object(Bucket=Api.AWS_S3_BUCKET_NAME, Key=_get_key(full_path), Body=data)
+        s3.put_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=_get_key(full_path), Body=data)
     except Exception as error:
         print(error)
         return "Upload error: {}".format(error)
@@ -53,7 +53,7 @@ def get_image_extension(file):
 def get_upload_link(path):
     link = s3.generate_presigned_url(
         'put_object',
-        Params={'Bucket': Api.AWS_S3_BUCKET_NAME, 'Key': _get_key(path)},
+        Params={'Bucket': Api.SUPABASE_STORAGE_BUCKET, 'Key': _get_key(path)},
         ExpiresIn=3600
     )
     return link
@@ -63,18 +63,18 @@ def delete(file_url):
     if not file_url:
         return
 
-    response = s3.delete_object(Bucket=Api.AWS_S3_BUCKET_NAME, Key=file_url)
+    response = s3.delete_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=_get_key(file_url))
 
     # Check response for success
     if response['ResponseMetadata']['HTTPStatusCode'] == 204:
-        print(f"File '{file_url}' deleted successfully from bucket '{Api.AWS_S3_BUCKET_NAME}'.")
+        print(f"File '{file_url}' deleted successfully from bucket '{Api.SUPABASE_STORAGE_BUCKET}'.")
     else:
-        print(f"Failed to delete file '{file_url}' from bucket '{Api.AWS_S3_BUCKET_NAME}'.")
+        print(f"Failed to delete file '{file_url}' from bucket '{Api.SUPABASE_STORAGE_BUCKET}'.")
 
 
 def exists(file_url):
     try:
-        s3.head_object(Bucket=Api.AWS_S3_BUCKET_NAME, Key=_get_key(file_url))
+        s3.head_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=_get_key(file_url))
         return True
     except ClientError as e:
         return False

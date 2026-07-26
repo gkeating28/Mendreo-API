@@ -97,11 +97,13 @@ jobs:
           echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> $GITHUB_ENV
           echo "DATABASE_HOST=${{ secrets.DATABASE_HOST }}" >> $GITHUB_ENV
           echo "DATABASE_PORT=${{ secrets.DATABASE_PORT }}" >> $GITHUB_ENV
-          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
-          echo "AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }}" >> $GITHUB_ENV
-          echo "AWS_CLOUD_FRONT_DOMAIN=${{ secrets.AWS_CLOUD_FRONT_DOMAIN }}" >> $GITHUB_ENV
-          echo "AWS_CLOUD_FRONT_RESIZER_DOMAIN=${{ secrets.AWS_CLOUD_FRONT_RESIZER_DOMAIN }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_URL=${{ secrets.SUPABASE_STORAGE_URL }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_S3_ENDPOINT=${{ secrets.SUPABASE_STORAGE_S3_ENDPOINT }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_ACCESS_KEY_ID=${{ secrets.SUPABASE_STORAGE_ACCESS_KEY_ID }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_SECRET_ACCESS_KEY=${{ secrets.SUPABASE_STORAGE_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_REGION=${{ secrets.SUPABASE_STORAGE_REGION }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_BUCKET=${{ secrets.SUPABASE_STORAGE_BUCKET }}" >> $GITHUB_ENV
+          echo "SUPABASE_STORAGE_PRIVATE_BUCKET=${{ secrets.SUPABASE_STORAGE_PRIVATE_BUCKET }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
           echo "SENDGRID_API_ID=${{ secrets.SENDGRID_API_ID }}" >> $GITHUB_ENV
           echo "SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}" >> $GITHUB_ENV
@@ -140,11 +142,13 @@ jobs:
           [ -n "$GENERAL_SECRET_KEY" ] || echo "GENERAL_SECRET_KEY=ci-test-secret-key" >> $GITHUB_ENV
           [ -n "$GENERAL_DEBUG" ] || echo "GENERAL_DEBUG=True" >> $GITHUB_ENV
           [ -n "$BROKER_URL" ] || echo "BROKER_URL=memory://" >> $GITHUB_ENV
-          [ -n "$AWS_ACCESS_KEY_ID" ] || echo "AWS_ACCESS_KEY_ID=testing" >> $GITHUB_ENV
-          [ -n "$AWS_SECRET_ACCESS_KEY" ] || echo "AWS_SECRET_ACCESS_KEY=testing" >> $GITHUB_ENV
-          [ -n "$AWS_S3_BUCKET_NAME" ] || echo "AWS_S3_BUCKET_NAME=ci-test-bucket" >> $GITHUB_ENV
-          [ -n "$AWS_CLOUD_FRONT_DOMAIN" ] || echo "AWS_CLOUD_FRONT_DOMAIN=ci.example.com" >> $GITHUB_ENV
-          [ -n "$AWS_CLOUD_FRONT_RESIZER_DOMAIN" ] || echo "AWS_CLOUD_FRONT_RESIZER_DOMAIN=ci-resizer.example.com" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_URL" ] || echo "SUPABASE_STORAGE_URL=https://ci-test.supabase.co" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_S3_ENDPOINT" ] || echo "SUPABASE_STORAGE_S3_ENDPOINT=https://ci-test.storage.supabase.co/storage/v1/s3" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_ACCESS_KEY_ID" ] || echo "SUPABASE_STORAGE_ACCESS_KEY_ID=testing" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_SECRET_ACCESS_KEY" ] || echo "SUPABASE_STORAGE_SECRET_ACCESS_KEY=testing" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_REGION" ] || echo "SUPABASE_STORAGE_REGION=us-east-1" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_BUCKET" ] || echo "SUPABASE_STORAGE_BUCKET=ci-test-bucket" >> $GITHUB_ENV
+          [ -n "$SUPABASE_STORAGE_PRIVATE_BUCKET" ] || echo "SUPABASE_STORAGE_PRIVATE_BUCKET=ci-test-private-bucket" >> $GITHUB_ENV
 
       - name: Run Migrations
         run: |

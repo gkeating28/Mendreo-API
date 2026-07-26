@@ -11,7 +11,7 @@ Django/DRF backend for Mendreo. See [`docs/API.md`](docs/API.md) for endpoint re
 Optional for full feature parity:
 
 - **Redis** — only if running Celery worker/beat (`Procfile`); local dev uses `CELERY_TASK_ALWAYS_EAGER=True` instead
-- **AWS S3 / CloudFront** — file and image uploads
+- **Supabase Storage** — file and image uploads (via its S3-compatible API)
 - **SendGrid** — transactional email
 - **Stripe** — subscriptions
 - **Google API key** — Gemini AI chat and image generation
@@ -54,7 +54,7 @@ Health check: `curl http://127.0.0.1:5000/` → `{"service":"mendreo-api","statu
 | `CELERY_TASK_ALWAYS_EAGER` | No | Run async tasks inline (default in dev) |
 | `BROKER_URL` | No | Celery broker (`memory://` for local) |
 | `GOOGLE_API_KEY` | For AI | Gemini models for chat/sessions |
-| `AWS_*` | For uploads | S3 storage and CloudFront CDN |
+| `SUPABASE_STORAGE_*` | For uploads | Supabase Storage (S3-compatible object storage + image CDN) |
 | `SENDGRID_API_KEY` | For email | Password reset, verification |
 | `STRIPE_SECRET_KEY` | For billing | Subscriptions |
 | OAuth / Apple / survey vars | Optional | Social login and survey flows |
