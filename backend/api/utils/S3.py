@@ -4,30 +4,30 @@ from botocore.exceptions import ClientError
 
 from . import Api
 
-BUCKET_NAME = Api.AWS_S3_BUCKET_NAME
-
-region = "eu-west-1"
+# Chat logs contain consumer PII and always go in the private bucket (see
+# api/utils/Api.py). Supabase Storage's S3 gateway also requires path-style
+# addressing, same as api/utils/File.py.
+BUCKET_NAME = Api.SUPABASE_STORAGE_PRIVATE_BUCKET
 
 s3_client = boto3.client(
     's3',
-    aws_access_key_id=Api.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=Api.AWS_SECRET_ACCESS_KEY,
-    region_name=region,
-    # todo remove addressing_style and endpoint url in future when S3 dns propagates?
-    # https://github.com/boto/boto3/issues/2989#issuecomment-915011727
-    config=Config(signature_version='s3v4', s3={'addressing_style': 'virtual'}),
-    endpoint_url=f'https://s3.{region}.amazonaws.com',
+    aws_access_key_id=Api.SUPABASE_STORAGE_ACCESS_KEY_ID,
+    aws_secret_access_key=Api.SUPABASE_STORAGE_SECRET_ACCESS_KEY,
+    region_name=Api.SUPABASE_STORAGE_REGION,
+    config=Config(signature_version='s3v4', s3={'addressing_style': 'path'}),
+    endpoint_url=Api.SUPABASE_STORAGE_S3_ENDPOINT,
 )
 
 
 def upload_text(key: str, text: str):
-    """Upload plain text to S3 (overwrites existing)."""
+    """Upload plain text (overwrites existing). Bucket privacy is enforced
+    at the bucket level in Supabase (see BUCKET_NAME) -- unlike AWS S3,
+    Supabase's S3 gateway doesn't support per-object ACLs."""
     s3_client.put_object(
         Bucket=BUCKET_NAME,
         Key=key,
         Body=text.encode("utf-8"),
         ContentType="text/plain",
-        ACL="private"  # ensure private access
     )
 
 

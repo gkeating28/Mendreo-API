@@ -109,13 +109,21 @@ class ImageListSerializer(ListModelSerializer):
         if original.startswith("http"):
             return original
 
+        bucket_path = f"{Api.SUPABASE_STORAGE_BUCKET}{original}"
+
         if size_type == Constants.IMAGE_SIZE_TYPE_ORIGINAL:
-            return "https://" + Api.AWS_CLOUD_FRONT_DOMAIN + original
+            return f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/public/{bucket_path}"
 
+        # Supabase's on-the-fly image transform endpoint (Pro plan and above:
+        # https://supabase.com/docs/guides/storage/serving/image-transformations)
+        # replaces CloudFront's path-based "/fit-in/WxH" resizer with query
+        # params instead.
         size = Constants.IMAGE_SIZE_THUMBNAIL if size_type == Constants.IMAGE_SIZE_TYPE_THUMBNAIL else Constants.IMAGE_SIZE_BANNER
-        url = f"https://{Api.AWS_CLOUD_FRONT_RESIZER_DOMAIN}/fit-in/{size}{original}"
-
-        return url
+        width, height = size.split("x")
+        return (
+            f"{Api.SUPABASE_STORAGE_URL}/storage/v1/render/image/public/{bucket_path}"
+            f"?width={width}&height={height}&resize=cover"
+        )
 
     def get_resizer_url(self, image):
         if not image.uploaded:
@@ -127,7 +135,12 @@ class ImageListSerializer(ListModelSerializer):
         if ext not in ["jpg", "jpeg", "png", "tiff", "webp", "svg"]:
             return None
 
-        return f"https://{Api.AWS_CLOUD_FRONT_RESIZER_DOMAIN}/fit-in/"
+        # NOTE: contract change from the old CloudFront resizer_url. Clients
+        # used to build custom sizes as `{resizer_url}{WxH}{path}` (path
+        # segment). Supabase's render endpoint takes width/height as query
+        # params instead, so clients must now build:
+        #   `{resizer_url}{path}?width=W&height=H&resize=cover|contain|fill`
+        return f"{Api.SUPABASE_STORAGE_URL}/storage/v1/render/image/public/{Api.SUPABASE_STORAGE_BUCKET}"
 
     def get_path(self, image):
         if not image.uploaded:

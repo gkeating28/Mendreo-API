@@ -10,7 +10,7 @@ from ..utils.Fields import CharIDField
 class File(SmartModel):
     """
     Model instance for storing a reference to a file uploaded to the platform.
-    The file itself is stored on AWS S3 bucket
+    The file itself is stored in Supabase Storage.
     """
 
     id = CharIDField(primary_key=True, prefix="file_")
@@ -41,4 +41,6 @@ class File(SmartModel):
         if self.url.startswith("http"):
             return self.url
 
-        return "https://" + Api.AWS_CLOUD_FRONT_DOMAIN + self.url
+        # self.url is a storage key with a leading slash, e.g.
+        # "/consumers/<id>/files/<uuid>.pdf".
+        return f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/public/{Api.SUPABASE_STORAGE_BUCKET}{self.url}"
