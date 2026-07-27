@@ -57,6 +57,7 @@ Health check: `curl http://127.0.0.1:5000/` → `{"service":"mendreo-api","statu
 | `SUPABASE_STORAGE_*` | For uploads | Supabase Storage (S3-compatible object storage + image CDN) |
 | `SENDGRID_API_KEY` | For email | Password reset, verification |
 | `STRIPE_SECRET_KEY` | For billing | Subscriptions |
+| `BYPASS_SUBSCRIPTION` | Temporary | `true` skips Stripe paywall (complimentary active subs). Remove once billing works. |
 | OAuth / Apple / survey vars | Optional | Social login and survey flows |
 
 `set_db_env.sh` parses `SUPABASE_DEV_DB_URL` into `DATABASE_*` when set (used on Replit). Locally, set `DATABASE_*` directly in `.env.local`.

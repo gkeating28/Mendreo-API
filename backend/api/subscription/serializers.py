@@ -10,7 +10,7 @@ from ..payment.serializers import (
     PaymentDetailSerializer
 )
 
-from ..utils import DateUtils
+from ..utils import DateUtils, Api
 
 
 from .models import Subscription
@@ -46,7 +46,8 @@ class SubscriptionEditSerializer(EditModelSerializer):
             payment = payment_serializer.create(payment_serializer.validated_data)
             attrs["payment"] = payment
 
-        active = True if payment else False
+        # Without Stripe: allow activating a package with no payment when bypass is on.
+        active = True if payment or (Api.BYPASS_SUBSCRIPTION and package) else False
 
         if active:
             attrs["unsubscribed_at"] = None
