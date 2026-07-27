@@ -11,7 +11,8 @@ from rest_framework import status
 class EditTest(BaseEditTest):
 
     def get_valid_edit_data_variations_for_consumer(self, consumer, obj) -> [EditData]:
-        response = General.upload_to_s3(self.pre_signed_url, "sample.pdf")
+        pre_signed_url, content_type = FileUtils.get_upload_link(obj.original)
+        response = General.upload_to_s3(pre_signed_url, "sample.pdf", content_type=content_type)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -22,8 +23,8 @@ class EditTest(BaseEditTest):
         ]
 
     def get_valid_edit_data_variations_for_admin(self, admin, image) -> [EditData]:
-        pre_signed_url = FileUtils.get_upload_link(image.original)
-        response = General.upload_to_s3(pre_signed_url, "sample.pdf")
+        pre_signed_url, content_type = FileUtils.get_upload_link(image.original)
+        response = General.upload_to_s3(pre_signed_url, "sample.pdf", content_type=content_type)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 

@@ -13,8 +13,8 @@ class EditTest(BaseEditTest):
         super().setUp()
 
     def get_valid_edit_data_variations_for_admin(self, admin, file) -> [EditData]:
-        pre_signed_url = FileUtils.get_upload_link(file.url)
-        response = General.upload_to_s3(pre_signed_url, "sample.pdf")
+        pre_signed_url, content_type = FileUtils.get_upload_link(file.url)
+        response = General.upload_to_s3(pre_signed_url, "sample.pdf", content_type=content_type)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 

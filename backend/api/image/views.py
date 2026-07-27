@@ -33,10 +33,11 @@ class Create(SmartAPIView):
         create_serializer.is_valid(raise_exception=True)
         image = create_serializer.save()
 
-        pre_signed_url = File.get_upload_link(image.original)
+        pre_signed_url, content_type = File.get_upload_link(image.original)
 
         data = {
             "pre_signed_url": pre_signed_url,
+            "content_type": content_type,
             "image": ImageDetailSerializer(image).data
         }
 
@@ -44,7 +45,7 @@ class Create(SmartAPIView):
 
 
 class Edit(SmartDetailAPIView):
-    permission_classes = [IsAdminPermission]
+    permission_classes = [IsAdminPermission | IsConsumerPermission]
 
     model = Image
     edit_serializer = ImageUploadEditSerializer

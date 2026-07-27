@@ -56,6 +56,7 @@ class CreateTest(BaseCreateTest):
 
     def validate_create_response_data(self, create_data, response_json):
         self.assertIsNotNone(response_json["pre_signed_url"])
+        self.assertIsNotNone(response_json["content_type"])
         self.assertIsNotNone(response_json["file"]["url"])
 
         self.assertEqual(response_json["file"]["name"], create_data["name"])
