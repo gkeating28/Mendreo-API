@@ -9,7 +9,6 @@ from ..message.models import Message
 from ..participant.models import Participant
 from ..participant.serializers import ParticipantListSerializer
 
-from ..utils.AIWorkerClient import request_agent_response
 from ..utils.Serializers import CreateModelSerializer, ListModelSerializer
 
 
@@ -48,8 +47,11 @@ class MessageCreateSerializer(CreateModelSerializer):
         return attrs
 
     def handle_create(self, validated_data):
-        message = super(MessageCreateSerializer, self).handle_create(validated_data=validated_data)
-        return request_agent_response(user_message=message, session=message.session)
+        # AI response is triggered from the view AFTER the surrounding
+        # transaction commits. Calling the Railway worker here (inside
+        # @transaction.atomic) means the worker's DB connection cannot see
+        # this row yet → get_object_or_404 → 404 → client JSON parse errors.
+        return super(MessageCreateSerializer, self).handle_create(validated_data=validated_data)
 
 
 class MessageListSerializer(ListModelSerializer):
