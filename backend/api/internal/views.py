@@ -2,6 +2,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+import time
 
 from ..agent.models import Agent
 from ..message.models import Message
@@ -18,7 +19,20 @@ class MessageResponse(APIView):
 
     def post(self, request):
         require_internal_secret(request)
-        user_message = get_object_or_404(Message, id=request.data.get("user_message_id"))
+        user_message_id = request.data.get("user_message_id")
+        # Brief retries cover rare pooler visibility lag after Vercel commits.
+        user_message = None
+        for attempt in range(3):
+            user_message = Message.objects.filter(id=user_message_id).first()
+            if user_message:
+                break
+            if attempt < 2:
+                time.sleep(0.05 * (attempt + 1))
+        if not user_message:
+            return Response(
+                {"detail": f"Message {user_message_id} not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         agent_message = Agent.get_response(user_message=user_message, session=user_message.session)
         apply_agent_response(user_message, agent_message)
         return Response({"agent_message_id": agent_message.id}, status=status.HTTP_200_OK)
