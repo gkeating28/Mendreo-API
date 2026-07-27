@@ -1,12 +1,16 @@
 import os
 
-# Object storage: Supabase Storage, accessed via its S3-compatible API.
-# https://supabase.com/docs/guides/storage/s3/authentication
+# Object storage: Supabase Storage.
+# Browser uploads use native REST signed upload URLs (see api/utils/File.py).
+# S3-compatible credentials remain for fallbacks / private chat-log helpers.
+# https://supabase.com/docs/guides/storage/uploads/standard-uploads
 #
 # SUPABASE_STORAGE_URL      e.g. https://<project_ref>.supabase.co
 #                           (used to build public object + image-render URLs)
+# SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY
+#                           REST signed uploads + object write/exists/delete
 # SUPABASE_STORAGE_S3_ENDPOINT  e.g. https://<project_ref>.storage.supabase.co/storage/v1/s3
-#                           (boto3 endpoint_url; generate S3 access keys under
+#                           (optional boto3 fallback; S3 access keys under
 #                           Project Settings -> Storage -> S3 Access Keys)
 def _default_storage_s3_endpoint(storage_url: str) -> str:
     """Derive https://<ref>.storage.supabase.co/storage/v1/s3 from
@@ -32,7 +36,9 @@ SUPABASE_STORAGE_URL = os.environ.get("SUPABASE_STORAGE_URL", "").rstrip("/")
 SUPABASE_STORAGE_S3_ENDPOINT = os.environ.get("SUPABASE_STORAGE_S3_ENDPOINT") or _default_storage_s3_endpoint(SUPABASE_STORAGE_URL)
 SUPABASE_STORAGE_ACCESS_KEY_ID = os.environ.get("SUPABASE_STORAGE_ACCESS_KEY_ID", "")
 SUPABASE_STORAGE_SECRET_ACCESS_KEY = os.environ.get("SUPABASE_STORAGE_SECRET_ACCESS_KEY", "")
-SUPABASE_STORAGE_REGION = os.environ.get("SUPABASE_STORAGE_REGION", "us-east-1")
+# Must match the region shown in Supabase → Storage → S3 (for this project:
+# eu-west-1). A wrong region produces SignatureDoesNotMatch on every PUT.
+SUPABASE_STORAGE_REGION = os.environ.get("SUPABASE_STORAGE_REGION", "eu-west-1")
 SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "")
 # Supabase Storage sets public/private per BUCKET, not per object (unlike S3
 # ACLs). Chat logs contain consumer PII and must never be publicly readable,
@@ -41,6 +47,21 @@ SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "")
 # private if SUPABASE_STORAGE_BUCKET itself is also private (i.e. don't use
 # a public bucket for both unless you don't set this).
 SUPABASE_STORAGE_PRIVATE_BUCKET = os.environ.get("SUPABASE_STORAGE_PRIVATE_BUCKET", SUPABASE_STORAGE_BUCKET)
+
+# Used for native Supabase Storage REST signed uploads (preferred over S3
+# presigns). Service role bypasses RLS; anon works when public-bucket write
+# policies exist (see storage migration mendreo_public_*).
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "") or os.environ.get("SUPABASE_KEY", "")
+# Anon keys are public by design. Bootstrap this project's deploy if unset so
+# Content Editor uploads work without a new Vercel env var. Prefer setting
+# SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) explicitly in production.
+if not SUPABASE_ANON_KEY and "spoiyfwfrhplzmqhqlsu" in (SUPABASE_STORAGE_URL or ""):
+    SUPABASE_ANON_KEY = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNwb2l5ZndmcmhwbHptcWhxbHN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2OTM1MzcsImV4cCI6MjA5OTI2OTUzN30."
+        "77T4JhPmYrqyPzCjOxNTsnAW5IPJoJXGAWJ4MwFigvU"
+    )
 
 # Legacy AWS S3 credentials — kept only so `scripts/migrate_s3_to_supabase.py`
 # (a one-off command) can read the old bucket during migration. Not used for
