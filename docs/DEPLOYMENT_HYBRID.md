@@ -89,6 +89,11 @@ which requires the **Pro plan or above**. If you're on the Free plan, image
 `thumbnail`/`banner` URLs will 400 until you upgrade — `original` still
 works either way.
 
+**Content Editor uploads:** `POST /images` and `POST /files` return
+`pre_signed_url` **and** `content_type`. The browser PUT must send that
+exact `Content-Type` header (typically `file.type`). Presigned URLs sign
+`content-type;host`; a missing or mismatched header yields Supabase **403**.
+
 **Migrating existing data from AWS S3:** run `python scripts/migrate_s3_to_supabase.py`
 (see the script's docstring for required env vars and a `--dry-run` flag) to
 copy every object from the old bucket into the new one before decommissioning AWS.

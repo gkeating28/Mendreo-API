@@ -121,7 +121,11 @@ def create_image(access_token: str = None, data: dict = None, object_response: b
             return response_json
 
         image = Image.objects.get(id=response_json["image"]["id"])
-        upload_to_s3(response_json["pre_signed_url"], data["name"])
+        upload_to_s3(
+            response_json["pre_signed_url"],
+            data["name"],
+            content_type=response_json.get("content_type"),
+        )
         image.uploaded = set_as_uploaded
         image.name = f"{str(uuid.uuid4())[:2]}{image.name}"
         image.save()
@@ -341,17 +345,29 @@ def upload_file(file_name: str) -> File:
 
     pre_signed_url = response.json["pre_signed_url"]
 
-    upload_to_s3(pre_signed_url, file_name)
+    upload_to_s3(
+        pre_signed_url,
+        file_name,
+        content_type=response.json.get("content_type"),
+    )
 
     return File.objects.get(id=response.json["file"]["id"])
 
 
-def upload_to_s3(pre_signed_url, file_name) -> Response:
+def upload_to_s3(pre_signed_url, file_name, content_type: str = None) -> Response:
     file = open(f"api/tests/utils/files/{file_name}", 'rb')
 
     import requests
 
-    response = requests.put(pre_signed_url, file)
+    headers = {}
+    if content_type:
+        headers["Content-Type"] = content_type
+    elif content_type is None:
+        # Match the signed Content-Type the API now includes by default.
+        from ...utils import File as FileUtils
+        headers["Content-Type"] = FileUtils.content_type_for_path(file_name)
+
+    response = requests.put(pre_signed_url, file, headers=headers)
 
     return response
 

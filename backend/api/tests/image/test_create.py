@@ -68,6 +68,7 @@ class CreateTest(BaseCreateTest):
     def validate_create_response_data(self, create_data, response_json):
 
         self.assertIsNotNone(response_json["pre_signed_url"])
+        self.assertEqual(response_json["content_type"], "image/jpeg")
         self.assertIsNotNone(response_json["image"]["original"])
         self.assertIsNotNone(response_json["image"]["thumbnail"])
         self.assertIsNotNone(response_json["image"]["banner"])

@@ -29,7 +29,7 @@ class Create(SmartAPIView):
         create_serializer.is_valid(raise_exception=True)
         file = create_serializer.save()
 
-        pre_signed_url = FileUtils.get_upload_link(file.url[1:])
+        pre_signed_url, content_type = FileUtils.get_upload_link(file.url[1:])
         file.token = shortuuid.uuid()
         file.save()
 
@@ -38,6 +38,7 @@ class Create(SmartAPIView):
 
         data = {
             "pre_signed_url": pre_signed_url,
+            "content_type": content_type,
             "file": FileDetailSerializer(file).data,
             "filename": filename,
         }
