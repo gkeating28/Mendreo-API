@@ -36,7 +36,7 @@ ARTICLE_SCHEMA = types.Schema(
 
 class AI:
     @staticmethod
-    def ask(prompt: str, schema, model="gemini-2.5-flash", temperature=0.3) -> {}:
+    def ask(prompt: str, schema, model="gemini-3.1-flash-lite", temperature=0.3) -> {}:
         """
         Sends a prompt to Gemini and returns the raw text response.
         """
