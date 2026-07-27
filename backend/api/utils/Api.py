@@ -55,6 +55,12 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 
+# Temporary: skip Stripe/Apple/Google payment requirements. When true,
+# consumers get a complimentary active subscription (no payment row) so the
+# web/mobile clients can skip the paywall. Turn off once billing is wired up.
+# Accepted values: 1/true/yes (case-insensitive).
+BYPASS_SUBSCRIPTION = os.environ.get("BYPASS_SUBSCRIPTION", "").lower() in ("1", "true", "yes")
+
 BUNDLE_ID_IOS = os.environ.get("BUNDLE_ID_IOS", "")
 BUNDLE_ID_ANDROID = os.environ.get("BUNDLE_ID_ANDROID", "")
 
