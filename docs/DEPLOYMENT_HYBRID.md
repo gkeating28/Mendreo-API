@@ -62,23 +62,31 @@ Use the same `BROKER_URL` on both Vercel and the worker.
 ### Object storage (Supabase Storage)
 
 All images, uploaded files, and consumer chat logs are stored in **Supabase
-Storage**, accessed through its S3-compatible API (the app still uses
-`boto3` — only the endpoint/credentials changed, not the client library).
+Storage**.
 
-1. In the Supabase dashboard: **Storage → Settings → S3 Access Keys** → create a new key pair.
-2. Also on that page, copy the **endpoint** and **region**.
-3. Create **two buckets**:
+**Content Editor / public media uploads** use Supabase's native REST
+**signed upload URLs** (not S3 presigns). The API needs either
+`SUPABASE_SERVICE_ROLE_KEY` (preferred) or `SUPABASE_ANON_KEY` plus write
+policies on the public bucket. Chat-log helpers may still use the
+S3-compatible API via `boto3`.
+
+1. Create **two buckets**:
    - one **public** bucket for images/files (served via public URLs and the image-render/transform endpoint)
    - one **private** bucket for chat logs (contains consumer PII — must not be public)
+2. Copy the project URL and (optional) S3 keys from **Storage → S3**.
+3. Set `SUPABASE_ANON_KEY` (Project Settings → API) or `SUPABASE_SERVICE_ROLE_KEY`
+   on Vercel/Railway. Region must match the dashboard (this project: `eu-west-1`).
 
 ```env
 SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
 SUPABASE_STORAGE_S3_ENDPOINT=https://<project_ref>.storage.supabase.co/storage/v1/s3
-SUPABASE_STORAGE_ACCESS_KEY_ID=<from step 1>
-SUPABASE_STORAGE_SECRET_ACCESS_KEY=<from step 1>
-SUPABASE_STORAGE_REGION=<from step 1>
+SUPABASE_STORAGE_ACCESS_KEY_ID=<optional; S3 fallback / private logs>
+SUPABASE_STORAGE_SECRET_ACCESS_KEY=<optional>
+SUPABASE_STORAGE_REGION=<from Storage → S3, e.g. eu-west-1>
 SUPABASE_STORAGE_BUCKET=<public bucket name>
 SUPABASE_STORAGE_PRIVATE_BUCKET=<private bucket name>
+SUPABASE_ANON_KEY=<project anon key>
+# SUPABASE_SERVICE_ROLE_KEY=<project service_role key>  # preferred for writes
 ```
 
 Use identical values on both Vercel and the worker.
@@ -90,9 +98,8 @@ which requires the **Pro plan or above**. If you're on the Free plan, image
 works either way.
 
 **Content Editor uploads:** `POST /images` and `POST /files` return
-`pre_signed_url` **and** `content_type`. The browser PUT must send that
-exact `Content-Type` header (typically `file.type`). Presigned URLs sign
-`content-type;host`; a missing or mismatched header yields Supabase **403**.
+`pre_signed_url` **and** `content_type`. The browser should PUT the file
+bytes with that `Content-Type` header (typically `file.type`).
 
 **Migrating existing data from AWS S3:** run `python scripts/migrate_s3_to_supabase.py`
 (see the script's docstring for required env vars and a `--dry-run` flag) to
