@@ -1,11 +1,12 @@
 from __future__ import unicode_literals
 
+from django.conf import settings
 from django.db import transaction
 
 from .models import Message
 from .serializers import MessageDetailSerializer, MessageCreateSerializer, MessageListSerializer
 from ..utils import QueryParams
-from ..utils.AIWorkerClient import request_agent_response
+from ..utils.AIWorkerClient import enqueue_agent_response, request_agent_response
 from ..utils.Permissions import (
     IsConsumerPermission, IsAdminPermission,
 )
@@ -41,12 +42,18 @@ class ListCreate(SmartPaginationAPIView):
 
         return data
 
+    def override_response_data(self, request, data, instance):
+        if getattr(request, "_ai_pending", False):
+            data = dict(data)
+            data["ai_pending"] = True
+        return data
+
     def post(self, request):
-        """Create the user message, commit, then ask the AI worker.
+        """Create the user message, then run or enqueue the AI reply.
 
         Parent SmartPaginationAPIView.post is @transaction.atomic for the whole
-        request. The hybrid worker uses a separate DB connection, so it must
-        only be called after the message row is committed.
+        request. The hybrid worker uses a separate DB connection, so AI work
+        must only start after the message row is committed.
         """
         if not self.has_permission(request, "POST") or not self.has_role_permission("POST", self.model):
             return self.get_permission_denied_response(request, "POST")
@@ -71,10 +78,17 @@ class ListCreate(SmartPaginationAPIView):
             create_serializer.is_valid(raise_exception=True)
             instance = create_serializer.save()
 
-        # Transaction has committed — Railway can see user_message_id now.
-        instance = request_agent_response(user_message=instance, session=instance.session)
+        # Transaction has committed — Railway / Celery can see user_message_id.
+        if settings.AI_ASYNC_MESSAGES:
+            enqueue_agent_response(instance)
+            request._ai_pending = True
+            # Return the user message immediately; clients poll GET /messages
+            # (or session.last_message) for the agent reply.
+        else:
+            instance = request_agent_response(user_message=instance, session=instance.session)
 
         detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data
+        data = self.override_response_data(request, data, instance)
 
         return self.post_response(request, instance, data)

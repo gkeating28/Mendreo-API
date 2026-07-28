@@ -42,6 +42,29 @@ def today():
     return now().today()
 
 
+def local_date(value=None):
+    """Return a calendar date in the active Django timezone."""
+    if value is None:
+        return timezone.localdate()
+    if isinstance(value, datetime.datetime):
+        if timezone.is_aware(value):
+            return timezone.localtime(value).date()
+        return value.date()
+    return value
+
+
+def day_bounds(day=None):
+    """Return timezone-aware [start, end) datetimes for a calendar day.
+
+    Prefer these over ``created_at__date=…`` so btree indexes on ``created_at``
+    remain usable.
+    """
+    day = local_date(day)
+    start = timezone.make_aware(datetime.datetime.combine(day, datetime.time.min))
+    end = start + datetime.timedelta(days=1)
+    return start, end
+
+
 def tomorrow():
     return days_later(day_count=1)
 

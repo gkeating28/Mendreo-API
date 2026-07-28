@@ -1,8 +1,12 @@
+import logging
+
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from . import Api
+
+logger = logging.getLogger(__name__)
 
 # Chat logs contain consumer PII and always go in the private bucket (see
 # api/utils/Api.py). Supabase Storage's S3 gateway also requires path-style
@@ -45,10 +49,19 @@ def download_text(key: str, return_empty_on_file_not_found: bool = True) -> str:
 
 
 def append_to_txt_file(key, lines):
-    """Also append to a single full log file for quick retrieval."""
+    """Legacy full-file read-rewrite. Prefer ``write_log_chunk`` for new writes."""
     new_block = "\n".join(lines)
     existing_data = download_text(key, return_empty_on_file_not_found=True)
     upload_text(key, existing_data + new_block)
-    # get_file = download_text(key)
-    # print("get_file", get_file)
 
+
+def write_log_chunk(key: str, lines) -> None:
+    """Write a chat-log chunk with a single PUT (no read-modify-write).
+
+    Keys should be unique per session/day so concurrent appends do not race
+    and cost stays O(chunk) instead of O(full history).
+    """
+    body = "\n".join(lines)
+    if not body.endswith("\n"):
+        body += "\n"
+    upload_text(key, body)

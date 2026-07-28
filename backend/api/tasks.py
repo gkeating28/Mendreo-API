@@ -97,15 +97,17 @@ def check_subscriptions():
 )
 def update_daily_summaries():
     from .consumer.models import Consumer
+    from .utils import DateUtils
 
     yesterday = timezone.now().date() - timedelta(days=1)  # previous day
+    start, end = DateUtils.day_bounds(yesterday)
     consumer_ids = Consumer.objects.filter(
-        sessions__created_at__date=yesterday
+        sessions__created_at__gte=start,
+        sessions__created_at__lt=end,
     ).values_list("user_id", flat=True).distinct()
 
     for consumer_id in consumer_ids:
         update_chat_summary.delay_on_commit(consumer_id)
-
 
 @shared_task(
     name="update_chat_summary",
@@ -132,3 +134,48 @@ def generate_post(id_, prompt):
 
     post = Post.objects.get(id=id_)
     Post.generate(post, prompt)
+
+
+@shared_task(
+    name="process_agent_response",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=150,
+    time_limit=180,
+)
+def process_agent_response(user_message_id):
+    """Generate the agent reply for a committed user message (async chat)."""
+    from .agent.models import Agent
+    from .message.models import Message
+    from .utils.MessageFlow import apply_agent_response
+
+    logger.info("Start > process_agent_response %s", user_message_id)
+    user_message = Message.objects.select_related("session").filter(id=user_message_id).first()
+    if not user_message:
+        logger.warning("process_agent_response: message %s not found", user_message_id)
+        return
+
+    agent_message = Agent.get_response(user_message=user_message, session=user_message.session)
+    apply_agent_response(user_message, agent_message)
+    logger.info("End > process_agent_response %s -> %s", user_message_id, agent_message.id)
+
+
+@shared_task(
+    name="process_session_greeting",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=150,
+    time_limit=180,
+)
+def process_session_greeting(session_id):
+    """Generate the exercise opener without blocking session start."""
+    from .session.models import Session
+    from .utils.AIWorkerClient import _run_session_greeting
+
+    logger.info("Start > process_session_greeting %s", session_id)
+    session = Session.objects.filter(id=session_id).first()
+    if not session:
+        logger.warning("process_session_greeting: session %s not found", session_id)
+        return
+    _run_session_greeting(session)
+    logger.info("End > process_session_greeting %s", session_id)

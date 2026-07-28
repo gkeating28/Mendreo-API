@@ -33,10 +33,6 @@ class List(SmartPaginationAPIView):
     role_permission = True  
 
     def add_filters(self, queryset, request):
-        # Nested ExerciseListSerializer renders steps/questions per session;
-        # prefetch to avoid N+1 round-trips to the remote database.
-        queryset = queryset.prefetch_related("exercise__steps", "exercise__questions")
-
         # Internal AI-state blobs (100s of KB per session) — never serialized
         # for lists, so skip pulling them from the remote database entirely.
         queryset = queryset.defer("cached_prompt", "cached_history")
@@ -73,16 +69,23 @@ class Today(SmartAPIView):
     permission_classes = [IsConsumerPermission]
     
     def get(self, request):
-        today_date = DateUtils.today()
+        start, end = DateUtils.day_bounds()
         consumer = self.get_consumer_from_request()
-        session = Session.objects.filter(
-            created_at__date=today_date,
+        queryset = Session.objects.filter(
+            created_at__gte=start,
+            created_at__lt=end,
             consumer=consumer,
             exercise__isnull=True
-        ).first()
+        )
+        queryset = SessionDetailSerializer.optimise(queryset)
+        session = queryset.first()
 
         if not session:
             session = Session.get_or_create(consumer=consumer)
+            # Re-fetch with optimised joins for the response payload.
+            session = SessionDetailSerializer.optimise(
+                Session.objects.filter(id=session.id)
+            ).first()
 
         data = SessionDetailSerializer(session).data
         return Response(data=data, status=status.HTTP_200_OK)
@@ -104,6 +107,9 @@ class Start(SmartAPIView):
         consumer = self.get_consumer_from_request()
 
         session = Session.get_or_create(consumer=consumer, exercise=exercise)
+        session = SessionDetailSerializer.optimise(
+            Session.objects.filter(id=session.id)
+        ).first()
 
         data = SessionDetailSerializer(session).data
         return Response(data=data, status=status.HTTP_200_OK)
@@ -162,12 +168,16 @@ def get_usage(session, consumer):
     today = timezone.localdate()
 
     start_date = today - timedelta(days=9)  # 10 days including today
+    range_start, _ = DateUtils.day_bounds(start_date)
+    _, range_end = DateUtils.day_bounds(today)
 
-    # Aggregate counts per day (timezone-aware)
+    # Aggregate counts per day (timezone-aware); avoid created_at__date so
+    # the (consumer, exercise, created_at) index can be used.
     counts_per_day = (
         Session.objects
         .filter(
-            created_at__date__gte=start_date,
+            created_at__gte=range_start,
+            created_at__lt=range_end,
             consumer=consumer,
             exercise=session.exercise
         )
@@ -180,4 +190,3 @@ def get_usage(session, consumer):
     counts_map = {row['day']: row['count'] for row in counts_per_day}
     days = [start_date + timedelta(days=i) for i in range(10)]
     return [{'date': d.isoformat(), 'count': counts_map.get(d, 0)} for d in days]
-

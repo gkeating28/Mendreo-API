@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 import traceback
 from datetime import timedelta
@@ -317,11 +318,15 @@ def _register_tools(agent: Agent[Dependencies, BaseModel]) -> None:
             }
 
         tags = step.tags.all()
-        assets = Asset.objects.filter()
+        assets = Asset.objects.all()
         if tags:
-            assets = assets.filter(tags__in=tags)
+            assets = assets.filter(tags__in=tags).distinct()
 
-        asset = assets.order_by('?').first()
+        # Avoid ORDER BY random() (full sort). Sample from a capped id list.
+        asset_ids = list(assets.values_list("id", flat=True)[:200])
+        asset = None
+        if asset_ids:
+            asset = Asset.objects.filter(id=random.choice(asset_ids)).first()
 
         ctx.deps.asset = asset
 
@@ -416,9 +421,10 @@ def _append_messages_to_log(user, messages, date, session, session_no):
     lines += ["\n\n"]
 
     user_id = user.id
-    key = f"consumers/{user_id}/chat_log.txt"
+    # One object per session/day — single PUT, no full-history rewrite.
+    key = f"consumers/{user_id}/chat_log/{date:%Y-%m-%d}/{session.id}.txt"
 
-    S3Utils.append_to_txt_file(key=key, lines=lines)
+    S3Utils.write_log_chunk(key=key, lines=lines)
 
 
 def _format_session(session, user_first_name, messages):
@@ -542,17 +548,7 @@ def _prepare_prompt(session: Session) -> str:
             "exercise_summary_notes": exercise_summary.detailed,
         }
     else:
-        exercises = ""
-        for exercise in Exercise.objects.filter(status=Constants.EXERCISE_STATUS_PUBLISHED):
-            exercises += f"""
-                <EXERCISE>
-                    <ID>{exercise.id}</ID>
-                    <TITLE>{exercise.title}</TITLE>
-                    <SUBTITLE>{exercise.subtitle}</SUBTITLE>
-                    <DESCRIPTION>{exercise.description}</TITLE>
-                </EXERCISE>"""
-
-        exercise_extra["exercises"] = exercises
+        exercise_extra["exercises"] = _published_exercises_prompt_block()
 
     prompt = template.format(
         notes=notes,
@@ -596,4 +592,37 @@ def _get_formatted_exercise_steps_text(exercise):
             step_completion_prompt=step.completion_prompt
         )
     return steps
+
+
+_PUBLISHED_EXERCISES_CACHE_KEY = "prompt:published_exercises_v1"
+_PUBLISHED_EXERCISES_CACHE_TTL = 300
+
+
+def _published_exercises_prompt_block() -> str:
+    """Cached catalog of published exercises for the general-chat system prompt."""
+    from django.core.cache import cache
+
+    cached = cache.get(_PUBLISHED_EXERCISES_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    exercises = ""
+    for exercise in Exercise.objects.filter(status=Constants.EXERCISE_STATUS_PUBLISHED).only(
+        "id", "title", "subtitle", "description"
+    ):
+        exercises += f"""
+                <EXERCISE>
+                    <ID>{exercise.id}</ID>
+                    <TITLE>{exercise.title}</TITLE>
+                    <SUBTITLE>{exercise.subtitle}</SUBTITLE>
+                    <DESCRIPTION>{exercise.description}</TITLE>
+                </EXERCISE>"""
+
+    cache.set(_PUBLISHED_EXERCISES_CACHE_KEY, exercises, _PUBLISHED_EXERCISES_CACHE_TTL)
+    return exercises
+
+
+def invalidate_published_exercises_cache():
+    from django.core.cache import cache
+    cache.delete(_PUBLISHED_EXERCISES_CACHE_KEY)
 

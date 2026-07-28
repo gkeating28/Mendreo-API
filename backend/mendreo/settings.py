@@ -276,7 +276,33 @@ AI_WORKER_TIMEOUT = float(os.environ.get('AI_WORKER_TIMEOUT', '120'))
 # whichever Gunicorn worker is handling the request (seen as HTTP 499s piling
 # up on unrelated endpoints once every worker is stuck this way).
 GEMINI_HTTP_TIMEOUT_MS = int(os.environ.get('GEMINI_HTTP_TIMEOUT_MS', str(90 * 1000)))
+# When true, POST /messages (and exercise greetings) enqueue Celery and return
+# immediately. Default on for Vercel so clients are not blocked on Gemini.
+# Local/tests keep sync so CreateTest still sees the agent reply in-process.
+_ai_async_default = 'true' if DEPLOYMENT_TARGET == 'vercel' else 'false'
+AI_ASYNC_MESSAGES = os.environ.get('AI_ASYNC_MESSAGES', _ai_async_default).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
+
+# App cache: Redis when BROKER_URL is redis(s), else per-process locmem.
+# Used for Setting prompts and published exercise catalogs.
+_broker = CELERY_BROKER_URL or ''
+if _broker.startswith(('redis://', 'rediss://')) and 'memory://' not in _broker:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': _broker,
+            'KEY_PREFIX': 'mendreo',
+            'TIMEOUT': 300,
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'mendreo-local',
+            'TIMEOUT': 300,
+        }
+    }
 
 # django debug toolbar
 INTERNAL_IPS = ['127.0.0.1']

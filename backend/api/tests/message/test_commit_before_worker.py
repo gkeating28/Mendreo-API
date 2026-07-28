@@ -1,5 +1,6 @@
 from unittest import mock
 
+from django.test import override_settings
 from rest_framework import status
 
 from ...tests.TestCase import TestCase
@@ -16,6 +17,7 @@ class MessageCommitBeforeWorkerTest(TestCase):
         self.consumer_access_token = Auth.get_access_token(self.consumer.user)
         self.session = General.create_session(consumer=self.consumer)
 
+    @override_settings(AI_ASYNC_MESSAGES=False)
     def test_worker_sees_committed_message(self):
         seen = {}
 
@@ -41,3 +43,30 @@ class MessageCommitBeforeWorkerTest(TestCase):
         mocked.assert_called_once()
         self.assertTrue(seen.get("exists"))
         self.assertEqual(seen.get("id"), response.json["id"])
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
+    def test_async_enqueues_after_commit(self):
+        seen = {}
+
+        def fake_enqueue(user_message):
+            seen["exists"] = Message.objects.filter(id=user_message.id).exists()
+            seen["id"] = user_message.id
+
+        data = Data.valid_message_data(session=self.session, text="Async hello")
+
+        with mock.patch(
+            "api.message.views.enqueue_agent_response",
+            side_effect=fake_enqueue,
+        ) as mocked:
+            response = self._post(
+                "/messages",
+                data,
+                access_token=self.consumer_access_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mocked.assert_called_once()
+        self.assertTrue(seen.get("exists"))
+        self.assertEqual(seen.get("id"), response.json["id"])
+        self.assertTrue(response.json.get("ai_pending"))
+        self.assertEqual(response.json["text"], "Async hello")
