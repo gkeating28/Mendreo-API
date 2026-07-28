@@ -28,12 +28,17 @@ This guide covers the recommended production layout:
 
 | Concern | Vercel alone | Hybrid |
 |---|---|---|
-| AI chat latency | Function timeout / cold starts | Worker runs Gemini with 300s timeout |
+| AI chat latency | Function timeout / cold starts | Worker runs Gemini; Gunicorn timeout ≥150s (covers 90s Gemini) |
 | Celery beat | Cannot run | Worker runs beat |
 | Email / article gen | Blocks or missing | Queued via Redis |
+| Chat replies | Sync wait on Vercel | Celery `process_agent_response` (async on Vercel) |
 | CRUD endpoints | Good fit | Still on Vercel |
 
-Client API contracts stay the same — `POST /messages` still returns the agent reply synchronously. Vercel forwards AI work to the worker over HTTP.
+Client API contracts: on Vercel (`AI_ASYNC_MESSAGES=true` by default),
+`POST /messages` returns the **user** message immediately with
+`ai_pending: true`. Poll `GET /messages?session_id=…` (or session
+`last_message`) for the agent reply. Local/tests keep sync unless you set
+`AI_ASYNC_MESSAGES=true`.
 
 ---
 
@@ -159,6 +164,7 @@ SUPABASE_ANON_KEY=...                # REST uploads (or SUPABASE_SERVICE_ROLE_KE
 SENDGRID_API_KEY=...
 STRIPE_SECRET_KEY=...
 INTERNAL_API_SECRET=<same-as-vercel>
+GUNICORN_TIMEOUT=150
 # Do NOT set AI_WORKER_URL on the worker (AI runs locally there)
 ```
 
@@ -194,6 +200,7 @@ AI_WORKER_URL=https://mendreo-worker.up.railway.app
 INTERNAL_API_SECRET=<same-as-worker>
 CRON_SECRET=<random-for-vercel-cron>
 AI_WORKER_TIMEOUT=120
+AI_ASYNC_MESSAGES=true
 VERCEL_SUPPORT_LARGE_FUNCTIONS=1
 GOOGLE_API_KEY=...
 SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
@@ -202,9 +209,16 @@ SUPABASE_STORAGE_ACCESS_KEY_ID=...
 SUPABASE_STORAGE_SECRET_ACCESS_KEY=...
 SUPABASE_STORAGE_BUCKET=...          # same values as worker
 SUPABASE_STORAGE_PRIVATE_BUCKET=...  # same values as worker
+SUPABASE_ANON_KEY=...                # or SUPABASE_SERVICE_ROLE_KEY
 SENDGRID_API_KEY=...
 STRIPE_SECRET_KEY=...
 # OAuth / survey vars as needed
+```
+
+Worker also set:
+
+```env
+GUNICORN_TIMEOUT=150
 ```
 
 5. Deploy. Vercel uses `backend/mendreo/wsgi.py` as the entrypoint, `requirements-vercel.txt`, and `vercel.json` for migrate/collectstatic/timeouts + cron.

@@ -5,15 +5,40 @@ from .models import Session, SessionStep
 from ..asset.serializers import AssetListSerializer
 
 from ..consumer.serializers import ConsumerMinSerializer
-from ..message.serializers import MessageDetailSerializer
 from ..exercise.serializers import ExerciseDetailSerializer, ExerciseListSerializer
 from ..utils.Serializers import ListModelSerializer
+
+
+class SessionLastMessageSerializer(ListModelSerializer):
+    """Slim last-message payload for session list/detail (avoids nested asset/exercise)."""
+
+    sender = serializers.SerializerMethodField()
+
+    class Meta:
+        from ..message.models import Message
+        model = Message
+        fields = [
+            "id",
+            "text",
+            "created_at",
+            "sender",
+            "suggested_responses",
+            "is_step_complete",
+            "step_no",
+            "completion_label",
+            "asset",
+            "exercise",
+        ]
+
+    def get_sender(self, message):
+        from ..participant.serializers import ParticipantListSerializer
+        return ParticipantListSerializer(message.sender).data
 
 
 class SessionListSerializer(ListModelSerializer):
 
     consumer = ConsumerMinSerializer()
-    last_message = MessageDetailSerializer()
+    last_message = SessionLastMessageSerializer()
 
     exercise = serializers.SerializerMethodField()
     
@@ -30,8 +55,12 @@ class SessionListSerializer(ListModelSerializer):
             "last_message__sender__consumer__user",
             "last_message__sender__agent",
             "last_message__sender__agent__avatar",
-            "last_message__asset__image",
         ]
+
+    @classmethod
+    def get_prefetch_related_fields(cls):
+        # List uses ExerciseListSerializer (no steps/questions) — do not prefetch them.
+        return []
 
     def get_exercise(self, session):
 
@@ -84,22 +113,27 @@ class SessionDetailSerializer(SessionListSerializer):
         return data
 
     @classmethod
-    def get_prefetch_related_fields(cls):
-        return SessionListSerializer.get_prefetch_related_fields() + [
-            "exercise__steps",
-            "exercise__questions",
+    def get_select_related_fields(cls):
+        return SessionListSerializer.get_select_related_fields() + [
             "last_asset__file",
             "last_asset__image",
             "last_asset__post__file",
-            "last_asset__post__tags",
             "last_asset__post__banner",
             "last_asset__post__thumbnail",
-            "steps__last_asset__file",
-            "steps__last_asset__image",
-            "steps__last_asset__post__file",
-            "steps__last_asset__post__tags",
-            "steps__last_asset__post__banner",
-            "steps__last_asset__post__thumbnail",
         ]
 
-
+    @classmethod
+    def get_prefetch_related_fields(cls):
+        return [
+            "exercise__steps",
+            "exercise__questions",
+            "last_asset__post__tags",
+            "session_steps__step",
+            "session_steps__last_asset__file",
+            "session_steps__last_asset__image",
+            "session_steps__last_asset__post__file",
+            "session_steps__last_asset__post__tags",
+            "session_steps__last_asset__post__banner",
+            "session_steps__last_asset__post__thumbnail",
+            "questions",
+        ]

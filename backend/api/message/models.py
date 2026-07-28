@@ -24,6 +24,11 @@ class Message(SmartModel):
 
     usage = models.JSONField(null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["session", "created_at"], name="message_session_created_idx"),
+        ]
+
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Message: {}".format(self.id)

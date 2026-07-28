@@ -18,8 +18,24 @@ def _should_delegate_to_worker() -> bool:
     return bool(settings.AI_WORKER_URL and settings.INTERNAL_API_SECRET)
 
 
+def enqueue_agent_response(user_message: Message) -> None:
+    """Queue AI reply on Celery (worker process runs Gemini)."""
+    from ..tasks import process_agent_response
+    process_agent_response.delay_on_commit(user_message.id)
+
+
+def enqueue_session_greeting(session) -> None:
+    from ..tasks import process_session_greeting
+    process_session_greeting.delay_on_commit(session.id)
+
+
 def request_agent_response(user_message: Message, session) -> Message:
-    """Run AI chat locally or delegate to the long-running worker service."""
+    """Run AI chat locally, via worker HTTP, or enqueue for async clients.
+
+    When ``AI_ASYNC_MESSAGES`` is enabled the caller should return the user
+    message immediately after ``enqueue_agent_response``; this sync helper is
+    kept for local/tests and the internal worker HTTP endpoint.
+    """
     if not _should_delegate_to_worker():
         agent_message = Agent.get_response(user_message=user_message, session=session)
         return apply_agent_response(user_message, agent_message)
@@ -42,8 +58,12 @@ def request_agent_response(user_message: Message, session) -> Message:
 
 
 def request_session_greeting(session) -> Message | None:
-    """Generate the opening exercise greeting locally or via the worker."""
+    """Generate the opening exercise greeting locally, via worker, or enqueue."""
     if not session.exercise_id:
+        return None
+
+    if getattr(settings, "AI_ASYNC_MESSAGES", False):
+        enqueue_session_greeting(session)
         return None
 
     if not _should_delegate_to_worker():
@@ -86,5 +106,5 @@ def _run_session_greeting(session):
     session.last_message = agent_message
     session.messages_no += 1
     session.agent_messages_no += 1
-    session.save()
+    session.save(update_fields=["last_message", "messages_no", "agent_messages_no", "updated_at"])
     return agent_message

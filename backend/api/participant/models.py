@@ -10,6 +10,12 @@ class Participant(SmartModel):
     consumer = models.ForeignKey("api.Consumer", related_name="participants", null=True, on_delete=models.CASCADE)
     agent = models.ForeignKey("api.Agent", related_name="participants", null=True, on_delete=models.CASCADE)
     session = models.ForeignKey("api.Session", related_name="participants", on_delete=models.CASCADE)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["session", "consumer"], name="participant_session_cons_idx"),
+            models.Index(fields=["session", "agent"], name="participant_session_agent_idx"),
+        ]
     
     def __str__(self):
         """Return a human-readable representation of the model instance."""

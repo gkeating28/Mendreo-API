@@ -44,6 +44,18 @@ class Session(SmartModel):
 
     usage = models.JSONField(null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["consumer", "created_at"],
+                name="session_consumer_created_idx",
+            ),
+            models.Index(
+                fields=["consumer", "exercise", "created_at"],
+                name="session_cons_ex_created_idx",
+            ),
+        ]
+
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Session: {}".format(self.id)
@@ -55,12 +67,13 @@ class Session(SmartModel):
     @staticmethod
     def get_or_create(consumer, exercise: Exercise = None):
         from ..participant.models import Participant
-        today_date = DateUtils.today()
+        start, end = DateUtils.day_bounds()
 
         session = Session.objects.filter(
             consumer=consumer,
             exercise=exercise,
-            created_at__date=today_date
+            created_at__gte=start,
+            created_at__lt=end,
         ).order_by("-created_at").first()
 
         if session and not session.completed:
@@ -107,34 +120,33 @@ class Session(SmartModel):
 
     @staticmethod
     def get_with_messages(date, consumer, exercise):
+        start, end = DateUtils.day_bounds(date)
 
-        sessions = consumer.sessions.filter(created_at__date=date)
+        sessions = consumer.sessions.filter(created_at__gte=start, created_at__lt=end)
 
         if exercise:
             sessions = sessions.filter(exercise=exercise)
 
-        session_ids = sessions.values_list("id", flat=True)
+        session_ids = list(sessions.values_list("id", flat=True))
 
         if not session_ids:
             return []
 
-        messages = Message.objects.filter(session_id__in=session_ids).select_related('sender').order_by('created_at')
+        messages = (
+            Message.objects
+            .filter(session_id__in=session_ids)
+            .select_related('sender')
+            .order_by('created_at')
+        )
 
-        sessions_data = []
+        messages_by_session = {session_id: [] for session_id in session_ids}
+        for message in messages:
+            messages_by_session[message.session_id].append(message)
 
-        for session_id in session_ids:
-            session_messages = []
-
-            for message in messages:
-                if message.session_id == session_id:
-                    session_messages.append(message)
-
-            sessions_data.append({
-                "session": session_id,
-                "messages": session_messages
-            })
-
-        return sessions_data
+        return [
+            {"session": session_id, "messages": messages_by_session[session_id]}
+            for session_id in session_ids
+        ]
 
     def get_chat_history(self):
         from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -186,4 +198,3 @@ class SessionStep(SmartModel):
                 )
             )
         SessionStep.objects.bulk_create(session_steps)
-

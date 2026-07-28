@@ -234,15 +234,18 @@ class SmartDetailAPIView(SmartAPIView):
 
         queryset = self.add_filters(queryset, request)
 
+        if not self.get_detail_serializer(request, None):
+            return self.get_missing_serializer_response(request, "GET")
+
+        detail_serializer_class = self.get_detail_serializer(request, None)
+        if hasattr(detail_serializer_class, "optimise"):
+            queryset = detail_serializer_class.optimise(queryset)
+
         instance = queryset.first()
 
         if not instance:
             return self.get_instance_not_found_response(request, "GET")
 
-        if not self.get_detail_serializer(request, instance):
-            return self.get_missing_serializer_response(request, "GET")
-
-        detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data
 
         data = self.override_response_data(request, data, instance)

@@ -208,13 +208,16 @@ def delete(file_url):
 def exists(file_url):
     key = _get_key(file_url)
 
+    # Short timeout: upload confirm should not block the API for long.
+    timeout = 5
+
     if _rest_enabled():
         try:
             auth_url = (
                 f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
                 f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
             )
-            head = requests.head(auth_url, headers=_storage_headers(), timeout=30)
+            head = requests.head(auth_url, headers=_storage_headers(), timeout=timeout)
             if head.status_code == 200:
                 return True
             if head.status_code in (400, 404):
@@ -224,7 +227,7 @@ def exists(file_url):
                 f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/info/public/"
                 f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
             )
-            info = requests.get(info_url, headers=_storage_headers(), timeout=30)
+            info = requests.get(info_url, headers=_storage_headers(), timeout=timeout)
             return info.status_code == 200
         except Exception as error:
             logger.warning("REST exists check failed, falling back to S3: %s", error)
@@ -234,7 +237,6 @@ def exists(file_url):
         return True
     except ClientError:
         return False
-
 
 def _get_key(path):
     if path.startswith("/"):

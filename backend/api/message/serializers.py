@@ -62,7 +62,23 @@ class MessageListSerializer(ListModelSerializer):
 
     class Meta:
         model = Message
-        fields = '__all__'
+        fields = [
+            "id",
+            "session",
+            "sender",
+            "text",
+            "reasoning",
+            "suggested_responses",
+            "step_no",
+            "completion_label",
+            "completion_result",
+            "is_step_complete",
+            "asset",
+            "exercise",
+            "usage",
+            "created_at",
+            "updated_at",
+        ]
     
     @classmethod
     def get_select_related_fields(cls):
@@ -76,7 +92,6 @@ class MessageListSerializer(ListModelSerializer):
             "asset__post__banner",
             "asset__post__thumbnail",
         ]
-
 
 class MessageDetailSerializer(MessageListSerializer):
     pass

@@ -34,6 +34,14 @@ class Exercise(SmartModel):
     def get_permission_key(self):
         """Return the permission key for role-based access control"""
         return "exercises"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        try:
+            from ..utils.Agent import invalidate_published_exercises_cache
+            invalidate_published_exercises_cache()
+        except Exception:
+            pass
     
     def _update_average_duration(self):
         steps = self.steps.all()
