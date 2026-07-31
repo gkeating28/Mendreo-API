@@ -35,7 +35,8 @@ def setup_db():
 
     Setting.create_all()
     Role.create_defaults()
-    AiProvider.seed_from_env_if_empty()
+    # Always ensure a default provider row for tests (CI may lack GOOGLE_API_KEY).
+    AiProvider.seed_from_env_if_empty(allow_placeholder=True)
 
     if Agent.objects.first() is None:
         create_initial_agent()

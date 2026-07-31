@@ -133,15 +133,20 @@ class AiProviderCrudTest(TestCase):
         self.permission_denied_test(response)
 
     def test_seed_from_env(self):
+        import os
+
         AiProvider.objects.all().delete()
-        with self.settings():
-            import os
-            os.environ["GOOGLE_API_KEY"] = "seed-google-zzzz"
-            try:
-                seeded = AiProvider.seed_from_env_if_empty()
-                self.assertTrue(seeded)
-                provider = AiProvider.objects.get(provider=Constants.AI_PROVIDER_GOOGLE)
-                self.assertTrue(provider.is_default)
-                self.assertEqual(provider.get_api_key(), "seed-google-zzzz")
-            finally:
+        previous = os.environ.get("GOOGLE_API_KEY")
+        os.environ["GOOGLE_API_KEY"] = "seed-google-zzzz"
+        try:
+            seeded = AiProvider.seed_from_env_if_empty()
+            self.assertTrue(seeded)
+            provider = AiProvider.objects.get(provider=Constants.AI_PROVIDER_GOOGLE)
+            self.assertTrue(provider.is_default)
+            self.assertEqual(provider.get_api_key(), "seed-google-zzzz")
+        finally:
+            # Restore CI/local key — do not leave the process without GOOGLE_API_KEY
+            if previous is None:
                 os.environ.pop("GOOGLE_API_KEY", None)
+            else:
+                os.environ["GOOGLE_API_KEY"] = previous

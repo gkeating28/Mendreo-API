@@ -88,6 +88,12 @@ def run_with_failover(
         AiProvider.iter_failover_candidates(prefer=prefer, provider_type=provider_type)
     )
     if not candidates:
+        # One more attempt in case env keys were set after process start / first boot.
+        AiProvider.seed_from_env_if_empty()
+        candidates = list(
+            AiProvider.iter_failover_candidates(prefer=prefer, provider_type=provider_type)
+        )
+    if not candidates:
         raise AiProviderError(
             "No enabled AI providers configured. "
             "Add one via POST /ai-providers or set GOOGLE_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY."

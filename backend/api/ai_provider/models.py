@@ -164,13 +164,22 @@ class AiProvider(SmartModel):
 
     @classmethod
     @transaction.atomic
-    def seed_from_env_if_empty(cls) -> bool:
-        """Create providers from env API keys when the table is empty. Returns True if seeded."""
-        if cls.objects.exists():
+    def seed_from_env_if_empty(cls, *, allow_placeholder: bool = False) -> bool:
+        """Create providers from env API keys when the table is empty. Returns True if seeded.
+
+        If ``allow_placeholder`` is True and no env keys are present, seeds a Google
+        placeholder so local/CI test setup still has a default provider row.
+        """
+        if cls.objects.filter(enabled=True).exists():
             return False
 
+        from ..utils import Api
+
         seeds = []
-        google_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        google_key = (
+            os.environ.get("GOOGLE_API_KEY", "").strip()
+            or (Api.GOOGLE_API_KEY or "").strip()
+        )
         openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
@@ -182,6 +191,7 @@ class AiProvider(SmartModel):
                     Constants.AI_PROVIDER_DEFAULT_MODELS[Constants.AI_PROVIDER_GOOGLE],
                     google_key,
                     True,
+                    "env",
                 )
             )
         if openai_key:
@@ -192,6 +202,7 @@ class AiProvider(SmartModel):
                     Constants.AI_PROVIDER_DEFAULT_MODELS[Constants.AI_PROVIDER_OPENAI],
                     openai_key,
                     not bool(google_key),
+                    "env",
                 )
             )
         if anthropic_key:
@@ -202,13 +213,26 @@ class AiProvider(SmartModel):
                     Constants.AI_PROVIDER_DEFAULT_MODELS[Constants.AI_PROVIDER_ANTHROPIC],
                     anthropic_key,
                     not bool(google_key or openai_key),
+                    "env",
+                )
+            )
+
+        if not seeds and allow_placeholder:
+            seeds.append(
+                (
+                    "Google Gemini",
+                    Constants.AI_PROVIDER_GOOGLE,
+                    Constants.AI_PROVIDER_DEFAULT_MODELS[Constants.AI_PROVIDER_GOOGLE],
+                    "test-google-api-key",
+                    True,
+                    "placeholder",
                 )
             )
 
         if not seeds:
             return False
 
-        for name, provider_type, model, key, is_default in seeds:
+        for name, provider_type, model, key, is_default, source in seeds:
             row = cls(
                 name=name,
                 provider=provider_type,
@@ -222,9 +246,9 @@ class AiProvider(SmartModel):
                 provider=row,
                 action=Constants.AI_PROVIDER_AUDIT_SEEDED,
                 actor=None,
-                detail={"source": "env"},
+                detail={"source": source},
             )
-            logger.info("Seeded AI provider %s (%s) from environment", name, provider_type)
+            logger.info("Seeded AI provider %s (%s) from %s", name, provider_type, source)
 
         return True
 
