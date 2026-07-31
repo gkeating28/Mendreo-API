@@ -45,7 +45,8 @@ def valid_agent_data(name: str = "Michael") -> dict:
     from .manager.General import create_image
     return {
         "name": name,
-        "avatar": create_image().id,
+        # mock=True avoids needing real Supabase/S3 credentials during setup_db
+        "avatar": create_image(mock=True).id,
         "description": "I believe the most important part of therapy is creating a safe, understanding space where you feel truly heard."
     }
 

@@ -23,6 +23,7 @@ class AgentCreateSerializer(CreateModelSerializer):
             "context",
             "created_by",
             "description",
+            "model",
         ]
 
     def validate_created_by(self, created_by):
@@ -30,6 +31,11 @@ class AgentCreateSerializer(CreateModelSerializer):
             self.raise_validation_error("created_by", "must be of type 'admin'")
 
         return created_by
+
+    def validate_model(self, value):
+        if value is not None and not str(value).strip():
+            self.raise_validation_error("model", "This field may not be blank.")
+        return value
 
     def validate(self, attrs):
         default = attrs.get("default")
@@ -50,7 +56,13 @@ class AgentEditSerializer(EditModelSerializer):
             "default",
             "context",
             "description",
+            "model",
         ]
+
+    def validate_model(self, value):
+        if value is not None and not str(value).strip():
+            self.raise_validation_error("model", "This field may not be blank.")
+        return value
 
     def validate(self, attrs):
         default = attrs.get("default", self.instance.default)
@@ -97,6 +109,7 @@ class AgentAdminListSerializer(AgentListSerializer):
             "avatar",
             "default",
             "consumers_no",
+            "model",
         ]
 
     @classmethod
@@ -110,7 +123,7 @@ class AgentAdminListSerializer(AgentListSerializer):
 class AgentAdminDetailSerializer(AgentListSerializer):
 
     class Meta(AgentAdminListSerializer.Meta):
-        AgentListSerializer.Meta.fields += [
+        fields = AgentAdminListSerializer.Meta.fields + [
             "context",
             "description",
         ]

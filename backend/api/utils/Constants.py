@@ -317,6 +317,72 @@ QUESTIONS_PERMISSIONS = [PERMISSION_VIEW, PERMISSION_CREATE, PERMISSION_EDIT, PE
 ROLES_PERMISSIONS = [PERMISSION_VIEW, PERMISSION_CREATE, PERMISSION_EDIT, PERMISSION_DELETE]
 PII_PERMISSIONS = [PERMISSION_VIEW]
 
+AI_PROVIDER_GOOGLE = "google"
+AI_PROVIDER_OPENAI = "openai"
+AI_PROVIDER_ANTHROPIC = "anthropic"
+
+AI_PROVIDERS = [
+    AI_PROVIDER_GOOGLE,
+    AI_PROVIDER_OPENAI,
+    AI_PROVIDER_ANTHROPIC,
+]
+
+AI_PROVIDER_DEFAULT_MODELS = {
+    AI_PROVIDER_GOOGLE: "gemini-2.5-flash",
+    AI_PROVIDER_OPENAI: "gpt-4.1-mini",
+    AI_PROVIDER_ANTHROPIC: "claude-sonnet-4-20250514",
+}
+
+AI_PROVIDER_SUGGESTED_MODELS = {
+    AI_PROVIDER_GOOGLE: [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
+    ],
+    AI_PROVIDER_OPENAI: [
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-4o-mini",
+    ],
+    AI_PROVIDER_ANTHROPIC: [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        "claude-haiku-4-5-20251001",
+    ],
+}
+
+AI_PROVIDER_MODEL_PREFIXES = {
+    AI_PROVIDER_GOOGLE: ("gemini-", "imagen-"),
+    AI_PROVIDER_OPENAI: ("gpt-", "o1", "o3", "o4"),
+    AI_PROVIDER_ANTHROPIC: ("claude-",),
+}
+
+AI_PROVIDER_IMAGE_MODEL = "imagen-4.0-generate-001"
+
+AI_PROVIDER_AUDIT_CREATED = "created"
+AI_PROVIDER_AUDIT_UPDATED = "updated"
+AI_PROVIDER_AUDIT_KEY_ROTATED = "key_rotated"
+AI_PROVIDER_AUDIT_SET_DEFAULT = "set_default"
+AI_PROVIDER_AUDIT_ENABLED = "enabled"
+AI_PROVIDER_AUDIT_DISABLED = "disabled"
+AI_PROVIDER_AUDIT_DELETED = "deleted"
+AI_PROVIDER_AUDIT_FAILOVER = "failover"
+AI_PROVIDER_AUDIT_SEEDED = "seeded"
+
+AI_PROVIDER_AUDIT_ACTIONS = [
+    AI_PROVIDER_AUDIT_CREATED,
+    AI_PROVIDER_AUDIT_UPDATED,
+    AI_PROVIDER_AUDIT_KEY_ROTATED,
+    AI_PROVIDER_AUDIT_SET_DEFAULT,
+    AI_PROVIDER_AUDIT_ENABLED,
+    AI_PROVIDER_AUDIT_DISABLED,
+    AI_PROVIDER_AUDIT_DELETED,
+    AI_PROVIDER_AUDIT_FAILOVER,
+    AI_PROVIDER_AUDIT_SEEDED,
+]
+
 
 SUPER_ADMIN_PERMISSIONS = {
     "users": ["view", "create", "edit", "delete"],

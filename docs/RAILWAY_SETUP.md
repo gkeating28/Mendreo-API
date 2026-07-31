@@ -69,12 +69,19 @@ SUPABASE_DEV_DB_URL=postgresql://...pooler.supabase.com:5432/postgres
 BROKER_URL=rediss://...upstash.io:6379
 INTERNAL_API_SECRET=<same as Vercel>
 GOOGLE_API_KEY=...
+AI_SECRETS_MASTER_KEY=...   # Fernet key; encrypts AI provider API keys in Postgres
+# Optional seeds when ai_provider table is empty:
+# OPENAI_API_KEY=...
+# ANTHROPIC_API_KEY=...
 ```
 
 **Important:**
 - `DEPLOYMENT_TARGET` must be exactly `worker` (not `worker.railway.internal` or similar)
 - `BROKER_URL` must use **`rediss://`** (TLS) for Upstash, not `redis://`
 - Do **not** set `AI_WORKER_URL` on Railway
+- `AI_SECRETS_MASTER_KEY` is required on the worker (decrypts provider keys). Generate with:
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+- `GOOGLE_API_KEY` remains used for Google Play receipt validation; it also seeds a default Google AI provider on first boot when none exist.
 
 ---
 

@@ -4,22 +4,19 @@ import random
 import time
 import traceback
 from datetime import timedelta
-from typing import Optional, List, Type
+from typing import Optional, List
 
 from dataclasses import dataclass
 
-from django.conf import settings
 from django.utils import timezone
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, RunContext, UsageLimits
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.providers.google import GoogleProvider
 
-from .AI import AI
+from .AI import AI, SessionAiResponse, SummaryAiResponse
+from .AiProviderFactory import build_pydantic_model, run_with_failover
 
+from ..ai_provider.models import AiProvider
 from ..asset.models import Asset
 from ..setting.models import Setting
 
@@ -28,33 +25,12 @@ from ..message.models import Message
 from ..exercise_summary.models import Exercise, ExerciseSummary
 from ..session.serializers import Session, SessionDetailSerializer
 
-from ..utils import DateUtils, Api, Constants, S3 as S3Utils
+from ..utils import DateUtils, Constants, S3 as S3Utils
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
 STATIC_FILES_DIR = 'api/utils/files'
-SUMMARY_RESPONSE_SCHEMA = types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-        "detailed": types.Schema(type=types.Type.STRING,  description="Notes on user"),
-        "observations": types.Schema(type=types.Type.STRING, description="Observations intended to be read by user"),
-        "next_steps": types.Schema(type=types.Type.STRING,  description="Next steps you deem necessary for user")
-    },
-    required=["detailed", "observations", "next_steps"]
-)
-
-SESSION_RESPONSE_SCHEMA = types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-        "subject": types.Schema(type=types.Type.STRING),
-        "rating": types.Schema(type=types.Type.NUMBER),
-        "rating_reason": types.Schema(type=types.Type.STRING),
-        "risk_level": types.Schema(
-            type=types.Type.STRING,
-            enum=["low", "moderate", "high", "critical"]
-        )
-    },
-    required=["subject", "rating", "rating_reason", "risk_level"]
-)
+SUMMARY_RESPONSE_SCHEMA = SummaryAiResponse
+SESSION_RESPONSE_SCHEMA = SessionAiResponse
 
 
 @dataclass
@@ -92,14 +68,6 @@ class ExerciseResponse(GeneralResponse):
         description="Optional. If a step has just been completed this should be the result based on the completion prompt for that steps. "
                     "This must be specified if 'is_step_complete' is true"
     )
-
-
-class AgentConfig(types.GenerateContentConfig):
-    thinking_config: Type[BaseModel] = types.ThinkingConfig(thinking_budget=0, include_thoughts=False)
-    system_instruction: str = None
-    temperature: float = 1
-    response_mime_type: str = 'application/json'
-    response_schema: Type[BaseModel] = GeneralResponse
 
 
 def update_summary(summary, date=None, freezer=None):
@@ -218,57 +186,41 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     model_name = consumer.agent.model
 
-    # Minimize latency: disable/limit "thinking". Gemini 3.x models support
-    # thinking_level (they think by default, adding 10s+ per reply); 2.x models
-    # reject thinking_level and require thinking_budget instead.
-    if model_name.startswith(("gemini-3", "gemini-4")):
-        thinking_config = {"thinking_level": "minimal"}
-    else:
-        thinking_config = {"thinking_budget": 0, "include_thoughts": False}
-
-    # Explicit HTTP timeout so a slow/unreachable Gemini API can't hang this
-    # request forever — without it, one bad call permanently occupies a
-    # Gunicorn worker (surfaces as HTTP 499s on unrelated endpoints once
-    # every worker gets stuck this way).
-    genai_client = genai.Client(
-        api_key=Api.GOOGLE_API_KEY,
-        http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
-    )
-
-    agent: Agent[Dependencies, BaseModel] = Agent(
-        GoogleModel(
-            model_name=model_name,
-            provider=GoogleProvider(client=genai_client),
-        ),
-        deps_type=Dependencies,
-        output_type=schema,
-        system_prompt=prompt,
-        model_settings=GoogleModelSettings(google_thinking_config=thinking_config),
-    )
-
     dependencies = Dependencies(
         session=session,
         consumer=consumer,
         exercise=session.exercise,
     )
 
-    _register_tools(agent)
-
     timer_start = time.perf_counter()
     usage = {}
 
-    try:
+    def _run(provider: AiProvider):
+        pydantic_model, model_settings = build_pydantic_model(provider, model_name)
+        agent_kwargs = {
+            "deps_type": Dependencies,
+            "output_type": schema,
+            "system_prompt": prompt,
+        }
+        if model_settings is not None:
+            agent_kwargs["model_settings"] = model_settings
+
+        agent: Agent[Dependencies, BaseModel] = Agent(pydantic_model, **agent_kwargs)
+        _register_tools(agent)
+
         result = agent.run_sync(
             user_prompt=consumer_message.text,
             deps=dependencies,
             message_history=session.get_chat_history(),
             usage_limits=UsageLimits(tool_calls_limit=2)
         )
+        return result
 
+    try:
+        result, _provider = run_with_failover(_run, model_name=model_name)
         usage = result.usage().__dict__
         response_data = result.output
         timer_end = time.perf_counter()
-
         session.update_chat_history(result)
 
     except Exception as e:

@@ -4,3 +4,4 @@ from django.db import models
 from .user.models import User
 from .session.models import Session
 from .summary.models import Summary
+from .ai_provider.models import AiProvider, AiProviderAuditLog

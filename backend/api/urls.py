@@ -36,6 +36,7 @@ urlpatterns = [
     path('feedback', include('api.feedback.urls')), 
     path('settings', include('api.setting.urls')),
 
+    path('ai-providers', include('api.ai_provider.urls')),
     path('ai', include('api.ai.urls')),
 ]
 

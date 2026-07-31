@@ -29,11 +29,13 @@ from ....utils.Agent import GeneralResponse, ExerciseResponse
 
 
 def setup_db():
+    from ....ai_provider.models import AiProvider
     from ....role.models import Role
     from ....setting.models import Setting
 
     Setting.create_all()
     Role.create_defaults()
+    AiProvider.seed_from_env_if_empty()
 
     if Agent.objects.first() is None:
         create_initial_agent()
@@ -140,7 +142,7 @@ def create_image(access_token: str = None, data: dict = None, object_response: b
             original="mock-image-url.ie",
             width=200,
             height=200,
-            user=get_or_create_admin().user,
+            created_by=get_or_create_admin().user,
             uploaded=set_as_uploaded
         )
 
