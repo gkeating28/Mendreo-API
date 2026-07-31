@@ -1,4 +1,8 @@
+import logging
+
 from django.apps import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ApiConfig(AppConfig):
@@ -11,9 +15,14 @@ class ApiConfig(AppConfig):
         def _seed_ai_providers(sender, **kwargs):
             try:
                 from .ai_provider.models import AiProvider
-                AiProvider.seed_from_env_if_empty()
+                seeded = AiProvider.seed_from_env_if_empty()
+                if seeded:
+                    logger.info("post_migrate: seeded AI providers from environment")
             except Exception:
-                # Table may not exist yet mid-migrate, or master key missing in odd envs.
-                pass
+                # Table may not exist yet mid-migrate; never fail migrate itself.
+                logger.exception(
+                    "post_migrate: could not seed AI providers "
+                    "(set AI_SECRETS_MASTER_KEY + GOOGLE_API_KEY on the worker)"
+                )
 
         post_migrate.connect(_seed_ai_providers, sender=self)

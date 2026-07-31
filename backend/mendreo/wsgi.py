@@ -32,6 +32,16 @@ _HEALTH_BODY = b'{"service":"mendreo-api","status":"ok"}'
 _django_app = get_wsgi_application()
 _log(f"get_wsgi_application() done at +{time.monotonic() - _t0:.2f}s")
 
+# Populate api_aiprovider from env when empty so a blank table after migrate
+# does not leave the worker unable to serve AI. Failures are logged, not fatal.
+try:
+    from api.utils.AiProviderFactory import ensure_providers_ready
+
+    _providers = ensure_providers_ready()
+    _log(f"AI providers ready: {len(_providers)} candidate(s)")
+except Exception as exc:
+    _log(f"AI provider startup seed FAILED: {exc!r}")
+
 def _warn_if_still_running(done_flag: list) -> None:
     """Background watchdog: logs progress if the warm-up below never returns,
     so Deploy Logs show a hang in progress instead of just going silent."""

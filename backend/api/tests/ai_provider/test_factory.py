@@ -80,3 +80,24 @@ class AiProviderFactoryTest(TestCase):
 
         image_provider = AiProvider.get_google_for_images()
         self.assertEqual(image_provider.id, self.google.id)
+
+    def test_env_fallback_when_db_empty(self):
+        import os
+
+        from ...utils.AiProviderFactory import ensure_providers_ready
+
+        AiProvider.objects.all().delete()
+        previous = os.environ.get("GOOGLE_API_KEY")
+        os.environ["GOOGLE_API_KEY"] = "env-fallback-key-9999"
+        try:
+            # Force DB seed to be skipped/useless by clearing again after placeholder setup
+            AiProvider.objects.all().delete()
+            # Even if DB seed encrypts successfully, we still accept DB or env.
+            candidates = ensure_providers_ready()
+            self.assertTrue(len(candidates) >= 1)
+            self.assertEqual(candidates[0].get_api_key(), "env-fallback-key-9999")
+        finally:
+            if previous is None:
+                os.environ.pop("GOOGLE_API_KEY", None)
+            else:
+                os.environ["GOOGLE_API_KEY"] = previous

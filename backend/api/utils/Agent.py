@@ -16,7 +16,6 @@ from pydantic_ai import Agent, RunContext, UsageLimits
 from .AI import AI, SessionAiResponse, SummaryAiResponse
 from .AiProviderFactory import build_pydantic_model, run_with_failover
 
-from ..ai_provider.models import AiProvider
 from ..asset.models import Asset
 from ..setting.models import Setting
 
@@ -195,7 +194,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     timer_start = time.perf_counter()
     usage = {}
 
-    def _run(provider: AiProvider):
+    def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider, model_name)
         agent_kwargs = {
             "deps_type": Dependencies,

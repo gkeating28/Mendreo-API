@@ -5,11 +5,11 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ..ai_provider.models import AiProvider
 from ..utils import Constants
 from ..utils.AiProviderFactory import (
     build_google_genai_client,
     build_pydantic_model,
+    get_google_provider_for_images,
     run_with_failover,
 )
 
@@ -48,7 +48,7 @@ class AI:
         and return structured output as a dict.
         """
 
-        def _run(provider: AiProvider) -> dict:
+        def _run(provider) -> dict:
             pydantic_model, model_settings = build_pydantic_model(provider, model)
             agent_kwargs = {"output_type": schema}
             if model_settings is not None:
@@ -69,13 +69,7 @@ class AI:
         """
         Generate an image using Google Imagen via an enabled Google AiProvider.
         """
-        provider = AiProvider.get_google_for_images()
-        if not provider:
-            raise Exception(
-                "Image generation requires an enabled Google AI provider "
-                "(Imagen). Configure one via POST /ai-providers."
-            )
-
+        provider = get_google_provider_for_images()
         client = build_google_genai_client(provider)
 
         try:
