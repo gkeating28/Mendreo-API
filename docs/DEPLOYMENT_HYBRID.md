@@ -154,6 +154,7 @@ GENERAL_HOST_DOMAIN=.railway.app,your-worker-domain.com
 DATABASE_* or SUPABASE_DEV_DB_URL
 BROKER_URL=rediss://...
 GOOGLE_API_KEY=...
+AI_SECRETS_MASTER_KEY=...            # Fernet key for AI provider API keys in DB
 SUPABASE_STORAGE_URL=https://<project_ref>.supabase.co
 SUPABASE_STORAGE_S3_ENDPOINT=https://<project_ref>.storage.supabase.co/storage/v1/s3
 SUPABASE_STORAGE_ACCESS_KEY_ID=...
@@ -257,7 +258,8 @@ If Vercel is healthy but chat fails, the worker may still be running a pre-hybri
 | `SUPABASE_DEV_DB_URL` | Session pooler URL |
 | `BROKER_URL` | `rediss://...` (Upstash TLS) |
 | `INTERNAL_API_SECRET` | same as Vercel |
-| `GOOGLE_API_KEY` | Gemini key |
+| `GOOGLE_API_KEY` | Gemini seed + Google Play validation |
+| `AI_SECRETS_MASTER_KEY` | Fernet key for encrypted AI provider keys in DB |
 | `SUPABASE_STORAGE_*` (object storage), `SENDGRID_*`, `STRIPE_*` | as needed |
 
 Do **not** set `AI_WORKER_URL` on the worker.

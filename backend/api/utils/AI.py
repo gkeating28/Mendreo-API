@@ -1,19 +1,18 @@
 from html import escape
-import json
-from django.conf import settings
-from google import genai
+from typing import Type
+
 from google.genai import types
 from pydantic import BaseModel, Field
-from ..utils import Api, Constants
+from pydantic_ai import Agent
 
+from ..ai_provider.models import AiProvider
+from ..utils import Constants
+from ..utils.AiProviderFactory import (
+    build_google_genai_client,
+    build_pydantic_model,
+    run_with_failover,
+)
 
-def _genai_client() -> genai.Client:
-    # Explicit timeout so a slow/unreachable Gemini API can't hang the
-    # request forever (see settings.GEMINI_HTTP_TIMEOUT_MS).
-    return genai.Client(
-        api_key=Api.GOOGLE_API_KEY,
-        http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
-    )
 
 class ArticleResponse(BaseModel):
     """Response model for AI-generated article content"""
@@ -22,49 +21,66 @@ class ArticleResponse(BaseModel):
     body: str = Field(description="Full article content with proper formatting")
     image_prompt: str = Field(description="Prompt for generating article image")
 
-ARTICLE_SCHEMA = types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-        "title": types.Schema(type=types.Type.STRING, description="Engaging article title, 4-5 words max"),
-        "subtitle": types.Schema(type=types.Type.STRING, description="Compelling subtitle"),
-        "body": types.Schema(type=types.Type.STRING, description="Full article content with proper formatting"),
-        "image_prompt": types.Schema(type=types.Type.STRING, description="Prompt for generating article image")
-    },
-    required=["title", "subtitle", "body", "image_prompt"]
-)
+
+class SummaryAiResponse(BaseModel):
+    detailed: str = Field(description="Notes on user")
+    observations: str = Field(description="Observations intended to be read by user")
+    next_steps: str = Field(description="Next steps you deem necessary for user")
+
+
+class SessionAiResponse(BaseModel):
+    subject: str
+    rating: float
+    rating_reason: str
+    risk_level: str = Field(description="One of: low, moderate, high, critical")
 
 
 class AI:
     @staticmethod
-    def ask(prompt: str, schema, model="gemini-2.5-flash", temperature=0.3) -> {}:
+    def ask(
+        prompt: str,
+        schema: Type[BaseModel],
+        model: str | None = None,
+        temperature: float = 0.3,
+    ) -> dict:
         """
-        Sends a prompt to Gemini and returns the raw text response.
+        Send a prompt to the configured default AI provider (with failover)
+        and return structured output as a dict.
         """
-        client = _genai_client()
 
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=temperature,
-                response_schema=schema
-            )
-        )
+        def _run(provider: AiProvider) -> dict:
+            pydantic_model, model_settings = build_pydantic_model(provider, model)
+            agent_kwargs = {"output_type": schema}
+            if model_settings is not None:
+                agent_kwargs["model_settings"] = model_settings
 
-        data = json.loads(response.text)
+            agent: Agent = Agent(pydantic_model, **agent_kwargs)
+            result = agent.run_sync(user_prompt=prompt)
+            output = result.output
+            if isinstance(output, BaseModel):
+                return output.model_dump()
+            return dict(output)
+
+        data, _provider = run_with_failover(_run, model_name=model)
         return data
 
     @staticmethod
     def generate_image(prompt: str, aspect_ratio: str = "16:9") -> bytes:
         """
-        Generate an image using Google's Imagen API.
+        Generate an image using Google Imagen via an enabled Google AiProvider.
         """
-        client = _genai_client()
+        provider = AiProvider.get_google_for_images()
+        if not provider:
+            raise Exception(
+                "Image generation requires an enabled Google AI provider "
+                "(Imagen). Configure one via POST /ai-providers."
+            )
+
+        client = build_google_genai_client(provider)
 
         try:
             response = client.models.generate_images(
-                model='imagen-4.0-generate-001',
+                model=Constants.AI_PROVIDER_IMAGE_MODEL,
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
@@ -73,18 +89,18 @@ class AI:
                     person_generation='allow_adult',
                 )
             )
-            
+
             if response.generated_images:
                 return response.generated_images[0].image.image_bytes
             else:
                 raise Exception("No image was generated")
-                
+
         except Exception as e:
             raise Exception(f"Image generation failed: {str(e)}")
 
     @staticmethod
     def generate_article(optional_extra: str = "") -> ArticleResponse:
-        from ..post.models import Post 
+        from ..post.models import Post
         existing_articles = Post.objects.filter(
             type=Constants.POST_TYPE_ARTICLE,
             status=Constants.POST_STATUS_PUBLISHED
@@ -110,5 +126,5 @@ Create a NEW mental wellness article that is different from all examples but com
 {optional_extra}
 """
 
-        result = AI.ask(prompt=prompt, schema=ARTICLE_SCHEMA)
+        result = AI.ask(prompt=prompt, schema=ArticleResponse)
         return ArticleResponse(**result)

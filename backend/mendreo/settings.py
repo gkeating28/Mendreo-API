@@ -276,6 +276,10 @@ AI_WORKER_TIMEOUT = float(os.environ.get('AI_WORKER_TIMEOUT', '120'))
 # whichever Gunicorn worker is handling the request (seen as HTTP 499s piling
 # up on unrelated endpoints once every worker is stuck this way).
 GEMINI_HTTP_TIMEOUT_MS = int(os.environ.get('GEMINI_HTTP_TIMEOUT_MS', str(90 * 1000)))
+# Fernet key (url-safe base64) used to encrypt AI provider API keys in the DB.
+# Required on the Railway worker (and any process that decrypts keys) in production.
+# Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+AI_SECRETS_MASTER_KEY = os.environ.get('AI_SECRETS_MASTER_KEY', '')
 # When true, POST /messages (and exercise greetings) enqueue Celery and return
 # immediately. Default on for Vercel so clients are not blocked on Gemini.
 # Local/tests keep sync so CreateTest still sees the agent reply in-process.
