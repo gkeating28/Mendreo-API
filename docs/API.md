@@ -96,6 +96,28 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 
 ---
 
+## Knowledge (V2 Slice A)
+
+Admin-only. Role permission resource: `knowledge`. Sensitive entry values are masked as `"Restricted"` when the admin lacks `pii:view`.
+
+| Method | Path | Function |
+|---|---|---|
+| GET, POST | `/knowledge-fields` | List / create knowledge field definitions |
+| GET, PATCH, DELETE | `/knowledge-fields/<id>` | Retrieve / update / soft-delete a field |
+| GET, POST | `/knowledge-questions` | List / create knowledge gathering questions |
+| GET, PATCH, DELETE | `/knowledge-questions/<id>` | Retrieve / update / soft-delete a question |
+| POST | `/knowledge-questions/<id>/test-extraction` | Dry-run extraction prompt against a sample reply |
+| GET, POST | `/knowledge-entries` | List / create per-user knowledge entries (append-only history) |
+| GET, DELETE | `/knowledge-entries/<id>` | Retrieve / soft-delete an entry |
+
+Filters: fields support `search_term`, `category`, `active`; questions support `search_term`, `active`, `target_field_id`, `trigger`, `flow`; entries support `consumer_id`, `field_id`, `source`.
+
+Celery task `backfill_knowledge_from_onboarding` creates entries from onboarding `Attribute` answers matched by `KnowledgeField.key`.
+
+See also [`V2_BACKEND_IMPLEMENTATION_PLAN.md`](./V2_BACKEND_IMPLEMENTATION_PLAN.md).
+
+---
+
 ## Subscriptions & Settings
 
 | Method | Path | Function |

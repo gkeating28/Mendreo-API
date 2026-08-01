@@ -24,7 +24,7 @@ class PermissionsValidateSerializer(ValidateModelSerializer):
 
         valid_resources = [
             "users", "sessions", "signups", "feedback",
-            "exercises", "assets", "questions", "roles", "pii"
+            "exercises", "assets", "questions", "roles", "pii", "knowledge",
         ]
 
         for key, permissions in attrs.items():

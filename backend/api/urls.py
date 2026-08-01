@@ -38,6 +38,10 @@ urlpatterns = [
 
     path('ai-providers', include('api.ai_provider.urls')),
     path('ai', include('api.ai.urls')),
+
+    path('knowledge-fields', include('api.knowledge.field_urls')),
+    path('knowledge-questions', include('api.knowledge.question_urls')),
+    path('knowledge-entries', include('api.knowledge.entry_urls')),
 ]
 
 

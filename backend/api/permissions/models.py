@@ -19,6 +19,7 @@ class Permissions(SmartModel):
     questions = ArrayField(EnumField(options=Constants.QUESTIONS_PERMISSIONS), blank=True, default=list)
     roles = ArrayField(EnumField(options=Constants.ROLES_PERMISSIONS), blank=True, default=list)
     pii = ArrayField(EnumField(options=Constants.PII_PERMISSIONS), blank=True, default=list)
+    knowledge = ArrayField(EnumField(options=Constants.KNOWLEDGE_PERMISSIONS), blank=True, default=list)
 
     def __str__(self):
         """Return a human readable representation of the model instance."""

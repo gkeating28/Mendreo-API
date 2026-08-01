@@ -2,7 +2,7 @@
 
 Tracked plan for implementing the backend services described in **Mendreo V2 Specification** (Personalisation, Exercises, Onboarding & Progress). Frontend/admin UI work is out of scope here except where API contracts are implied.
 
-**Status:** Draft plan (not yet implemented)  
+**Status:** Slice A in progress / implemented on branch; later slices pending  
 **Source:** Mendreo V2 Spec (April 2026 draft)  
 **Stack:** Django / DRF (`backend/api/`), Celery, Postgres (Supabase), existing AI provider layer
 
@@ -79,13 +79,13 @@ Slice C (Pre-Exercise) can start after Slice A helpers for template resolution
 ### Slice A — Knowledge core + admin CRUD + permissions
 **Spec:** §1.3–1.5, §1.8
 
-- [ ] Models: `KnowledgeField`, `KnowledgeQuestion`, `KnowledgeEntry`
-- [ ] Admin list/create/detail APIs for fields and questions
-- [ ] `POST .../test-extraction` dry-run endpoint
-- [ ] Extend `Permissions` with `knowledge` (`none` / `view` / `edit`); update role defaults
-- [ ] Sensitive-field masking gated by existing `pii:view`
-- [ ] Celery backfill: onboarding `Attribute` → Knowledge Entries (`source=onboarding`)
-- [ ] Unit/API tests + migration
+- [x] Models: `KnowledgeField`, `KnowledgeQuestion`, `KnowledgeEntry`
+- [x] Admin list/create/detail APIs for fields and questions
+- [x] `POST .../test-extraction` dry-run endpoint
+- [x] Extend `Permissions` with `knowledge` (`view` / `create` / `edit` / `delete`); update role defaults
+- [x] Sensitive-field masking gated by existing `pii:view`
+- [x] Celery backfill: onboarding `Attribute` → Knowledge Entries (`source=onboarding`)
+- [x] Unit/API tests + migration
 
 ### Slice B — Per-user knowledge + chat integration
 **Spec:** §1.4, §1.6–1.7

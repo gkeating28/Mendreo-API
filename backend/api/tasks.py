@@ -179,3 +179,21 @@ def process_session_greeting(session_id):
         return
     _run_session_greeting(session)
     logger.info("End > process_session_greeting %s", session_id)
+
+
+@shared_task(
+    name="backfill_knowledge_from_onboarding",
+    ignore_result=True,
+    base=TransactionAwareTask,
+)
+def backfill_knowledge_from_onboarding(consumer_id=None):
+    """
+    One-shot / re-runnable backfill of KnowledgeEntry rows from onboarding Attribute answers.
+    Matching uses Attribute.key → KnowledgeField.key. Idempotent via attribute FK.
+    """
+    from .knowledge.services import backfill_knowledge_from_onboarding as _backfill
+
+    logger.info("Start > backfill_knowledge_from_onboarding consumer_id=%s", consumer_id)
+    result = _backfill(consumer_id=consumer_id)
+    logger.info("End > backfill_knowledge_from_onboarding %s", result)
+    return result
