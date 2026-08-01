@@ -96,9 +96,11 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 
 ---
 
-## Knowledge (V2 Slice A)
+## Knowledge (V2 Slices A–B)
 
 Admin-only. Role permission resource: `knowledge`. Sensitive entry values are masked as `"Restricted"` when the admin lacks `pii:view`.
+
+### Configuration
 
 | Method | Path | Function |
 |---|---|---|
@@ -111,6 +113,17 @@ Admin-only. Role permission resource: `knowledge`. Sensitive entry values are ma
 | GET, DELETE | `/knowledge-entries/<id>` | Retrieve / soft-delete an entry |
 
 Filters: fields support `search_term`, `category`, `active`; questions support `search_term`, `active`, `target_field_id`, `trigger`, `flow`; entries support `consumer_id`, `field_id`, `source`.
+
+### Per-user knowledge (admin portal)
+
+| Method | Path | Function |
+|---|---|---|
+| GET | `/consumers/<id>/knowledge` | Profile grouped by category (current value, source, confidence, updated_at) |
+| PATCH | `/consumers/<id>/knowledge` | Admin edit: body `{field_id, value}` or `{entries: [...]}` — appends `source=admin` entries |
+| GET | `/consumers/<id>/knowledge/activity` | Chronological feed; filter `?source=` |
+| GET | `/consumers/<id>/knowledge/fields/<field_id>/history` | Field history (blocked/empty when sensitive + no `pii:view`) |
+
+Chat session prompts include the current knowledge summary via `get_current_knowledge_summary`. Writes go through `write_knowledge_entry` (invalidates that consumer’s `session.cached_prompt`).
 
 Celery task `backfill_knowledge_from_onboarding` creates entries from onboarding `Attribute` answers matched by `KnowledgeField.key`.
 
