@@ -210,16 +210,30 @@ class KnowledgeEntryCreateSerializer(CreateModelSerializer):
         ]
 
     def validate(self, attrs):
-        request = self.context.get("request")
-        attrs["source"] = Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN
-        if request and hasattr(request, "user") and not request.user.is_anonymous:
-            attrs["created_by"] = request.user
-
         confidence = attrs.get("confidence", 1.0)
         if confidence is not None and (confidence < 0 or confidence > 1):
             raise serializers.ValidationError({"confidence": "Must be between 0 and 1."})
 
         return attrs
+
+    def create(self, validated_data):
+        from .services import write_knowledge_entry
+
+        request = self.context.get("request")
+        created_by = None
+        if request and hasattr(request, "user") and not request.user.is_anonymous:
+            created_by = request.user
+
+        return write_knowledge_entry(
+            consumer=validated_data["consumer"],
+            field=validated_data["field"],
+            value=validated_data["value"],
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN,
+            confidence=validated_data.get("confidence", 1.0),
+            knowledge_question=validated_data.get("knowledge_question"),
+            session=validated_data.get("session"),
+            created_by=created_by,
+        )
 
 
 class KnowledgeEntryListSerializer(ListModelSerializer):
@@ -256,3 +270,67 @@ class KnowledgeEntryDetailSerializer(KnowledgeEntryListSerializer):
 class KnowledgeExtractionTestSerializer(serializers.Serializer):
     sample_reply = serializers.CharField()
     extraction_prompt = serializers.CharField(required=False, allow_blank=True)
+
+
+class KnowledgeProfileEditItemSerializer(serializers.Serializer):
+    field_id = serializers.CharField()
+    value = serializers.CharField()
+    confidence = serializers.FloatField(required=False, default=1.0, min_value=0, max_value=1)
+
+
+class KnowledgeProfileEditSerializer(serializers.Serializer):
+    """
+    PATCH body for admin edits. Accepts either a single field edit or a list under `entries`.
+    Each edit appends a new KnowledgeEntry with source=admin.
+    """
+
+    field_id = serializers.CharField(required=False)
+    value = serializers.CharField(required=False)
+    confidence = serializers.FloatField(required=False, default=1.0, min_value=0, max_value=1)
+    entries = KnowledgeProfileEditItemSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        entries = attrs.get("entries")
+        if entries:
+            return {"entries": entries}
+
+        field_id = attrs.get("field_id")
+        value = attrs.get("value")
+        if not field_id or value is None:
+            raise serializers.ValidationError(
+                "Provide either 'entries' or both 'field_id' and 'value'."
+            )
+
+        return {
+            "entries": [
+                {
+                    "field_id": field_id,
+                    "value": value,
+                    "confidence": attrs.get("confidence", 1.0),
+                }
+            ]
+        }
+
+
+class KnowledgeActivitySerializer(ListModelSerializer):
+    field = KnowledgeFieldBriefSerializer()
+    field_sensitive = serializers.BooleanField(source="field.sensitive", read_only=True)
+
+    class Meta:
+        model = KnowledgeEntry
+        fields = [
+            "id",
+            "field",
+            "field_sensitive",
+            "value",
+            "source",
+            "confidence",
+            "knowledge_question",
+            "session",
+            "created_by",
+            "created_at",
+        ]
+
+    @staticmethod
+    def optimise(queryset):
+        return queryset.select_related("field", "knowledge_question", "session", "created_by")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+
 from pydantic import BaseModel, Field
 
 from ..utils import Constants
@@ -57,6 +59,208 @@ def test_extraction(extraction_prompt: str, sample_reply: str, value_type: str |
     return AI.ask(prompt, KnowledgeExtractionResult, temperature=0.1)
 
 
+def invalidate_consumer_prompt_cache(consumer) -> None:
+    """Clear cached session prompts so the next turn reloads knowledge."""
+    from ..session.models import Session
+
+    Session.objects.filter(consumer=consumer).exclude(cached_prompt__isnull=True).exclude(
+        cached_prompt=""
+    ).update(cached_prompt=None)
+
+
+def write_knowledge_entry(
+    *,
+    consumer,
+    field,
+    value: str,
+    source: str,
+    confidence: float = 1.0,
+    knowledge_question=None,
+    session=None,
+    attribute=None,
+    created_by=None,
+    invalidate_prompt_cache: bool = True,
+):
+    """
+    Append a KnowledgeEntry for a consumer/field.
+
+    Used by admin edits (source=admin), knowledge-question answers (source=question),
+    AI inference (source=ai), and onboarding backfill (source=onboarding).
+    """
+    from .models import KnowledgeEntry
+
+    if source not in Constants.KNOWLEDGE_ENTRY_SOURCES:
+        raise ValueError(f"Invalid knowledge entry source: {source}")
+
+    if confidence is None:
+        confidence = 1.0
+    if confidence < 0 or confidence > 1:
+        raise ValueError("confidence must be between 0 and 1")
+
+    entry = KnowledgeEntry.objects.create(
+        consumer=consumer,
+        field=field,
+        value=value,
+        source=source,
+        confidence=confidence,
+        knowledge_question=knowledge_question,
+        session=session,
+        attribute=attribute,
+        created_by=created_by,
+    )
+
+    if invalidate_prompt_cache:
+        invalidate_consumer_prompt_cache(consumer)
+
+    return entry
+
+
+def get_current_entries(consumer, *, active_fields_only: bool = True):
+    """
+    Return the latest KnowledgeEntry per field for a consumer.
+
+    Prefers a single query of recent entries, keeping the first (newest) per field.
+    """
+    from .models import KnowledgeEntry, KnowledgeField
+
+    field_qs = KnowledgeField.objects.all()
+    if active_fields_only:
+        field_qs = field_qs.filter(active=True)
+
+    fields = list(field_qs.order_by("category", "label"))
+    if not fields:
+        return []
+
+    field_ids = [f.id for f in fields]
+    entries = (
+        KnowledgeEntry.objects.filter(consumer=consumer, field_id__in=field_ids)
+        .select_related("field", "knowledge_question", "session", "created_by")
+        .order_by("field_id", "-created_at")
+    )
+
+    current_by_field = {}
+    for entry in entries:
+        if entry.field_id not in current_by_field:
+            current_by_field[entry.field_id] = entry
+
+    return [current_by_field[f.id] for f in fields if f.id in current_by_field]
+
+
+def get_knowledge_profile(consumer, *, obscure_pii: bool = False, active_fields_only: bool = True) -> dict:
+    """
+    Build the admin Knowledge tab payload: fields grouped by category with current values.
+    """
+    from .models import KnowledgeField
+
+    field_qs = KnowledgeField.objects.all()
+    if active_fields_only:
+        field_qs = field_qs.filter(active=True)
+    fields = list(field_qs.order_by("category", "label"))
+
+    current = {e.field_id: e for e in get_current_entries(consumer, active_fields_only=active_fields_only)}
+
+    grouped = defaultdict(list)
+    for field in fields:
+        entry = current.get(field.id)
+        value = None
+        source = None
+        confidence = None
+        updated_at = None
+        entry_id = None
+        restricted = False
+
+        if entry:
+            entry_id = entry.id
+            source = entry.source
+            confidence = entry.confidence
+            updated_at = entry.created_at
+            if field.sensitive and obscure_pii:
+                value = Constants.KNOWLEDGE_RESTRICTED_PLACEHOLDER
+                restricted = True
+            else:
+                value = entry.value
+
+        grouped[field.category or "General"].append(
+            {
+                "field": {
+                    "id": field.id,
+                    "key": field.key,
+                    "label": field.label,
+                    "category": field.category,
+                    "value_type": field.value_type,
+                    "sensitive": field.sensitive,
+                    "active": field.active,
+                },
+                "entry_id": entry_id,
+                "value": value,
+                "source": source,
+                "confidence": confidence,
+                "updated_at": updated_at,
+                "restricted": restricted,
+                "has_history": entry is not None,
+            }
+        )
+
+    categories = [
+        {"category": category, "fields": rows}
+        for category, rows in grouped.items()
+    ]
+    # Keep stable ordering by first appearance (fields already category-ordered)
+    return {
+        "consumer_id": getattr(consumer, "pk", None) or getattr(consumer, "user_id", None),
+        "categories": categories,
+    }
+
+
+def get_current_knowledge_summary(consumer, *, include_sensitive: bool = True) -> str:
+    """
+    Text summary of current knowledge for injection into the AI session prompt.
+    """
+    entries = get_current_entries(consumer, active_fields_only=True)
+    if not entries:
+        return "No structured knowledge recorded for this user yet."
+
+    lines = ["Structured knowledge about this user:"]
+    for entry in entries:
+        field = entry.field
+        if field.sensitive and not include_sensitive:
+            continue
+        lines.append(
+            f"- {field.label} ({field.key}): {entry.value} "
+            f"[source={entry.source}, confidence={entry.confidence:.2f}]"
+        )
+
+    if len(lines) == 1:
+        return "No structured knowledge recorded for this user yet."
+
+    return "\n".join(lines)
+
+
+def get_activity_queryset(consumer, *, source: str | None = None):
+    """Chronological KnowledgeEntry feed for a consumer (newest first)."""
+    from .models import KnowledgeEntry
+
+    qs = (
+        KnowledgeEntry.objects.filter(consumer=consumer)
+        .select_related("field", "knowledge_question", "session", "created_by")
+        .order_by("-created_at")
+    )
+    if source:
+        qs = qs.filter(source=source)
+    return qs
+
+
+def get_field_history_queryset(consumer, field):
+    """History of entries for one field, newest first."""
+    from .models import KnowledgeEntry
+
+    return (
+        KnowledgeEntry.objects.filter(consumer=consumer, field=field)
+        .select_related("field", "knowledge_question", "session", "created_by")
+        .order_by("-created_at")
+    )
+
+
 def backfill_knowledge_from_onboarding(consumer_id: str | None = None) -> dict:
     """
     Create KnowledgeEntry rows from existing onboarding Attribute answers.
@@ -103,13 +307,14 @@ def backfill_knowledge_from_onboarding(consumer_id: str | None = None) -> dict:
             unmatched += 1
             continue
 
-        KnowledgeEntry.objects.create(
+        write_knowledge_entry(
             consumer=attribute.consumer,
             field=field,
             value=attribute.value,
             source=Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
             confidence=1.0,
             attribute=attribute,
+            invalidate_prompt_cache=False,
         )
         created += 1
 

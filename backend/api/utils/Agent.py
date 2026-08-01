@@ -323,20 +323,30 @@ def _register_tools(agent: Agent[Dependencies, BaseModel]) -> None:
         }
 
 
+def _format_knowledge(consumer: Consumer) -> str:
+    """Structured User Knowledge Engine summary for session prompts."""
+    from ..knowledge.services import get_current_knowledge_summary
+
+    return get_current_knowledge_summary(consumer, include_sensitive=True)
+
+
 def _format_summary(consumer: Consumer) -> str:
     from ..summary.models import Summary
     """
     Returns the summarized past conversation history for the consumer,
-    using the 'Summary' model's stored detailed notes and observations.
+    using the 'Summary' model's stored detailed notes and observations,
+    plus the current structured knowledge profile.
     """
+    knowledge = _format_knowledge(consumer)
+
     no_previous_conversations = "No previous conversations exist with this user."
     try:
         summary = Summary.objects.get(consumer=consumer)
     except Summary.DoesNotExist:
-        return no_previous_conversations
+        return f"{no_previous_conversations}\n\n{knowledge}"
 
     if not summary.detailed:
-        return no_previous_conversations
+        return f"{no_previous_conversations}\n\n{knowledge}"
 
     detailed_notes = summary.detailed
     observations = summary.observations or ""
@@ -346,6 +356,8 @@ def _format_summary(consumer: Consumer) -> str:
 
     result += "Observations:\n"
     result += observations.strip() + "\n\n"
+
+    result += knowledge + "\n\n"
 
     return result
 
