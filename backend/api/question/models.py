@@ -40,6 +40,22 @@ class Question(SmartModel):
     complete_on_value = models.CharField(max_length=255, null=True)
     complete_text = models.CharField(max_length=255, null=True)
 
+    # Slider (0–10) + multi-select constraints (Slice D / spec §3.7)
+    anchor_labels = ArrayField(
+        models.CharField(max_length=64, blank=True),
+        size=2,
+        blank=True,
+        null=True,
+    )
+    value_labels = ArrayField(
+        models.CharField(max_length=64, blank=True),
+        size=Constants.SLIDER_VALUE_LABEL_COUNT,
+        blank=True,
+        null=True,
+    )
+    min_selections = models.PositiveIntegerField(null=True, blank=True)
+    max_selections = models.PositiveIntegerField(null=True, blank=True)
+
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Question: {}".format(self.id)

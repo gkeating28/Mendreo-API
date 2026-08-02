@@ -55,9 +55,12 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 |---|---|---|
 | GET | `/sessions` | List sessions (paginated) |
 | GET | `/sessions/today` | Today's session for the consumer |
-| GET | `/sessions/start` | Start/initialize a new session |
-| GET, PATCH, DELETE | `/sessions/<id>` | Retrieve / update / delete a session |
+| GET | `/sessions/start` | Start/initialize a session; returning users + enabled pre-exercise → check-in (`current_step_no=0`) |
+| POST | `/sessions/<id>/complete-pre-exercise` | Handoff from check-in to Step 1 (`summary` optional) |
+| GET, PATCH, DELETE | `/sessions/<id>` | Retrieve / update / delete a session (includes `phase`, `pre_exercise` panel) |
 | GET | `/sessions/<id>/summary` | Generated summary of a session |
+
+Session detail includes `phase` (`pre_exercise` / `exercise` / `completed` / `general`) and `pre_exercise` (`pending`, `occurred`, `summary`, `completed_at`, `start_button_label`).
 
 ---
 
@@ -76,23 +79,88 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 
 | Method | Path | Function |
 |---|---|---|
-| GET, POST | `/exercises` | List / create exercises |
+| GET, POST | `/exercises` | List / create exercises (pre-exercise fields; filter `?pre_exercise=all\|enabled\|disabled`) |
 | POST | `/exercises/duplicate` | Duplicate an existing exercise |
+| POST | `/exercises/<id>/test-pre-exercise-prompt` | Resolve tokens for a consumer; optional dry-run opening message |
 | GET, PATCH, DELETE | `/exercises/<id>` | Retrieve / update / delete |
 | GET, PATCH, DELETE | `/exercise-summaries/<id>` | Retrieve / update / delete an exercise summary |
+
+Pre-exercise fields on Exercise: `pre_exercise_enabled`, `pre_exercise_description`, `pre_exercise_instruction`, `pre_exercise_goal`, `pre_exercise_completion_prompt`, `pre_exercise_start_button_label`. Publish requires Instruction + Goal when enabled. Cadence: every repeat for returning users (same-day second runs included).
 
 > Note: the `exercise_summary` module also defines a list/create view, but only the `/<id>` route is wired in its `urls.py` — the collection route is not currently exposed.
 
 ---
 
-## AI, Feedback, Onboarding, Survey
+## AI, Feedback, Survey
 
 | Method | Path | Function |
 |---|---|---|
 | GET, POST | `/ai` | AI generation/inference endpoint |
 | GET, POST | `/feedback` | Submit feedback |
-| GET | `/onboarding` | Onboarding flow data |
 | GET | `/survey` | Survey questions/data |
+
+---
+
+## Onboarding (legacy + V2 flows)
+
+| Method | Path | Function |
+|---|---|---|
+| GET | `/onboarding` | Legacy Attribute-based questions + packages |
+| GET | `/onboarding/status` | Home icon state: `onboarded`, `refresh_due`, `recommended_variant`, cadence |
+| GET | `/onboarding/flow` | KnowledgeQuestion sequence (`?variant=initial\|return\|refresh` or server-selected) |
+| POST | `/onboarding/answers` | Commit answers → Knowledge Entries (`source=question`) |
+
+Knowledge questions support `response_type` `text` / `single_choice` / `multiple_choice` / `slider`, `order_by_flow`, slider labels, and multi-select bounds. Initial may step-sync (`complete=false`); Return/Refresh require `complete=true`.
+
+---
+
+## Knowledge (V2 Slices A–B)
+
+Admin-only. Role permission resource: `knowledge`. Sensitive entry values are masked as `"Restricted"` when the admin lacks `pii:view`.
+
+### Configuration
+
+| Method | Path | Function |
+|---|---|---|
+| GET, POST | `/knowledge-fields` | List / create knowledge field definitions |
+| GET, PATCH, DELETE | `/knowledge-fields/<id>` | Retrieve / update / soft-delete a field |
+| GET, POST | `/knowledge-questions` | List / create knowledge gathering questions |
+| GET, PATCH, DELETE | `/knowledge-questions/<id>` | Retrieve / update / soft-delete a question |
+| POST | `/knowledge-questions/<id>/test-extraction` | Dry-run extraction prompt against a sample reply |
+| GET, POST | `/knowledge-entries` | List / create per-user knowledge entries (append-only history) |
+| GET, DELETE | `/knowledge-entries/<id>` | Retrieve / soft-delete an entry |
+
+Filters: fields support `search_term`, `category`, `active`; questions support `search_term`, `active`, `target_field_id`, `trigger`, `flow`; entries support `consumer_id`, `field_id`, `source`.
+
+### Per-user knowledge (admin portal)
+
+| Method | Path | Function |
+|---|---|---|
+| GET | `/consumers/<id>/knowledge` | Profile grouped by category (current value, source, confidence, updated_at) |
+| PATCH | `/consumers/<id>/knowledge` | Admin edit: body `{field_id, value}` or `{entries: [...]}` — appends `source=admin` entries |
+| GET | `/consumers/<id>/knowledge/activity` | Chronological feed; filter `?source=` |
+| GET | `/consumers/<id>/knowledge/fields/<field_id>/history` | Field history (blocked/empty when sensitive + no `pii:view`) |
+
+Chat session prompts include the current knowledge summary via `get_current_knowledge_summary`. Writes go through `write_knowledge_entry` (invalidates that consumer’s `session.cached_prompt`).
+
+Celery task `backfill_knowledge_from_onboarding` creates entries from onboarding `Attribute` answers matched by `KnowledgeField.key`.
+
+See also [`V2_BACKEND_IMPLEMENTATION_PLAN.md`](./V2_BACKEND_IMPLEMENTATION_PLAN.md).
+
+---
+
+## Progress & Insights (V2 Slice E) — `/progress`
+
+Consumer-only. Default range = current calendar week (Mon–Sun) in Django `TIME_ZONE`. Pass `?from=&to=` (YYYY-MM-DD). Streaks ignore range.
+
+| Method | Path | Function |
+|---|---|---|
+| GET | `/progress/mood` | Daily mood points (gaps, not zeros), summary avg/Δ/count; field key `mood` |
+| GET | `/progress/exercises` | Completions total, heatmap, per-exercise breakdown |
+| GET | `/progress/patterns` | Latest observation card + stress-point bars (`stress_points` multi-select) |
+| GET | `/progress/streaks` | Check-in + exercise current/best streaks |
+
+Celery: `generate_user_observations` (02:00) fans out `generate_user_observation` (≤1 / 24h / user; retains prior on failure).
 
 ---
 
@@ -102,6 +170,8 @@ Each follows the uniform pattern: `GET` (list, paginated) and `POST` (create) on
 |---|---|---|
 | GET, PATCH, DELETE | `/subscriptions/<id>` | Manage a subscription (Stripe-backed) |
 | GET, POST | `/settings` | Read / write app settings |
+
+Settings keys include: `survey_enabled`, `general_prompt`, `therapeutic_prompt`, `refresh_onboarding_cadence_days`, `observations_enabled`, `observations_instruction`, `observations_tone_guide`, `observations_max_length`.
 
 ---
 

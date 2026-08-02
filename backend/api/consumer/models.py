@@ -22,6 +22,10 @@ class Consumer(SmartModel):
 
     surveyed = models.BooleanField(default=False)
 
+    # Last completed Initial / Return / Refresh onboarding flow (V2 Slice D).
+    last_onboarding_flow_completed_at = models.DateTimeField(null=True, blank=True)
+    last_onboarding_flow_variant = models.CharField(max_length=32, null=True, blank=True)
+
     def __str__(self):
         """Return a human readable representation of the model instance."""
         return "Consumer: {}".format(self.user)

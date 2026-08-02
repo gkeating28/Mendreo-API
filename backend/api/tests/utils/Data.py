@@ -235,6 +235,8 @@ def valid_social_auth_data(provider="provider", code="code", redirect_uri="https
 
 
 def valid_exercise_flexible_thinking():
+    # pre_exercise_enabled False so published fixture exercises stay valid without
+    # authored check-in Instruction/Goal (Slice C publish rule).
 
     return {
         "title": "Flexible Thinking",
@@ -242,6 +244,7 @@ def valid_exercise_flexible_thinking():
         "icon": "leaf",
         "icon_background_color": "tan",
         "status": Constants.EXERCISE_STATUS_PUBLISHED,
+        "pre_exercise_enabled": False,
         "description": """
             I. Guiding Principles
                 - Tone: Adopt a peer-to-peer, supportive, and determined tone. Your persona is like a knowledgeable and caring coach. It should be consistent with the home screen bot.

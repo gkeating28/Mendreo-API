@@ -179,3 +179,80 @@ def process_session_greeting(session_id):
         return
     _run_session_greeting(session)
     logger.info("End > process_session_greeting %s", session_id)
+
+
+@shared_task(
+    name="backfill_knowledge_from_onboarding",
+    ignore_result=True,
+    base=TransactionAwareTask,
+)
+def backfill_knowledge_from_onboarding(consumer_id=None):
+    """
+    One-shot / re-runnable backfill of KnowledgeEntry rows from onboarding Attribute answers.
+    Matching uses Attribute.key → KnowledgeField.key. Idempotent via attribute FK.
+    """
+    from .knowledge.services import backfill_knowledge_from_onboarding as _backfill
+
+    logger.info("Start > backfill_knowledge_from_onboarding consumer_id=%s", consumer_id)
+    result = _backfill(consumer_id=consumer_id)
+    logger.info("End > backfill_knowledge_from_onboarding %s", result)
+    return result
+
+
+@shared_task(
+    base=PeriodicTask,
+    run_every=crontab(minute=0, hour=2),  # 2:00 AM
+    name="generate_user_observations",
+    ignore_result=True,
+)
+def generate_user_observations():
+    """Fan-out overnight observation generation for active consumers."""
+    from .consumer.models import Consumer
+    from .setting.models import Setting
+
+    if not Setting.get_observations_enabled():
+        logger.info("generate_user_observations skipped — observations disabled")
+        return
+
+    # Consumers with recent activity (knowledge or sessions in last 30 days)
+    since = timezone.now() - timedelta(days=30)
+    consumer_ids = set(
+        Consumer.objects.filter(sessions__created_at__gte=since)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    consumer_ids.update(
+        Consumer.objects.filter(knowledge_entries__created_at__gte=since)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+
+    for consumer_id in consumer_ids:
+        generate_user_observation.delay_on_commit(consumer_id)
+
+    logger.info("generate_user_observations queued %s consumers", len(consumer_ids))
+
+
+@shared_task(
+    name="generate_user_observation",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def generate_user_observation(consumer_id):
+    from .consumer.models import Consumer
+    from .progress.services import generate_observation_for_consumer
+
+    logger.info("Start > generate_user_observation %s", consumer_id)
+    consumer = Consumer.objects.filter(pk=consumer_id).first()
+    if not consumer:
+        logger.warning("generate_user_observation: consumer %s not found", consumer_id)
+        return
+    observation = generate_observation_for_consumer(consumer)
+    logger.info(
+        "End > generate_user_observation %s -> %s",
+        consumer_id,
+        getattr(observation, "id", None),
+    )
+    return getattr(observation, "id", None)

@@ -44,6 +44,10 @@ class Session(SmartModel):
 
     usage = models.JSONField(null=True)
 
+    # Pre-Exercise Prompt check-in (V2). During check-in, current_step_no is 0.
+    pre_exercise_prompt_summary = models.TextField(null=True, blank=True)
+    pre_exercise_completed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(
@@ -64,9 +68,19 @@ class Session(SmartModel):
         """Return the permission key for role-based access control"""
         return "sessions"
 
+    def in_pre_exercise_phase(self) -> bool:
+        """True while the session is in the pre-exercise check-in (before Step 1)."""
+        return bool(self.exercise_id) and self.current_step_no == 0
+
+    def had_pre_exercise_checkin(self) -> bool:
+        """True if a pre-exercise check-in completed for this session."""
+        return self.pre_exercise_completed_at is not None
+
     @staticmethod
     def get_or_create(consumer, exercise: Exercise = None):
         from ..participant.models import Participant
+        from ..exercise.pre_exercise import should_run_pre_exercise_checkin
+
         start, end = DateUtils.day_bounds()
 
         session = Session.objects.filter(
@@ -82,11 +96,15 @@ class Session(SmartModel):
         completed = None
         total_steps_no = None
         current_step_no = None
+        run_pre_exercise = False
 
         if exercise:
             completed = False
-            current_step_no = 1
             total_steps_no = exercise.steps_no
+            run_pre_exercise = should_run_pre_exercise_checkin(consumer, exercise)
+            # Cadence: every repeat (incl. same-day second runs after a completed session).
+            # Resume of an incomplete same-day session is handled above via get_or_create.
+            current_step_no = 0 if run_pre_exercise else 1
 
         session = Session.objects.create(
             consumer=consumer,

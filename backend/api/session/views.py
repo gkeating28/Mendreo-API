@@ -136,6 +136,39 @@ class Detail(SmartDetailAPIView):
         return queryset
 
 
+class CompletePreExercise(SmartAPIView):
+    """Handoff: complete check-in and enter Step 1 (explicit Start exercise action)."""
+
+    permission_classes = [IsConsumerPermission]
+    model = Session
+
+    def post(self, request, id):
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+
+        if not session.in_pre_exercise_phase():
+            return Response(
+                {"detail": "Session is not in the pre-exercise check-in phase"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from ..exercise.pre_exercise import complete_pre_exercise_checkin
+
+        summary = request.data.get("summary") if isinstance(request.data, dict) else None
+        try:
+            complete_pre_exercise_checkin(session, summary=summary)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        session = SessionDetailSerializer.optimise(
+            Session.objects.filter(id=session.id)
+        ).first()
+        return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
 class Summary(SmartAPIView):
     model = Session
     detail_serializer = SessionDetailSerializer
