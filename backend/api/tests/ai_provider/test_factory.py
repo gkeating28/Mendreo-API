@@ -16,7 +16,7 @@ class AiProviderFactoryTest(TestCase):
         self.google = AiProvider(
             name="Google",
             provider=Constants.AI_PROVIDER_GOOGLE,
-            default_model="gemini-2.5-flash",
+            default_model="gemini-3.1-flash-lite",
             is_default=True,
             enabled=True,
         )
@@ -36,7 +36,7 @@ class AiProviderFactoryTest(TestCase):
     def test_resolve_model_falls_back_when_incompatible(self):
         self.assertEqual(
             self.google.resolve_model_name("gpt-4.1-mini"),
-            "gemini-2.5-flash",
+            "gemini-3.1-flash-lite",
         )
         self.assertEqual(
             self.openai.resolve_model_name("gpt-4.1"),

@@ -2,4 +2,5 @@
 - [Publish-time DB migration](publish-time-db-migration.md) — Publish diffs the Replit-managed DB dev→prod whenever it's provisioned, even if the app uses Supabase; remove the vestigial Replit DB to stop it (e.g. PostGIS geography_columns failure).
 - [Celery on Replit](celery-on-replit.md) — no broker/worker on Replit; tasks run eager (env flag), dispatch failures are non-fatal; periodic tasks still do not run.
 - [Gemini model choice](gemini-models-mendreo.md) — chat model is a DB row; 3.x models benchmarked slower than 2.5-flash on structured output; thinking_level vs thinking_budget rules.
+- [AI_SECRETS_MASTER_KEY outage](ai-secrets-master-key.md) — missing Fernet key on worker → undecryptable `api_aiprovider` keys → frontend "Sorry, I had an issue understanding your message"; env fallback + `--refresh-from-env`.
 - [Publish pip resolve](publish-build-pip-resolve.md) — publish re-resolves requirements.txt via the package firewall; stale dep pins or vuln-blocked versions fail builds that work in dev.
