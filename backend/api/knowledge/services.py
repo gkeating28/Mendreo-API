@@ -5,7 +5,6 @@ from collections import defaultdict
 from pydantic import BaseModel, Field
 
 from ..utils import Constants
-from ..utils.AI import AI
 
 
 class KnowledgeExtractionResult(BaseModel):
@@ -48,7 +47,12 @@ def test_extraction(extraction_prompt: str, sample_reply: str, value_type: str |
     """
     Dry-run extraction: send extraction prompt + sample reply to the model.
     Does not persist anything.
+
+    AI is imported lazily so Vercel builds (which omit google-genai from
+    requirements-vercel.txt) can still import knowledge URLs for migrate.
     """
+    from ..utils.AI import AI
+
     type_hint = f" The field value type is '{value_type}'." if value_type else ""
     prompt = (
         f"{extraction_prompt.strip()}\n\n"

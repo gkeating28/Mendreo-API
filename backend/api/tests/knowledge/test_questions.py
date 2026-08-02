@@ -76,7 +76,7 @@ class KnowledgeQuestionTests(BaseTest):
             active=True,
         )
 
-        with mock.patch("api.knowledge.services.AI.ask") as ask:
+        with mock.patch("api.utils.AI.AI.ask") as ask:
             ask.return_value = {"value": "restless", "confidence": 0.9}
             response = self._post(
                 f"/knowledge-questions/{question.id}/test-extraction",
