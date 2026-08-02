@@ -101,3 +101,33 @@ class AiProviderFactoryTest(TestCase):
                 os.environ.pop("GOOGLE_API_KEY", None)
             else:
                 os.environ["GOOGLE_API_KEY"] = previous
+
+    def test_env_fallback_when_db_keys_undecryptable(self):
+        """Regression: undecryptable DB rows must not block GOOGLE_API_KEY fallback."""
+        import os
+        from unittest.mock import patch
+
+        from django.core.exceptions import ImproperlyConfigured
+
+        from ...utils.AiProviderFactory import ensure_providers_ready
+
+        previous = os.environ.get("GOOGLE_API_KEY")
+        os.environ["GOOGLE_API_KEY"] = "env-decrypt-fallback-4242"
+        try:
+            with patch.object(
+                AiProvider,
+                "get_api_key",
+                side_effect=ImproperlyConfigured(
+                    "AI_SECRETS_MASTER_KEY must be set to encrypt/decrypt AI provider keys."
+                ),
+            ):
+                candidates = ensure_providers_ready()
+
+            self.assertTrue(len(candidates) >= 1)
+            self.assertTrue(all(getattr(c, "id", "").startswith("env_") for c in candidates))
+            self.assertEqual(candidates[0].get_api_key(), "env-decrypt-fallback-4242")
+        finally:
+            if previous is None:
+                os.environ.pop("GOOGLE_API_KEY", None)
+            else:
+                os.environ["GOOGLE_API_KEY"] = previous

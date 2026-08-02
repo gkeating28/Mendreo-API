@@ -81,7 +81,8 @@ AI_SECRETS_MASTER_KEY=...   # Fernet key; encrypts AI provider API keys in Postg
 - Do **not** set `AI_WORKER_URL` on Railway
 - `AI_SECRETS_MASTER_KEY` is required on the worker (decrypts provider keys). Generate with:
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-- `GOOGLE_API_KEY` remains used for Google Play receipt validation; it also seeds a default Google AI provider on first boot when none exist.
+- If chat returns “Sorry, I had an issue understanding your message…”, check message `reasoning` / worker logs. A common cause is a missing `AI_SECRETS_MASTER_KEY` (cannot decrypt `api_aiprovider` keys). With `GOOGLE_API_KEY` set, the worker falls back to the env key so chat still works; then set the master key and run `python manage.py seed_ai_providers --refresh-from-env` to re-encrypt DB keys.
+- `GOOGLE_API_KEY` remains used for Google Play receipt validation; it also seeds a default Google AI provider on first boot when none exist, and is the runtime fallback when DB keys cannot be decrypted.
 
 ---
 
