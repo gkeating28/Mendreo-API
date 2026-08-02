@@ -29,17 +29,29 @@ class ListCreate(SmartAPIView):
         for setting in settings:
             data[setting.key] = setting.value
 
-            if setting.key == "survey_enabled":
+            if setting.key in ("survey_enabled", "observations_enabled"):
                 data[setting.key] = setting.value.lower() == "true"
-            elif setting.key == "refresh_onboarding_cadence_days":
+            elif setting.key in (
+                "refresh_onboarding_cadence_days",
+                "observations_max_length",
+            ):
                 try:
                     data[setting.key] = int(setting.value)
                 except (TypeError, ValueError):
-                    data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
+                    if setting.key == "refresh_onboarding_cadence_days":
+                        data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
+                    else:
+                        data[setting.key] = Setting.get_observations_max_length()
 
-        # Ensure cadence key is always present for admin UI.
-        if "refresh_onboarding_cadence_days" not in data:
-            data["refresh_onboarding_cadence_days"] = Setting.get_refresh_onboarding_cadence_days()
+        defaults = {
+            "refresh_onboarding_cadence_days": Setting.get_refresh_onboarding_cadence_days(),
+            "observations_enabled": Setting.get_observations_enabled(),
+            "observations_instruction": Setting.get_observations_instruction(),
+            "observations_tone_guide": Setting.get_observations_tone_guide(),
+            "observations_max_length": Setting.get_observations_max_length(),
+        }
+        for key, value in defaults.items():
+            data.setdefault(key, value)
 
         return Response(data, status=status.HTTP_200_OK)
 

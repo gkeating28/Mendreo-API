@@ -39,9 +39,9 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 |---|---|---|
 | **User** (`api/user/models.py`) | `id` (`usr_`), `email` (unique), `type` (`consumer`/`admin`), `first_name`, `last_name`, `full_name` (computed on save, indexed), `password`, `status` (`active`/`suspended`), `email_verified`, `verification_code`, `verification_code_sent_at`, `last_seen`, `phone_*` | `AbstractBaseUser`; `USERNAME_FIELD = email`. Owns `consumer` / `admin` (OneToOne, reverse). Note: it declares its own `deleted_at`/`created_at`/`updated_at` (it does **not** inherit `SmartModel`). |
 | **Admin** (`api/admin/models.py`) | `user` (OneToOne PK) | `role` → `Role` (`SET_NULL`). |
-| **Consumer** (`api/consumer/models.py`) | `user` (OneToOne PK) | `agent` → `Agent` (`DO_NOTHING`); `stripe_customer_id`; `date_of_birth`; `onboarded`; `surveyed`. Reverse: `attributes`, `sessions`, `participants`, `events`, `subscription`, `summary`, `exercise_summaries`, `payments`. |
+| **Consumer** (`api/consumer/models.py`) | `user` (OneToOne PK) | `agent` → `Agent` (`DO_NOTHING`); `stripe_customer_id`; `date_of_birth`; `onboarded`; `surveyed`; `last_onboarding_flow_completed_at`; `last_onboarding_flow_variant`. Reverse: `attributes`, `sessions`, `participants`, `events`, `subscription`, `summary`, `exercise_summaries`, `payments`, `knowledge_entries`, `observations`. |
 | **Role** (`api/role/models.py`) | `id` (`rol_`), `name`, `is_default` | OneToOne `permissions`. |
-| **Permissions** (`api/permissions/models.py`) | `role` (OneToOne PK) | Nine `ArrayField(EnumField)` columns: `users`, `sessions`, `signups`, `feedback`, `exercises`, `assets`, `questions`, `roles`, `pii`. Each holds a subset of `view/create/edit/delete`. |
+| **Permissions** (`api/permissions/models.py`) | `role` (OneToOne PK) | Array columns: `users`, `sessions`, `signups`, `feedback`, `exercises`, `assets`, `questions`, `roles`, `pii`, `knowledge`. Each holds a subset of `view/create/edit/delete`. |
 
 ### 1.2 Agent / AI configuration
 
@@ -53,7 +53,7 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 
 | Model | Key fields | Relationships |
 |---|---|---|
-| **Session** (`api/session/models.py`) | `id` (`ssn_`), `messages_no`, `consumer_messages_no`, `agent_messages_no`, `subject`, `rating` (Decimal 0–10), `rating_reason`, `risk_level` (enum), `total_steps_no`, `completed`, `current_step_no`, `cached_prompt` (Text), `cached_history` (JSON), `usage` (JSON) | `consumer` → `Consumer`; `last_asset` → `Asset` (`SET_NULL`); `last_message` → `Message` (`SET_NULL`); `exercise` → `Exercise` (`SET_NULL`). Reverse `messages`, `participants`, `session_steps`, `questions`. |
+| **Session** (`api/session/models.py`) | `id` (`ssn_`), `messages_no`, `consumer_messages_no`, `agent_messages_no`, `subject`, `rating` (Decimal 0–10), `rating_reason`, `risk_level` (enum), `total_steps_no`, `completed`, `current_step_no` (0 during pre-exercise check-in), `cached_prompt` (Text), `cached_history` (JSON), `usage` (JSON), `pre_exercise_prompt_summary`, `pre_exercise_completed_at` | `consumer` → `Consumer`; `last_asset` → `Asset` (`SET_NULL`); `last_message` → `Message` (`SET_NULL`); `exercise` → `Exercise` (`SET_NULL`). Reverse `messages`, `participants`, `session_steps`, `questions`, `knowledge_entries`. |
 | **SessionStep** (`api/session/models.py`) | `id` (`ssnstp_`), `completed`, `completion_label`, `completion_result`, `order` | `step` → `Step`; `session` → `Session`; `last_asset` → `Asset`. |
 | **Participant** (`api/participant/models.py`) | `id` (`ptcp_`) | `consumer` (nullable), `agent` (nullable), `session`. One participant row per (consumer or agent) per session. |
 | **Message** (`api/message/models.py`) | `id` (`msg_`), `text`, `reasoning`, `suggested_responses` (ArrayField), `step_no`, `completion_label`, `completion_result`, `is_step_complete`, `usage` (JSON) | `session` → `Session`; `sender` → `Participant`; `asset` → `Asset` (`SET_NULL`); `exercise` → `Exercise` (`SET_NULL`). |
@@ -63,9 +63,9 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 
 | Model | Key fields | Relationships |
 |---|---|---|
-| **Exercise** (`api/exercise/models.py`) | `id` (`exrcs_`), `title`, `subtitle`, `description`, `status` (`draft`/`archived`/`published`), `steps_no`, `icon`, `icon_svg`, `icon_background_color`, `completions_no`, `average_duration`, `order` | Reverse `steps`, `questions`, `sessions`, `messages`, `exercise_summaries`. |
+| **Exercise** (`api/exercise/models.py`) | `id` (`exrcs_`), `title`, `subtitle`, `description`, `status` (`draft`/`archived`/`published`), `steps_no`, `icon`, `icon_svg`, `icon_background_color`, `completions_no`, `average_duration`, `order`, `pre_exercise_enabled`, `pre_exercise_description`, `pre_exercise_instruction`, `pre_exercise_goal`, `pre_exercise_completion_prompt`, `pre_exercise_start_button_label` | Reverse `steps`, `questions`, `sessions`, `messages`, `exercise_summaries`. |
 | **Step** (`api/step/models.py`) | `id` (`step_`), `title`, `description`, `instructions`, `completion_criteria`, `completion_label`, `completion_prompt`, `order`, `average_duration`, `success_title` | `exercise` → `Exercise`; `tags` M2M → `Tag`. |
-| **Question** (`api/question/models.py`) | `id` (`qstn_`), `type`, `attribute_key`, `title`, `suggested_responses` (Array), `order`, `survey`, `pre_exercise`, `can_complete_exercise`, `complete_on_value`, `complete_text` | `exercise` → `Exercise` (nullable); `session` → `Session` (nullable). Reverse `attributes`. |
+| **Question** (`api/question/models.py`) | `id` (`qstn_`), `type` (incl. `slider`), `attribute_key`, `title`, `suggested_responses` (Array), `order`, `survey`, `pre_exercise` (form flag ≠ exercise pre-exercise prompt), `can_complete_exercise`, `complete_on_value`, `complete_text`, `anchor_labels`, `value_labels`, `min_selections`, `max_selections` | `exercise` → `Exercise` (nullable); `session` → `Session` (nullable). Reverse `attributes`. |
 | **Attribute** (`api/attribute/models.py`) | `id` (`attr_`), `key`, `value` | `consumer` → `Consumer`; `question` → `Question`. A consumer's stored answer to a question. |
 | **ExerciseSummary** (`api/exercise_summary/models.py`) | `id` (`exsmry_`), `detailed`, `observations`, `next_steps` | `consumer` → `Consumer`; `exercise` → `Exercise`. |
 | **Post** (`api/post/models.py`) | `id` (`pst_`), `status`, `type` (`video`/`podcast`/`article`), `published_at`, `title`, `subtitle`, `body`, `views_no`, `impressions_no` | `created_by` → `User`; `thumbnail`/`banner` → `Image` (`DO_NOTHING`); `file` → `File` (`SET_NULL`). |
@@ -90,7 +90,18 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 | **Package** (`api/package/models.py`) | `id` (`pkg_`), `title`, `default` | `price` → `Price`. `get_default()` returns the free (`amount=0`, `default=True`) package. |
 | **Payment** (`api/payment/models.py`) | `id` (`pay_`), Apple/Google/Stripe receipt & subscription IDs (unique, some md5-hashed on save) | `price` → `Price`; `consumer` → `Consumer`. |
 | **Subscription** (`api/subscription/models.py`) | `consumer` (OneToOne PK), `title`, `active`, `subscribed_at`, `unsubscribed_at`, `last_checked_at` | `payment` OneToOne → `Payment` (nullable); `package` → `Package`. `Subscription.create()` seeds a default inactive sub. |
-| **Setting** (`api/setting/models.py`) | `id` (`stng_`), `key` (unique), `value` | Key/value config store: `survey_enabled`, `general_prompt`, `therapeutic_prompt`. |
+| **Setting** (`api/setting/models.py`) | `id` (`stng_`), `key` (unique), `value` | Key/value config: `survey_enabled`, `general_prompt`, `therapeutic_prompt`, `refresh_onboarding_cadence_days`, `observations_enabled`, `observations_instruction`, `observations_tone_guide`, `observations_max_length`. |
+
+### 1.7 Knowledge & Progress (V2)
+
+| Model | Key fields | Relationships |
+|---|---|---|
+| **KnowledgeField** (`api/knowledge/models.py`) | `id` (`knf_`), `key` (unique), `label`, `category`, `value_type`, `sensitive`, `active` | Reverse `questions`, `entries`. |
+| **KnowledgeQuestion** (`api/knowledge/models.py`) | `id` (`knq_`), `prompt`, `trigger`, `trigger_config`, `suggested_responses`, `extraction_prompt`, `flows`, `order_by_flow`, `response_type`, slider/multi-select metadata, `order`, `active` | `target_field` → `KnowledgeField`. |
+| **KnowledgeEntry** (`api/knowledge/models.py`) | `id` (`kne_`), `value`, `source` (`onboarding`/`question`/`ai`/`admin`), `confidence` | `consumer`, `field`, optional `knowledge_question` / `session` / `attribute` / `created_by`. Append-only; current = latest per (consumer, field). |
+| **UserObservation** (`api/progress/models.py`) | `id` (`uobs_`), `text`, `topic_tag`, `generated_at` | `consumer` → `Consumer`. Patterns card = latest row; failed generation retains prior. |
+
+Progress field-key defaults: mood = `mood` (slider 0–10), stress = `stress_points` (comma-joined multi-select). Streaks/dates use Django `TIME_ZONE` (v1; no per-user TZ yet).
 
 ---
 
@@ -489,6 +500,26 @@ Supabase Storage is the external system here; the `File`/`Image` rows are the DB
 - Inserts a `Feedback` row (linked to `user` and optionally a `message`), storing
   `positive`/`reason`/`value`.
 
+### Knowledge write paths
+
+- Admin CRUD under `/knowledge-*`; consumer profile under `/consumers/<id>/knowledge`.
+- Runtime helper `write_knowledge_entry` appends rows and invalidates `session.cached_prompt` for that consumer.
+- V2 onboarding answers (`POST /onboarding/answers`) write `source=question` only (no Attribute dual-write). Legacy Attribute onboarding remains; Celery `backfill_knowledge_from_onboarding` bridges Attribute → Entry by key.
+
+### Pre-exercise session start
+
+- `Session.get_or_create`: if exercise enabled + prior completed session for that exercise → `current_step_no=0` and check-in greeting.
+- `POST /sessions/<id>/complete-pre-exercise` stamps summary/`completed_at`, sets step to 1, clears cached prompt, starts exercise greeting.
+- `MessageFlow` ignores step completion while `current_step_no == 0`.
+
+### Progress reads — `/progress/*` (`api/progress/services.py`)
+
+- Mood: KnowledgeEntries for `mood` in range; one point per local day (latest); gaps omitted; summary vs previous equal-length period.
+- Exercises: `Session` with `completed=True` + exercise; heatmap via day set; breakdown by exercise.
+- Patterns: latest `UserObservation` (if settings enabled) + stress aggregation from `stress_points` entries.
+- Streaks: distinct local activity days; current counts backward from today (or yesterday if today empty); best = longest contiguous run.
+- Celery `generate_user_observations` / `generate_user_observation`: ≤1/24h; AI via `AI.ask`; retain prior on failure.
+
 ### `GET /onboarding` — `Onboarding` (Consumer only, `api/onboarding/views.py`)
 - Reads non-survey, non-exercise `Question`s and joins the consumer's `attributes`
   (`Question.get_with_attributes` → per-question `attribute` payload; boolean questions get
@@ -496,6 +527,12 @@ Supabase Storage is the external system here; the `File`/`Image` rows are the DB
 - If the consumer has no `date_of_birth`, prepends a synthetic DOB question.
 - Reads non-default `Package`s (optimised) for the paywall.
 - Returns `{ onboarded, questions, packages }`. **Read-only.**
+
+### V2 onboarding flows — `/onboarding/status|flow|answers`
+
+- Status computes `refresh_due` from `last_onboarding_flow_completed_at` + `refresh_onboarding_cadence_days`.
+- Flow lists active `KnowledgeQuestion` rows whose `flows` contain the variant, sorted by `order_by_flow[variant]` (fallback `order`); prompts resolved with `{{knowledge.*}}` / `{{user.first_name}}` tokens.
+- Answers validate slider/choice/multi-select bounds, append KnowledgeEntries, and on `complete=true` update consumer onboarding timestamps (Initial also sets `onboarded=True`).
 
 ### `GET /survey` — `Survey` (Consumer only, `api/survey/views.py`)
 - Reads the `survey_enabled` setting; computes task completion by querying: `consumer.onboarded`,

@@ -2,7 +2,7 @@
 
 Tracked plan for implementing the backend services described in **Mendreo V2 Specification** (Personalisation, Exercises, Onboarding & Progress). Frontend/admin UI work is out of scope here except where API contracts are implied.
 
-**Status:** Slices A–D implemented on branch; Progress (E) pending  
+**Status:** Slices A–F implemented on branch  
 **Source:** Mendreo V2 Spec (April 2026 draft)  
 **Stack:** Django / DRF (`backend/api/`), Celery, Postgres (Supabase), existing AI provider layer
 
@@ -130,21 +130,21 @@ Slice C (Pre-Exercise) can start after Slice A helpers for template resolution
 ### Slice E — Progress & Insights
 **Spec:** §4.4–4.10
 
-- [ ] `GET /progress/mood` (range; gaps; avg / Δ / count)
-- [ ] `GET /progress/exercises` (completions, heatmap, breakdown)
-- [ ] `GET /progress/patterns` (observation card + top stress points)
-- [ ] `GET /progress/streaks` (check-in + exercise; user TZ; ignore range)
-- [ ] `UserObservation` (or equivalent) model: text, topic tag, `generated_at`
-- [ ] Celery: generate observation ≤ once / 24h / user; retain prior on failure
-- [ ] Settings: Observations enabled / instruction / tone / max length
-- [ ] Stress points aggregated from configured multi-select answers in range
-- [ ] Tests for empty/sparse states and streak edge cases
+- [x] `GET /progress/mood` (range; gaps; avg / Δ / count)
+- [x] `GET /progress/exercises` (completions, heatmap, breakdown)
+- [x] `GET /progress/patterns` (observation card + top stress points)
+- [x] `GET /progress/streaks` (check-in + exercise; Django TIME_ZONE v1; ignore range)
+- [x] `UserObservation` model: text, topic tag, `generated_at`
+- [x] Celery: generate observation ≤ once / 24h / user; retain prior on failure
+- [x] Settings: Observations enabled / instruction / tone / max length
+- [x] Stress points aggregated from `stress_points` multi-select answers in range
+- [x] Tests for empty/sparse states and streak edge cases
 
 ### Slice F — Docs & contract freeze
-- [ ] Update `docs/API.md` with all new endpoints
-- [ ] Update `docs/API_DATABASE_DEEP_DIVE.md` for new models and write paths
-- [ ] Mark open questions resolved / deferred in this plan
-- [ ] Admin/mobile contract review checklist
+- [x] Update `docs/API.md` with all new endpoints
+- [x] Update `docs/API_DATABASE_DEEP_DIVE.md` for new models and write paths
+- [x] Mark open questions resolved / deferred in this plan
+- [x] Admin/mobile contract review checklist (see §12)
 
 ---
 
@@ -337,14 +337,14 @@ Track decisions here before locking migrations.
 
 | # | Question | Spec | Decision | Owner |
 |---|---|---|---|---|
-| 1 | Can admins manually push a knowledge question into a user’s next session? | §1.9 | _TBD_ | |
-| 2 | Tell users when AI uses remembered information? | §1.9 | _TBD_ (may be client-only) | |
+| 1 | Can admins manually push a knowledge question into a user’s next session? | §1.9 | **Deferred v1: no.** Triggers remain as configured; no admin push queue | Product |
+| 2 | Tell users when AI uses remembered information? | §1.9 | **Deferred: client-only.** Backend exposes `source`/`confidence` on admin APIs; no consumer disclosure payload | Product |
 | 3 | Pre-exercise: every repeat vs first repeat only? | §2.8 | **Every repeat** | Product |
 | 4 | Skip pre-exercise if same exercise twice in one day? | §2.8 | **No skip** — same-day second runs still check in; incomplete same-day resume does not re-trigger | Product |
 | 5 | Companion identity (“Toni”) — Settings vs hardcode? | §3.9 | Deferred: payload includes `companion_name: "Toni"`; client may hardcode avatar for launch | Product |
 | 6 | Refresh deferrable (“Remind me later”)? | §3.9 | Deferred v1: not deferrable — Home dot launches Refresh | Product |
 | 7 | Knowledge field value types (text/number/enum/multi)? | §1.3 | Deferred default: `text` / `number` / `boolean` / `single_choice` / `multiple_choice` (Slice A) | |
-| 8 | Dual-write Attribute + Knowledge during transition, or cut over? | — | _TBD_ | |
+| 8 | Dual-write Attribute + Knowledge during transition, or cut over? | — | **Cut over for V2 flows.** `POST /onboarding/answers` writes Knowledge only; legacy Attribute path unchanged; backfill bridges | Backend |
 | 9 | Coexistence strategy for legacy `Question.pre_exercise` form questions | §2 | Keep both; new fields named `pre_exercise_prompt_*` / session check-in phase — no rename of question flag | Backend |
 
 ---
@@ -370,15 +370,23 @@ cd backend && ../.venv/bin/python manage.py test api.tests
 
 ## 12. Docs & rollout checklist
 
-- [ ] This plan reviewed and open questions filled
-- [ ] Slice A merged
-- [ ] Slice B merged (chat can read/write knowledge)
+- [x] This plan reviewed and open questions filled (remaining items deferred with defaults)
+- [ ] Slice A–F merged to `main` (PR #33)
 - [x] Slice C implemented on branch (pre-exercise contracts stable for admin UI)
 - [x] Slice D implemented on branch (mobile onboarding can integrate)
-- [ ] Slice E merged (Progress tabs can integrate)
-- [ ] `docs/API.md` + deep dive updated
-- [ ] Staging backfill job run and sampled for compliance
-- [ ] Feature flags / settings defaults confirmed (observations on, pre-exercise on)
+- [x] Slice E implemented on branch (Progress tabs can integrate)
+- [x] `docs/API.md` + deep dive updated
+- [ ] Staging: run migrations `0049–0052`, backfill job sampled for compliance
+- [x] Feature flags / settings defaults confirmed (observations on, pre-exercise on for new exercises; existing exercises migrated off until authored)
+
+### Admin / mobile contract checklist
+
+- [ ] Admin: Knowledge Fields / Questions CRUD + test-extraction
+- [ ] Admin: Exercise Pre-Exercise tab + list filter + test prompt
+- [ ] Admin: Settings cadence + observations keys
+- [ ] Mobile: `/onboarding/status|flow|answers` Initial → Home; Return/Refresh
+- [ ] Mobile: session `phase` / `complete-pre-exercise` Start button
+- [ ] Mobile: Progress tabs against `/progress/*` empty/sparse states
 
 ---
 

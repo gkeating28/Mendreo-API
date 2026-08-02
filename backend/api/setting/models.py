@@ -38,6 +38,10 @@ class Setting(SmartModel):
         Setting.get_or_create_general_prompt()
         Setting.get_or_create_therapeutic_prompt()
         Setting.get_or_create_refresh_onboarding_cadence_days()
+        Setting.get_or_create_observations_enabled()
+        Setting.get_or_create_observations_instruction()
+        Setting.get_or_create_observations_tone_guide()
+        Setting.get_or_create_observations_max_length()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -103,6 +107,71 @@ class Setting(SmartModel):
         except (TypeError, ValueError):
             days = Constants.DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS
         return max(1, days)
+
+    @staticmethod
+    def get_or_create_observations_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_OBSERVATIONS_ENABLED,
+            defaults={"value": str(Constants.DEFAULT_OBSERVATIONS_ENABLED).lower()},
+        )
+        return setting
+
+    @staticmethod
+    def get_observations_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_OBSERVATIONS_ENABLED,
+            Setting.get_or_create_observations_enabled,
+        )
+        return str(raw).lower() == "true"
+
+    @staticmethod
+    def get_or_create_observations_instruction():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_OBSERVATIONS_INSTRUCTION,
+            defaults={"value": Constants.DEFAULT_OBSERVATIONS_INSTRUCTION},
+        )
+        return setting
+
+    @staticmethod
+    def get_observations_instruction() -> str:
+        return Setting._cached_value(
+            Constants.SETTING_KEY_OBSERVATIONS_INSTRUCTION,
+            Setting.get_or_create_observations_instruction,
+        )
+
+    @staticmethod
+    def get_or_create_observations_tone_guide():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_OBSERVATIONS_TONE_GUIDE,
+            defaults={"value": Constants.DEFAULT_OBSERVATIONS_TONE_GUIDE},
+        )
+        return setting
+
+    @staticmethod
+    def get_observations_tone_guide() -> str:
+        return Setting._cached_value(
+            Constants.SETTING_KEY_OBSERVATIONS_TONE_GUIDE,
+            Setting.get_or_create_observations_tone_guide,
+        )
+
+    @staticmethod
+    def get_or_create_observations_max_length():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_OBSERVATIONS_MAX_LENGTH,
+            defaults={"value": str(Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH)},
+        )
+        return setting
+
+    @staticmethod
+    def get_observations_max_length() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_OBSERVATIONS_MAX_LENGTH,
+            Setting.get_or_create_observations_max_length,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH
 
     @staticmethod
     def _cached_value(key: str, loader):

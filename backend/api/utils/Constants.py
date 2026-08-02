@@ -393,6 +393,25 @@ KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 SETTING_KEY_REFRESH_ONBOARDING_CADENCE_DAYS = "refresh_onboarding_cadence_days"
 DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS = 30
 
+SETTING_KEY_OBSERVATIONS_ENABLED = "observations_enabled"
+SETTING_KEY_OBSERVATIONS_INSTRUCTION = "observations_instruction"
+SETTING_KEY_OBSERVATIONS_TONE_GUIDE = "observations_tone_guide"
+SETTING_KEY_OBSERVATIONS_MAX_LENGTH = "observations_max_length"
+DEFAULT_OBSERVATIONS_ENABLED = True
+DEFAULT_OBSERVATIONS_MAX_LENGTH = 40
+DEFAULT_OBSERVATIONS_INSTRUCTION = (
+    "Write one short supportive observation in the second person about a pattern "
+    "you notice in this user's knowledge and recent conversations."
+)
+DEFAULT_OBSERVATIONS_TONE_GUIDE = (
+    "Warm, specific, and non-judgmental. Avoid clinical jargon and scorekeeping."
+)
+
+PROGRESS_MOOD_FIELD_KEY = "mood"
+PROGRESS_STRESS_FIELD_KEY = "stress_points"
+PROGRESS_MAX_RANGE_DAYS = 366
+PROGRESS_STREAK_COPY = "Consistency matters more than perfection"
+
 AI_PROVIDER_GOOGLE = "google"
 AI_PROVIDER_OPENAI = "openai"
 AI_PROVIDER_ANTHROPIC = "anthropic"
