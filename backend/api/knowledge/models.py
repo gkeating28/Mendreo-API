@@ -56,6 +56,30 @@ class KnowledgeQuestion(SmartModel):
         blank=True,
         default=list,
     )
+    # Per-variant order, e.g. {"initial": 1, "return": 3}. Falls back to `order`.
+    order_by_flow = models.JSONField(default=dict, blank=True)
+
+    response_type = EnumField(
+        options=Constants.KNOWLEDGE_RESPONSE_TYPES,
+        default=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+    )
+    # Slider (0–10): two anchors + up to 11 value labels (empty string allowed).
+    anchor_labels = ArrayField(
+        models.CharField(max_length=64, blank=True),
+        size=2,
+        blank=True,
+        null=True,
+    )
+    value_labels = ArrayField(
+        models.CharField(max_length=64, blank=True),
+        size=Constants.SLIDER_VALUE_LABEL_COUNT,
+        blank=True,
+        null=True,
+    )
+    # Multi-select constraints (null = unset / no constraint).
+    min_selections = models.PositiveIntegerField(null=True, blank=True)
+    max_selections = models.PositiveIntegerField(null=True, blank=True)
+
     order = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=True)
 
@@ -64,6 +88,15 @@ class KnowledgeQuestion(SmartModel):
 
     def get_permission_key(self):
         return "knowledge"
+
+    def order_for_flow(self, flow: str) -> int:
+        mapping = self.order_by_flow or {}
+        if flow in mapping and mapping[flow] is not None:
+            try:
+                return int(mapping[flow])
+            except (TypeError, ValueError):
+                pass
+        return self.order
 
 
 class KnowledgeEntry(SmartModel):

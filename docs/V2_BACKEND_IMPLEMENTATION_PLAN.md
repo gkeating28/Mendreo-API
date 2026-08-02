@@ -2,7 +2,7 @@
 
 Tracked plan for implementing the backend services described in **Mendreo V2 Specification** (Personalisation, Exercises, Onboarding & Progress). Frontend/admin UI work is out of scope here except where API contracts are implied.
 
-**Status:** Slices A–C implemented on branch; later slices pending  
+**Status:** Slices A–D implemented on branch; Progress (E) pending  
 **Source:** Mendreo V2 Spec (April 2026 draft)  
 **Stack:** Django / DRF (`backend/api/`), Celery, Postgres (Supabase), existing AI provider layer
 
@@ -114,17 +114,18 @@ Slice C (Pre-Exercise) can start after Slice A helpers for template resolution
 ### Slice D — Onboarding & Refresh flows
 **Spec:** §3.2–3.8, §1 interaction
 
-- [ ] Question type `slider` (0–10) + anchor labels + value labels (11)
-- [ ] Multi-select `min_selections` / `max_selections`
-- [ ] Flow variants: Initial / Return / Refresh (membership + per-variant order on knowledge/onboarding questions)
-- [ ] Refresh cadence setting (e.g. days) driving Home “due” state
-- [ ] Consumer APIs:
-  - [ ] Flow payload (server-selected or `?variant=`)
-  - [ ] Answer submit → Knowledge Entries (`source=question`) + onboarding/refresh state
-  - [ ] Status for Home icon (`onboarded`, `refresh_due`, …)
-- [ ] Template resolution for prior answers (“last time you said…”)
-- [ ] Initial: non-abandonable (server or accepted client persistence); Return: discardable
-- [ ] Tests for variants, slider, constraints, knowledge writes
+- [x] Question type `slider` (0–10) + anchor labels + value labels (11) on KnowledgeQuestion + legacy Question
+- [x] Multi-select `min_selections` / `max_selections`
+- [x] Flow variants: Initial / Return / Refresh (`flows` + `order_by_flow` on KnowledgeQuestion)
+- [x] Refresh cadence setting `refresh_onboarding_cadence_days` (default 30)
+- [x] Consumer APIs:
+  - [x] `GET /onboarding/flow` (server-selected or `?variant=`)
+  - [x] `POST /onboarding/answers` → Knowledge Entries (`source=question`) + onboarding/refresh state
+  - [x] `GET /onboarding/status` for Home icon (`onboarded`, `refresh_due`, …)
+- [x] Template resolution for prior answers (`{{knowledge.*}}`, `{{user.first_name}}`, …)
+- [x] Initial: non-abandonable (`abandonable=false`; step sync allowed); Return/Refresh: discardable (complete-only)
+- [x] Tests for variants, slider, constraints, knowledge writes
+- [x] Open Q defaults: companion name `"Toni"` in payload (client-hardcode OK); Refresh not deferrable in v1 (dot → refresh)
 
 ### Slice E — Progress & Insights
 **Spec:** §4.4–4.10
@@ -268,9 +269,10 @@ Paths are indicative; final paths should match existing plural-resource style in
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/onboarding/status` | `onboarded`, `refresh_due`, … |
-| GET | `/onboarding/flow` | Server-selected or `?variant=` |
-| POST | `/onboarding/answers` | Commit step or full flow → knowledge entries |
+| GET | `/onboarding` | Legacy Attribute-based payload (unchanged) |
+| GET | `/onboarding/status` | `onboarded`, `refresh_due`, `recommended_variant`, cadence |
+| GET | `/onboarding/flow` | Server-selected or `?variant=` KnowledgeQuestion sequence |
+| POST | `/onboarding/answers` | Commit step (Initial) or full flow → knowledge entries |
 
 ### Progress
 
@@ -339,8 +341,8 @@ Track decisions here before locking migrations.
 | 2 | Tell users when AI uses remembered information? | §1.9 | _TBD_ (may be client-only) | |
 | 3 | Pre-exercise: every repeat vs first repeat only? | §2.8 | **Every repeat** | Product |
 | 4 | Skip pre-exercise if same exercise twice in one day? | §2.8 | **No skip** — same-day second runs still check in; incomplete same-day resume does not re-trigger | Product |
-| 5 | Companion identity (“Toni”) — Settings vs hardcode? | §3.9 | _TBD_ | |
-| 6 | Refresh deferrable (“Remind me later”)? | §3.9 | _TBD_ | |
+| 5 | Companion identity (“Toni”) — Settings vs hardcode? | §3.9 | Deferred: payload includes `companion_name: "Toni"`; client may hardcode avatar for launch | Product |
+| 6 | Refresh deferrable (“Remind me later”)? | §3.9 | Deferred v1: not deferrable — Home dot launches Refresh | Product |
 | 7 | Knowledge field value types (text/number/enum/multi)? | §1.3 | Deferred default: `text` / `number` / `boolean` / `single_choice` / `multiple_choice` (Slice A) | |
 | 8 | Dual-write Attribute + Knowledge during transition, or cut over? | — | _TBD_ | |
 | 9 | Coexistence strategy for legacy `Question.pre_exercise` form questions | §2 | Keep both; new fields named `pre_exercise_prompt_*` / session check-in phase — no rename of question flag | Backend |
@@ -372,7 +374,7 @@ cd backend && ../.venv/bin/python manage.py test api.tests
 - [ ] Slice A merged
 - [ ] Slice B merged (chat can read/write knowledge)
 - [x] Slice C implemented on branch (pre-exercise contracts stable for admin UI)
-- [ ] Slice D merged (mobile onboarding can integrate)
+- [x] Slice D implemented on branch (mobile onboarding can integrate)
 - [ ] Slice E merged (Progress tabs can integrate)
 - [ ] `docs/API.md` + deep dive updated
 - [ ] Staging backfill job run and sampled for compliance

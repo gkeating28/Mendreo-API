@@ -37,6 +37,7 @@ class Setting(SmartModel):
         Setting.get_or_create_survey_enabled()
         Setting.get_or_create_general_prompt()
         Setting.get_or_create_therapeutic_prompt()
+        Setting.get_or_create_refresh_onboarding_cadence_days()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -80,6 +81,28 @@ class Setting(SmartModel):
     @staticmethod
     def get_therapeutic_prompt():
         return Setting._cached_value("therapeutic_prompt", Setting.get_or_create_therapeutic_prompt)
+
+    @staticmethod
+    def get_or_create_refresh_onboarding_cadence_days():
+        setting, _created = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_REFRESH_ONBOARDING_CADENCE_DAYS,
+            defaults={
+                "value": str(Constants.DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS),
+            },
+        )
+        return setting
+
+    @staticmethod
+    def get_refresh_onboarding_cadence_days() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_REFRESH_ONBOARDING_CADENCE_DAYS,
+            Setting.get_or_create_refresh_onboarding_cadence_days,
+        )
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            days = Constants.DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS
+        return max(1, days)
 
     @staticmethod
     def _cached_value(key: str, loader):

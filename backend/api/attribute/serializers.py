@@ -112,6 +112,19 @@ def value_validation(serializer, attrs):
         except Exception as e:
             serializer.raise_validation_error("value", f"'{value}' is not a valid number")
 
+    if type_ == Constants.QUESTION_TYPE_SLIDER:
+        try:
+            number = int(value)
+        except Exception:
+            serializer.raise_validation_error(
+                "value", f"'{value}' is not a valid slider value"
+            )
+        if number < Constants.SLIDER_MIN or number > Constants.SLIDER_MAX:
+            serializer.raise_validation_error(
+                "value",
+                f"must be an integer between {Constants.SLIDER_MIN} and {Constants.SLIDER_MAX}",
+            )
+
     if type_ == Constants.QUESTION_TYPE_DATE:
         try:
             datetime.strptime(value, "%Y-%m-%d")
@@ -123,9 +136,20 @@ def value_validation(serializer, attrs):
             serializer.raise_validation_error("value", f"'{value}' is not a valid option")
 
     if type_ == Constants.QUESTION_TYPE_MULTIPLE_CHOICE:
-        values = value.split(",")
-        for value in values:
-            if value not in suggested_responses:
-                serializer.raise_validation_error("value", f"'{value}' is not a valid option")
+        values = [v.strip() for v in value.split(",") if v.strip()]
+        for item in values:
+            if item not in suggested_responses:
+                serializer.raise_validation_error("value", f"'{item}' is not a valid option")
+        min_selections = question.min_selections
+        max_selections = question.max_selections
+        count = len(values)
+        if min_selections is not None and count < min_selections:
+            serializer.raise_validation_error(
+                "value", f"must select at least {min_selections} option(s)"
+            )
+        if max_selections is not None and count > max_selections:
+            serializer.raise_validation_error(
+                "value", f"must select at most {max_selections} option(s)"
+            )
 
     return attrs

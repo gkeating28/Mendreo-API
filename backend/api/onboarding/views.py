@@ -1,15 +1,20 @@
 from __future__ import unicode_literals
 
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+
+from .serializers import OnboardingAnswersSerializer
+from .services import (
+    build_flow_payload,
+    build_status_payload,
+    resolve_variant,
+    submit_flow_answers,
+)
 
 from ..question.serializers import (
     Question,
     QuestionDetailSerializer,
-)
-
-from ..attribute.serializers import (
-    AttributeListSerializer,
 )
 
 from ..package.serializers import (
@@ -20,10 +25,11 @@ from ..package.serializers import (
 from ..utils.Views import SmartAPIView
 from ..utils.Permissions import IsConsumerPermission
 
-from ..utils import Constants, Api, Subscription as SubscriptionUtils
+from ..utils import Constants, Api, QueryParams, Subscription as SubscriptionUtils
 
 
 class Onboarding(SmartAPIView):
+    """Legacy GET /onboarding — Attribute-based questions + packages."""
 
     permission_classes = [IsConsumerPermission]
 
@@ -66,3 +72,62 @@ class Onboarding(SmartAPIView):
         }
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+class OnboardingStatus(SmartAPIView):
+    """Home icon state: onboarded, refresh_due, recommended variant."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def get(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(build_status_payload(consumer), status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "GET"
+
+
+class OnboardingFlow(SmartAPIView):
+    """V2 flow payload driven by KnowledgeQuestion membership + per-variant order."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def get(self, request):
+        consumer = self.get_consumer_from_request()
+        requested = QueryParams.get_str(request, "variant")
+        try:
+            variant = resolve_variant(consumer, requested)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(build_flow_payload(consumer, variant), status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "GET"
+
+
+class OnboardingAnswers(SmartAPIView):
+    """Commit flow answers → Knowledge Entries (source=question)."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        serializer = OnboardingAnswersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            result = submit_flow_answers(
+                consumer,
+                variant=data["variant"],
+                answers=data["answers"],
+                complete=data.get("complete", True),
+            )
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"

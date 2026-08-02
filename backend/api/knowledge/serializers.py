@@ -68,6 +68,106 @@ class KnowledgeFieldBriefSerializer(ListModelSerializer):
         fields = ["id", "key", "label", "category", "value_type", "sensitive", "active"]
 
 
+def _normalize_order_by_flow(order_by_flow):
+    if order_by_flow is None:
+        return {}
+    if not isinstance(order_by_flow, dict):
+        raise serializers.ValidationError(
+            {"order_by_flow": "Must be an object mapping flow → order integer."}
+        )
+    normalized = {}
+    for key, value in order_by_flow.items():
+        if key not in Constants.KNOWLEDGE_FLOWS:
+            raise serializers.ValidationError(
+                {"order_by_flow": f"Unknown flow '{key}'."}
+            )
+        try:
+            normalized[key] = int(value)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {"order_by_flow": f"Order for '{key}' must be an integer."}
+            )
+    return normalized
+
+
+def response_control_validation(attrs, instance=None):
+    """Validate slider labels and multi-select bounds for knowledge questions."""
+    response_type = attrs.get(
+        "response_type",
+        getattr(instance, "response_type", Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT),
+    )
+    suggested = attrs.get(
+        "suggested_responses",
+        getattr(instance, "suggested_responses", None) if instance else None,
+    )
+    if suggested is None:
+        suggested = []
+
+    anchor_labels = attrs.get(
+        "anchor_labels",
+        getattr(instance, "anchor_labels", None) if instance else None,
+    )
+    value_labels = attrs.get(
+        "value_labels",
+        getattr(instance, "value_labels", None) if instance else None,
+    )
+    min_selections = attrs.get(
+        "min_selections",
+        getattr(instance, "min_selections", None) if instance else None,
+    )
+    max_selections = attrs.get(
+        "max_selections",
+        getattr(instance, "max_selections", None) if instance else None,
+    )
+
+    errors = {}
+
+    if response_type in (
+        Constants.KNOWLEDGE_RESPONSE_TYPE_SINGLE_CHOICE,
+        Constants.KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE,
+    ):
+        if len(suggested) < 2:
+            errors["suggested_responses"] = (
+                f"'{response_type}' must have at least 2 suggested_responses"
+            )
+
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER:
+        if anchor_labels is None:
+            attrs["anchor_labels"] = [
+                Constants.SLIDER_DEFAULT_ANCHOR_LEFT,
+                Constants.SLIDER_DEFAULT_ANCHOR_RIGHT,
+            ]
+        elif len(anchor_labels) != 2:
+            errors["anchor_labels"] = "Must contain exactly 2 labels (left, right)."
+        if value_labels is not None and len(value_labels) > Constants.SLIDER_VALUE_LABEL_COUNT:
+            errors["value_labels"] = (
+                f"Must contain at most {Constants.SLIDER_VALUE_LABEL_COUNT} labels."
+            )
+        elif value_labels is not None and len(value_labels) < Constants.SLIDER_VALUE_LABEL_COUNT:
+            # Pad to 11 so clients can index by slider position.
+            padded = list(value_labels) + [""] * (
+                Constants.SLIDER_VALUE_LABEL_COUNT - len(value_labels)
+            )
+            attrs["value_labels"] = padded
+
+    if response_type != Constants.KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE:
+        if "min_selections" in attrs and attrs["min_selections"] is not None:
+            errors["min_selections"] = "Only valid for multiple_choice response_type."
+        if "max_selections" in attrs and attrs["max_selections"] is not None:
+            errors["max_selections"] = "Only valid for multiple_choice response_type."
+    else:
+        if min_selections is not None and max_selections is not None:
+            if min_selections > max_selections:
+                errors["min_selections"] = "Cannot be greater than max_selections."
+        if max_selections is not None and suggested and max_selections > len(suggested):
+            errors["max_selections"] = "Cannot exceed number of suggested_responses."
+
+    if errors:
+        raise serializers.ValidationError(errors)
+
+    return attrs
+
+
 class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
     suggested_responses = serializers.ListField(
         child=serializers.CharField(),
@@ -79,6 +179,17 @@ class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
         required=False,
     )
     trigger_config = serializers.JSONField(required=False)
+    order_by_flow = serializers.JSONField(required=False)
+    anchor_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+    value_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = KnowledgeQuestion
@@ -90,6 +201,12 @@ class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
             "suggested_responses",
             "extraction_prompt",
             "flows",
+            "order_by_flow",
+            "response_type",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
             "order",
             "active",
         ]
@@ -112,6 +229,11 @@ class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
                 {"target_field": "Target field must be active."}
             )
 
+        if "order_by_flow" in attrs:
+            attrs["order_by_flow"] = _normalize_order_by_flow(attrs.get("order_by_flow"))
+
+        attrs = response_control_validation(attrs)
+
         last = KnowledgeQuestion.objects.order_by("-order").first()
         if "order" not in attrs or attrs.get("order") is None:
             attrs["order"] = (last.order + 1) if last else 1
@@ -130,6 +252,17 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
         required=False,
     )
     trigger_config = serializers.JSONField(required=False)
+    order_by_flow = serializers.JSONField(required=False)
+    anchor_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+    value_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = KnowledgeQuestion
@@ -141,6 +274,12 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
             "suggested_responses",
             "extraction_prompt",
             "flows",
+            "order_by_flow",
+            "response_type",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
             "order",
             "active",
         ]
@@ -165,6 +304,11 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
                 {"target_field": "Target field must be active."}
             )
 
+        if "order_by_flow" in attrs:
+            attrs["order_by_flow"] = _normalize_order_by_flow(attrs.get("order_by_flow"))
+
+        attrs = response_control_validation(attrs, instance=self.instance)
+
         return attrs
 
 
@@ -182,6 +326,12 @@ class KnowledgeQuestionListSerializer(ListModelSerializer):
             "suggested_responses",
             "extraction_prompt",
             "flows",
+            "order_by_flow",
+            "response_type",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
             "order",
             "active",
             "created_at",

@@ -89,3 +89,36 @@ class KnowledgeQuestionTests(BaseTest):
         self.assertEqual(response.json["confidence"], 0.9)
         self.assertEqual(response.json["target_field"]["key"], "sleep_quality")
         ask.assert_called_once()
+
+    def test_create_slider_and_multi_select_controls(self):
+        slider = self._create(
+            {
+                "prompt": "Mood check",
+                "target_field": self.field.id,
+                "response_type": Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER,
+                "flows": [Constants.KNOWLEDGE_FLOW_INITIAL],
+                "order_by_flow": {"initial": 1},
+                "value_labels": ["Low", "Alright", "Great"],
+            },
+            self.admin_one_access_token,
+        )
+        self.assertEqual(slider.status_code, status.HTTP_201_CREATED, slider.json)
+        self.assertEqual(slider.json["response_type"], "slider")
+        self.assertEqual(slider.json["anchor_labels"], ["Struggling", "Thriving"])
+        self.assertEqual(len(slider.json["value_labels"]), 11)
+
+        multi = self._create(
+            {
+                "prompt": "Stressors",
+                "target_field": self.field.id,
+                "response_type": Constants.KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE,
+                "suggested_responses": ["Work", "Family", "Money"],
+                "min_selections": 1,
+                "max_selections": 2,
+                "flows": [Constants.KNOWLEDGE_FLOW_RETURN],
+            },
+            self.admin_one_access_token,
+        )
+        self.assertEqual(multi.status_code, status.HTTP_201_CREATED, multi.json)
+        self.assertEqual(multi.json["min_selections"], 1)
+        self.assertEqual(multi.json["max_selections"], 2)

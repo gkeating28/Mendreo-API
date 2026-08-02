@@ -31,6 +31,15 @@ class ListCreate(SmartAPIView):
 
             if setting.key == "survey_enabled":
                 data[setting.key] = setting.value.lower() == "true"
+            elif setting.key == "refresh_onboarding_cadence_days":
+                try:
+                    data[setting.key] = int(setting.value)
+                except (TypeError, ValueError):
+                    data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
+
+        # Ensure cadence key is always present for admin UI.
+        if "refresh_onboarding_cadence_days" not in data:
+            data["refresh_onboarding_cadence_days"] = Setting.get_refresh_onboarding_cadence_days()
 
         return Response(data, status=status.HTTP_200_OK)
 

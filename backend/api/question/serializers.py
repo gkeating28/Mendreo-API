@@ -16,6 +16,17 @@ from datetime import datetime
 
 class QuestionCreateSerializer(CreateModelSerializer):
 
+    anchor_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+    value_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Question
         fields = [
@@ -24,6 +35,10 @@ class QuestionCreateSerializer(CreateModelSerializer):
             "attribute_key",
             "suggested_responses",
             "survey",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
         ]
 
     def validate(self, attrs):
@@ -31,6 +46,7 @@ class QuestionCreateSerializer(CreateModelSerializer):
         last_question = Question.objects.order_by("-order").first()
         attrs["order"] = last_question.order + 1 if last_question else 1
         attrs = type_validation(self, attrs)
+        attrs = selection_bounds_validation(self, attrs)
 
         return attrs
 
@@ -60,6 +76,17 @@ class QuestionExerciseCreateSerializer(QuestionCreateSerializer):
 
 class QuestionEditSerializer(EditModelSerializer):
 
+    anchor_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+    value_labels = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Question
         fields = [
@@ -69,7 +96,11 @@ class QuestionEditSerializer(EditModelSerializer):
             "can_complete_exercise",
             "pre_exercise",
             "complete_on_value",
-            "complete_text"
+            "complete_text",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
         ]
 
     def validate(self, attrs):
@@ -77,6 +108,7 @@ class QuestionEditSerializer(EditModelSerializer):
 
         attrs = order_validation(self, attrs)
         attrs = type_validation(self, attrs)
+        attrs = selection_bounds_validation(self, attrs)
         attrs = can_complete_validation(self, attrs)
 
         return attrs
@@ -94,6 +126,10 @@ class QuestionListSerializer(ListModelSerializer):
             "survey",
             "attribute_key",
             "suggested_responses",
+            "anchor_labels",
+            "value_labels",
+            "min_selections",
+            "max_selections",
         ]
 
 
@@ -133,12 +169,43 @@ def order_validation(serializer, attrs):
 def type_validation(serializer, attrs):
     type_ = attrs.get("type")
     suggested_responses = attrs.get("suggested_responses", [])
+    if suggested_responses is None:
+        suggested_responses = []
 
     if type_ == Constants.QUESTION_TYPE_BOOLEAN and len(suggested_responses) != 0:
         raise serializer.raise_validation_error("type", f"'{type_}' can not have 'suggested_responses'")
 
     if type_ in [Constants.QUESTION_TYPE_SINGLE_CHOICE, Constants.QUESTION_TYPE_MULTIPLE_CHOICE] and len(suggested_responses) < 2:
         raise serializer.raise_validation_error("type", f"'{type_}' must have at least 2 'suggested_responses'")
+
+    if type_ == Constants.QUESTION_TYPE_SLIDER:
+        anchor_labels = attrs.get(
+            "anchor_labels",
+            getattr(serializer.instance, "anchor_labels", None) if serializer.instance else None,
+        )
+        if anchor_labels is None:
+            attrs["anchor_labels"] = [
+                Constants.SLIDER_DEFAULT_ANCHOR_LEFT,
+                Constants.SLIDER_DEFAULT_ANCHOR_RIGHT,
+            ]
+        elif len(anchor_labels) != 2:
+            raise serializer.raise_validation_error(
+                "anchor_labels", "Must contain exactly 2 labels (left, right)."
+            )
+        value_labels = attrs.get(
+            "value_labels",
+            getattr(serializer.instance, "value_labels", None) if serializer.instance else None,
+        )
+        if value_labels is not None:
+            if len(value_labels) > Constants.SLIDER_VALUE_LABEL_COUNT:
+                raise serializer.raise_validation_error(
+                    "value_labels",
+                    f"Must contain at most {Constants.SLIDER_VALUE_LABEL_COUNT} labels.",
+                )
+            if len(value_labels) < Constants.SLIDER_VALUE_LABEL_COUNT:
+                attrs["value_labels"] = list(value_labels) + [""] * (
+                    Constants.SLIDER_VALUE_LABEL_COUNT - len(value_labels)
+                )
 
     errors = []
     for suggested_response in suggested_responses:
@@ -157,6 +224,46 @@ def type_validation(serializer, attrs):
     if errors:
         raise serializer.raise_validation_error("suggested_responses", errors)
 
+    return attrs
+
+
+def selection_bounds_validation(serializer, attrs):
+    type_ = attrs.get("type")
+    if serializer.instance and type_ is None:
+        type_ = serializer.instance.type
+
+    min_selections = attrs.get(
+        "min_selections",
+        getattr(serializer.instance, "min_selections", None) if serializer.instance else None,
+    )
+    max_selections = attrs.get(
+        "max_selections",
+        getattr(serializer.instance, "max_selections", None) if serializer.instance else None,
+    )
+    suggested = attrs.get(
+        "suggested_responses",
+        getattr(serializer.instance, "suggested_responses", None) if serializer.instance else None,
+    ) or []
+
+    if type_ != Constants.QUESTION_TYPE_MULTIPLE_CHOICE:
+        if "min_selections" in attrs and attrs["min_selections"] is not None:
+            raise serializer.raise_validation_error(
+                "min_selections", "Only valid for multiple_choice questions."
+            )
+        if "max_selections" in attrs and attrs["max_selections"] is not None:
+            raise serializer.raise_validation_error(
+                "max_selections", "Only valid for multiple_choice questions."
+            )
+        return attrs
+
+    if min_selections is not None and max_selections is not None and min_selections > max_selections:
+        raise serializer.raise_validation_error(
+            "min_selections", "Cannot be greater than max_selections."
+        )
+    if max_selections is not None and suggested and max_selections > len(suggested):
+        raise serializer.raise_validation_error(
+            "max_selections", "Cannot exceed number of suggested_responses."
+        )
     return attrs
 
 
