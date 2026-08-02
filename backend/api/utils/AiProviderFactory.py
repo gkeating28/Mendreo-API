@@ -67,10 +67,25 @@ class EnvBackedProvider:
         return self.default_model
 
 
+def _provider_key_usable(provider: ProviderLike) -> bool:
+    """Return True if the provider's API key can be decrypted / read."""
+    try:
+        key = provider.get_api_key()
+        return bool(key and str(key).strip())
+    except Exception as exc:  # noqa: BLE001 - decrypt / config errors are expected here
+        logger.warning(
+            "AI provider %s/%s API key unusable (%s)",
+            getattr(provider, "id", "?"),
+            getattr(provider, "provider", "?"),
+            exc,
+        )
+        return False
+
+
 def ensure_providers_ready() -> list[ProviderLike]:
     """
-    Ensure we can serve AI traffic: seed DB from env when empty, otherwise
-    fall back to env-backed providers. Logs failures instead of swallowing them.
+    Ensure we can serve AI traffic: seed DB from env when empty, prefer DB
+    providers whose keys decrypt, otherwise fall back to env-backed providers.
     """
     try:
         seeded = AiProvider.seed_from_env_if_empty()
@@ -82,16 +97,17 @@ def ensure_providers_ready() -> list[ProviderLike]:
             "(check AI_SECRETS_MASTER_KEY and GOOGLE_API_KEY on the worker)"
         )
 
-    candidates = list(AiProvider.iter_failover_candidates())
+    candidates = [p for p in AiProvider.iter_failover_candidates() if _provider_key_usable(p)]
     if candidates:
         return candidates
 
     env_providers = _env_backed_providers()
     if env_providers:
         logger.warning(
-            "No AiProvider DB rows found; using environment API keys directly. "
-            "Fix seeding (AI_SECRETS_MASTER_KEY + redeploy/seed_ai_providers) "
-            "so keys are stored encrypted in api_aiprovider."
+            "No usable AiProvider DB rows (missing/empty table or undecryptable keys); "
+            "using environment API keys directly. "
+            "Set AI_SECRETS_MASTER_KEY on the worker and run "
+            "`manage.py seed_ai_providers --refresh-from-env` to re-encrypt keys."
         )
     return env_providers
 

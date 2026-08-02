@@ -29,7 +29,7 @@ class Agent(SmartModel):
 
     description = models.CharField(max_length=255)
 
-    model = models.CharField(max_length=255, default="gemini-2.5-flash")
+    model = models.CharField(max_length=255, default="gemini-3.1-flash-lite")
 
     context = models.TextField(null=True)
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import random
 import time
@@ -30,6 +31,8 @@ PROMPT_DATE_FORMAT = "%d %B, %Y"
 STATIC_FILES_DIR = 'api/utils/files'
 SUMMARY_RESPONSE_SCHEMA = SummaryAiResponse
 SESSION_RESPONSE_SCHEMA = SessionAiResponse
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -224,6 +227,11 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     except Exception as e:
         timer_end = time.perf_counter()
+        logger.exception(
+            "Agent.get_response failed for session=%s message=%s",
+            getattr(session, "id", None),
+            getattr(consumer_message, "id", None),
+        )
 
         response_data = schema(**{
             "text": "Sorry, I had an issue understanding your message, can you repeat it or rephrase it for me please?",

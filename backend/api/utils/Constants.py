@@ -423,16 +423,19 @@ AI_PROVIDERS = [
 ]
 
 AI_PROVIDER_DEFAULT_MODELS = {
-    AI_PROVIDER_GOOGLE: "gemini-2.5-flash",
+    # Prefer a current Flash-class model; gemini-2.5-flash is blocked for many new API keys.
+    AI_PROVIDER_GOOGLE: "gemini-3.1-flash-lite",
     AI_PROVIDER_OPENAI: "gpt-4.1-mini",
     AI_PROVIDER_ANTHROPIC: "claude-sonnet-4-20250514",
 }
 
 AI_PROVIDER_SUGGESTED_MODELS = {
     AI_PROVIDER_GOOGLE: [
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.5-flash",
         "gemini-2.5-flash",
         "gemini-2.5-pro",
-        "gemini-3-flash-preview",
         "gemini-3-pro-preview",
     ],
     AI_PROVIDER_OPENAI: [
