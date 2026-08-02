@@ -41,6 +41,8 @@ class SessionListSerializer(ListModelSerializer):
     last_message = SessionLastMessageSerializer()
 
     exercise = serializers.SerializerMethodField()
+    phase = serializers.SerializerMethodField()
+    pre_exercise = serializers.SerializerMethodField()
     
     class Meta:
         model = Session
@@ -69,6 +71,30 @@ class SessionListSerializer(ListModelSerializer):
             return None
 
         return ExerciseListSerializer(exercise).data
+
+    def get_phase(self, session):
+        if session.in_pre_exercise_phase():
+            return "pre_exercise"
+        if session.completed:
+            return "completed"
+        if session.exercise_id:
+            return "exercise"
+        return "general"
+
+    def get_pre_exercise(self, session):
+        exercise = session.exercise
+        pending = session.in_pre_exercise_phase()
+        occurred = session.had_pre_exercise_checkin()
+        label = None
+        if exercise and (pending or occurred):
+            label = exercise.pre_exercise_start_button_label or "Start exercise"
+        return {
+            "pending": pending,
+            "occurred": occurred,
+            "summary": session.pre_exercise_prompt_summary,
+            "completed_at": session.pre_exercise_completed_at,
+            "start_button_label": label,
+        }
 
 
 class SessionStepListSerializer(ListModelSerializer):

@@ -97,10 +97,21 @@ def _run_session_greeting(session):
     if not consumer_participant:
         return None
 
+    if session.in_pre_exercise_phase():
+        text = (
+            "Hi, I'd like to practise this exercise again. "
+            "Please start with the pre-exercise check-in before we begin Step 1."
+        )
+    else:
+        text = (
+            "Hi, I'd like to practise this exercise. "
+            "Can you greet me and explain the exercise please?"
+        )
+
     message = Message(
         session=session,
         sender=consumer_participant,
-        text="Hi, I'd like to practise this exercise. Can you greet me and explain the exercise please?",
+        text=text,
     )
     agent_message = Agent.get_response(user_message=message, session=session)
     session.last_message = agent_message

@@ -63,14 +63,24 @@ class Agent(SmartModel):
         exercise = None
 
         if user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP:
-            response = AgentUtils.ExerciseResponse(
-                is_step_complete=True,
-                text="Step Auto Skipped",
-                step_no=session.current_step_no,
-                completion_result="Step Skipped",
-                reasoning="Skip step triggered",
-                suggested_responses=[]
-            )
+            if session.in_pre_exercise_phase():
+                response = AgentUtils.ExerciseResponse(
+                    is_step_complete=False,
+                    text="Cannot skip during pre-exercise check-in",
+                    step_no=0,
+                    completion_result=None,
+                    reasoning="Skip step ignored during pre-exercise check-in",
+                    suggested_responses=[],
+                )
+            else:
+                response = AgentUtils.ExerciseResponse(
+                    is_step_complete=True,
+                    text="Step Auto Skipped",
+                    step_no=session.current_step_no,
+                    completion_result="Step Skipped",
+                    reasoning="Skip step triggered",
+                    suggested_responses=[]
+                )
             usage = {"_step_skipped": True}
         elif user_message.text in [Constants.MESSAGE_TEXT_ASSET_IMAGE, Constants.MESSAGE_TEXT_ASSET_POST, Constants.MESSAGE_TEXT_ASSET_FILE]:
             assets = Asset.objects.filter()

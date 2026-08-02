@@ -15,6 +15,8 @@ from .serializers import (
     ExerciseAdminDetailSerializer,
     ExerciseDuplicateSerializer,
 )
+from .pre_exercise import test_pre_exercise_prompt
+from .pre_exercise_serializers import PreExerciseTestSerializer
 
 from ..utils.Permissions import (
     IsAdminPermission,
@@ -46,6 +48,7 @@ class ListCreate(SmartPaginationAPIView):
 
         status_ = QueryParams.get_str(request, "status")
         search_term = QueryParams.get_str(request, "search_term")
+        pre_exercise = QueryParams.get_str(request, "pre_exercise")
 
         if self.is_consumer_request():
             status_ = Constants.EXERCISE_STATUS_PUBLISHED
@@ -55,6 +58,12 @@ class ListCreate(SmartPaginationAPIView):
 
         if status_:
             query = query.filter(status=status_)
+
+        if pre_exercise and pre_exercise != "all":
+            if pre_exercise == "enabled":
+                query = query.filter(pre_exercise_enabled=True)
+            elif pre_exercise == "disabled":
+                query = query.filter(pre_exercise_enabled=False)
 
         return query
 
@@ -99,3 +108,56 @@ class DuplicateExerciseView(SmartAPIView):
         serializer = ExerciseAdminDetailSerializer(instance)
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TestPreExercisePrompt(SmartAPIView):
+    """Resolve pre-exercise tokens for a user; optional dry-run opening turn (no persist)."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        try:
+            exercise = Exercise.objects.get(id=id)
+        except Exercise.DoesNotExist:
+            return self.not_found()
+
+        serializer = PreExerciseTestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        from ..consumer.models import Consumer
+
+        consumer_id = serializer.validated_data["consumer_id"]
+        try:
+            consumer = Consumer.objects.select_related("user").get(pk=consumer_id)
+        except Consumer.DoesNotExist:
+            return self.respond_with(
+                "Consumer not found",
+                key="consumer_id",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Directory lookup is PII-gated (spec §2.5.3).
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            payload = test_pre_exercise_prompt(
+                exercise,
+                consumer,
+                run_dry_run=serializer.validated_data.get("run_dry_run", False),
+            )
+        except Exception as exc:
+            return self.respond_with(
+                f"Pre-exercise test failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(payload, status=status.HTTP_200_OK)

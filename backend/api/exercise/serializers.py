@@ -49,6 +49,13 @@ class ExerciseCreateSerializer(CreateModelSerializer):
 
     status = serializers.ChoiceField(choices=Constants.EXERCISE_STATUSES)
 
+    pre_exercise_start_button_label = serializers.CharField(
+        max_length=24,
+        required=False,
+        allow_blank=True,
+        default="Start exercise",
+    )
+
     class Meta:
         model = Exercise
         fields = [
@@ -61,6 +68,12 @@ class ExerciseCreateSerializer(CreateModelSerializer):
             "icon_background_color",
             "steps",
             "questions",
+            "pre_exercise_enabled",
+            "pre_exercise_description",
+            "pre_exercise_instruction",
+            "pre_exercise_goal",
+            "pre_exercise_completion_prompt",
+            "pre_exercise_start_button_label",
         ]
 
     def validate(self, attrs):
@@ -68,6 +81,7 @@ class ExerciseCreateSerializer(CreateModelSerializer):
         attrs["order"] = last_exercise.order + 1 if last_exercise else 1
 
         attrs = steps_validation(self, attrs)
+        attrs = pre_exercise_validation(self, attrs)
         return attrs
 
     def post_create(self, model, nested_relations):
@@ -96,6 +110,12 @@ class ExerciseEditSerializer(EditModelSerializer):
         create_serializer=QuestionExerciseCreateSerializer,
     )
 
+    pre_exercise_start_button_label = serializers.CharField(
+        max_length=24,
+        required=False,
+        allow_blank=True,
+    )
+
     class Meta:
         model = Exercise
         fields = [
@@ -109,11 +129,18 @@ class ExerciseEditSerializer(EditModelSerializer):
             "steps",
             "questions",
             "order",
+            "pre_exercise_enabled",
+            "pre_exercise_description",
+            "pre_exercise_instruction",
+            "pre_exercise_goal",
+            "pre_exercise_completion_prompt",
+            "pre_exercise_start_button_label",
         ]
 
     def validate(self, attrs):
         attrs = order_validation(self, attrs)
         attrs = steps_validation(self, attrs)
+        attrs = pre_exercise_validation(self, attrs)
         return attrs
 
     def post_update(self, model, nested_relations):
@@ -137,6 +164,8 @@ class ExerciseListSerializer(ListModelSerializer):
             "created_at",
             "updated_at",
             "average_duration",
+            "pre_exercise_enabled",
+            "pre_exercise_start_button_label",
         ]
 
 
@@ -145,9 +174,14 @@ class ExerciseDetailSerializer(ExerciseListSerializer):
     questions = QuestionExerciseDetailSerializer(many=True, order_by="order")
 
     class Meta(ExerciseListSerializer.Meta):
-        ExerciseListSerializer.Meta.fields += [
+        fields = ExerciseListSerializer.Meta.fields + [
             "steps",
             "questions",
+            "description",
+            "pre_exercise_description",
+            "pre_exercise_instruction",
+            "pre_exercise_goal",
+            "pre_exercise_completion_prompt",
         ]
 
 
@@ -168,6 +202,10 @@ class ExerciseAdminDetailSerializer(ExerciseAdminListSerializer):
         fields = ExerciseAdminListSerializer.Meta.fields + [
             "steps",
             "questions",
+            "pre_exercise_description",
+            "pre_exercise_instruction",
+            "pre_exercise_goal",
+            "pre_exercise_completion_prompt",
         ]
 
     @classmethod
@@ -184,6 +222,43 @@ def steps_validation(serializer, attrs) -> dict:
         steps = serializer.instance.steps.all()
 
     attrs["steps_no"] = len(steps)
+
+    return attrs
+
+
+def _resolved_pre_exercise_value(serializer, attrs, field_name, default=None):
+    if field_name in attrs:
+        return attrs.get(field_name)
+    if serializer.instance is not None:
+        return getattr(serializer.instance, field_name)
+    return default
+
+
+def pre_exercise_validation(serializer, attrs) -> dict:
+    """Publish rule: if pre-exercise enabled, Instruction + Goal are required."""
+    status_ = _resolved_pre_exercise_value(serializer, attrs, "status")
+    enabled = _resolved_pre_exercise_value(
+        serializer, attrs, "pre_exercise_enabled", default=True
+    )
+    if status_ != Constants.EXERCISE_STATUS_PUBLISHED or not enabled:
+        return attrs
+
+    instruction = _resolved_pre_exercise_value(
+        serializer, attrs, "pre_exercise_instruction"
+    )
+    goal = _resolved_pre_exercise_value(serializer, attrs, "pre_exercise_goal")
+
+    errors = {}
+    if not (instruction or "").strip():
+        errors["pre_exercise_instruction"] = (
+            "This field is required when pre-exercise is enabled and the exercise is published"
+        )
+    if not (goal or "").strip():
+        errors["pre_exercise_goal"] = (
+            "This field is required when pre-exercise is enabled and the exercise is published"
+        )
+    if errors:
+        raise serializers.ValidationError(errors)
 
     return attrs
 

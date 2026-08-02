@@ -498,18 +498,35 @@ def _prepare_prompt(session: Session) -> str:
     exercise = session.exercise
 
     if exercise:
-        exercise_steps = _get_formatted_exercise_steps_text(exercise)
-
         exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
 
-        exercise_extra = {
-            "exercise_id": exercise.id,
-            "exercise_steps": exercise_steps,
-            "exercise_steps_no": exercise.steps_no,
-            "exercise_name": exercise.title,
-            "exercise_description": exercise.description,
-            "exercise_summary_notes": exercise_summary.detailed,
-        }
+        if session.in_pre_exercise_phase():
+            from ..exercise.pre_exercise import format_pre_exercise_prompt_block
+
+            exercise_extra = {
+                "exercise_id": exercise.id,
+                "exercise_steps": (
+                    "Pre-exercise check-in is active. Do not run exercise steps yet."
+                ),
+                "exercise_steps_no": exercise.steps_no,
+                "exercise_name": exercise.title,
+                "exercise_description": exercise.description,
+                "exercise_summary_notes": exercise_summary.detailed,
+                "pre_exercise_block": format_pre_exercise_prompt_block(
+                    exercise, consumer
+                ),
+            }
+        else:
+            exercise_steps = _get_formatted_exercise_steps_text(exercise)
+            exercise_extra = {
+                "exercise_id": exercise.id,
+                "exercise_steps": exercise_steps,
+                "exercise_steps_no": exercise.steps_no,
+                "exercise_name": exercise.title,
+                "exercise_description": exercise.description,
+                "exercise_summary_notes": exercise_summary.detailed,
+                "pre_exercise_block": "",
+            }
     else:
         exercise_extra["exercises"] = _published_exercises_prompt_block()
 

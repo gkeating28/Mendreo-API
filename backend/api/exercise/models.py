@@ -27,6 +27,19 @@ class Exercise(SmartModel):
     average_duration = models.PositiveIntegerField(default=300)
     order = models.PositiveIntegerField(default=0)
 
+    # Pre-Exercise Prompt (V2) — conversational check-in before Step 1 for returning users.
+    # Distinct from Question.pre_exercise (form-question flag).
+    pre_exercise_enabled = models.BooleanField(default=True)
+    pre_exercise_description = models.TextField(null=True, blank=True)
+    pre_exercise_instruction = models.TextField(null=True, blank=True)
+    pre_exercise_goal = models.TextField(null=True, blank=True)
+    pre_exercise_completion_prompt = models.TextField(null=True, blank=True)
+    pre_exercise_start_button_label = models.CharField(
+        max_length=24,
+        default="Start exercise",
+        blank=True,
+    )
+
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Exercise: {}".format(self.id)

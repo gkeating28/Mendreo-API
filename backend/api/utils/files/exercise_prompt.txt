@@ -62,6 +62,7 @@
         <DESCRIPTION>
             {exercise_description}
         </DESCRIPTION>
+        {pre_exercise_block}
         <STEPS>
             {exercise_steps}
         </STEPS>

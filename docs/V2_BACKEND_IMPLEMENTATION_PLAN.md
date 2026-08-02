@@ -2,7 +2,7 @@
 
 Tracked plan for implementing the backend services described in **Mendreo V2 Specification** (Personalisation, Exercises, Onboarding & Progress). Frontend/admin UI work is out of scope here except where API contracts are implied.
 
-**Status:** Slices A–B implemented on branch; later slices pending  
+**Status:** Slices A–C implemented on branch; later slices pending  
 **Source:** Mendreo V2 Spec (April 2026 draft)  
 **Stack:** Django / DRF (`backend/api/`), Celery, Postgres (Supabase), existing AI provider layer
 
@@ -100,14 +100,16 @@ Slice C (Pre-Exercise) can start after Slice A helpers for template resolution
 ### Slice C — Exercise Pre-Exercise Prompt
 **Spec:** §2.3–2.7
 
-- [ ] Fields on `Exercise` for the pre-exercise prompt block (enabled + AI fields + start button label)
-- [ ] Fields on `Session`: `pre_exercise_prompt_summary`, `pre_exercise_completed_at`
-- [ ] Extend exercise serializers (create/update/list filter + enabled badge)
-- [ ] Extend session detail for check-in phase labeling / summary panel
-- [ ] `POST /exercises/<id>/test-pre-exercise-prompt` (resolve tokens; optional dry-run turn, no persist)
-- [ ] Session start: returning user + enabled → check-in phase before Step 1; handoff stamps completion
-- [ ] Publish validation: if enabled, Instruction + Goal required
-- [ ] Tests for create/update/duplicate/start/session detail
+- [x] Fields on `Exercise` for the pre-exercise prompt block (enabled + AI fields + start button label)
+- [x] Fields on `Session`: `pre_exercise_prompt_summary`, `pre_exercise_completed_at`
+- [x] Extend exercise serializers (create/update/list filter + enabled badge)
+- [x] Extend session detail for check-in phase labeling / summary panel
+- [x] `POST /exercises/<id>/test-pre-exercise-prompt` (resolve tokens; optional dry-run turn, no persist)
+- [x] Session start: returning user + enabled → check-in phase before Step 1; handoff stamps completion
+- [x] Publish validation: if enabled, Instruction + Goal required
+- [x] Tests for create/update/duplicate/start/session detail
+- [x] Cadence locked: **every repeat** (incl. same-day second runs); resume incomplete same-day session via `get_or_create` does not re-trigger
+- [x] Handoff API: `POST /sessions/<id>/complete-pre-exercise`
 
 ### Slice D — Onboarding & Refresh flows
 **Spec:** §3.2–3.8, §1 interaction
@@ -258,8 +260,9 @@ Paths are indicative; final paths should match existing plural-resource style in
 |---|---|---|
 | (extend) | `/exercises` | Pre-exercise fields; list filter `pre_exercise=all\|enabled\|disabled` |
 | POST | `/exercises/<id>/test-pre-exercise-prompt` | Resolve + optional dry-run |
-| (extend) | `/sessions/<id>` | Expose check-in summary + completed_at |
-| (extend) | `/sessions/start` | Check-in phase for returning users |
+| (extend) | `/sessions/<id>` | `phase`, `pre_exercise` panel (summary + completed_at + start button) |
+| (extend) | `/sessions/start` | Check-in phase for returning users (`current_step_no=0`) |
+| POST | `/sessions/<id>/complete-pre-exercise` | Explicit Start handoff → Step 1 |
 
 ### Onboarding flows
 
@@ -334,13 +337,13 @@ Track decisions here before locking migrations.
 |---|---|---|---|---|
 | 1 | Can admins manually push a knowledge question into a user’s next session? | §1.9 | _TBD_ | |
 | 2 | Tell users when AI uses remembered information? | §1.9 | _TBD_ (may be client-only) | |
-| 3 | Pre-exercise: every repeat vs first repeat only? | §2.8 | _TBD_ | |
-| 4 | Skip pre-exercise if same exercise twice in one day? | §2.8 | _TBD_ | |
+| 3 | Pre-exercise: every repeat vs first repeat only? | §2.8 | **Every repeat** | Product |
+| 4 | Skip pre-exercise if same exercise twice in one day? | §2.8 | **No skip** — same-day second runs still check in; incomplete same-day resume does not re-trigger | Product |
 | 5 | Companion identity (“Toni”) — Settings vs hardcode? | §3.9 | _TBD_ | |
 | 6 | Refresh deferrable (“Remind me later”)? | §3.9 | _TBD_ | |
 | 7 | Knowledge field value types (text/number/enum/multi)? | §1.3 | Deferred default: `text` / `number` / `boolean` / `single_choice` / `multiple_choice` (Slice A) | |
 | 8 | Dual-write Attribute + Knowledge during transition, or cut over? | — | _TBD_ | |
-| 9 | Coexistence strategy for legacy `Question.pre_exercise` form questions | §2 | _TBD_ | |
+| 9 | Coexistence strategy for legacy `Question.pre_exercise` form questions | §2 | Keep both; new fields named `pre_exercise_prompt_*` / session check-in phase — no rename of question flag | Backend |
 
 ---
 
@@ -368,7 +371,7 @@ cd backend && ../.venv/bin/python manage.py test api.tests
 - [ ] This plan reviewed and open questions filled
 - [ ] Slice A merged
 - [ ] Slice B merged (chat can read/write knowledge)
-- [ ] Slice C merged (pre-exercise contracts stable for admin UI)
+- [x] Slice C implemented on branch (pre-exercise contracts stable for admin UI)
 - [ ] Slice D merged (mobile onboarding can integrate)
 - [ ] Slice E merged (Progress tabs can integrate)
 - [ ] `docs/API.md` + deep dive updated
