@@ -100,8 +100,9 @@ human-readable prefix (e.g. `usr_`, `ssn_`, `msg_`, `exrcs_`). `EnumField` is a
 | **KnowledgeQuestion** (`api/knowledge/models.py`) | `id` (`knq_`), `prompt`, `trigger`, `trigger_config`, `suggested_responses`, `extraction_prompt`, `flows`, `order_by_flow`, `response_type`, slider/multi-select metadata, `order`, `active` | `target_field` → `KnowledgeField`. |
 | **KnowledgeEntry** (`api/knowledge/models.py`) | `id` (`kne_`), `value`, `source` (`onboarding`/`question`/`ai`/`admin`), `confidence` | `consumer`, `field`, optional `knowledge_question` / `session` / `attribute` / `created_by`. Append-only; current = latest per (consumer, field). |
 | **UserObservation** (`api/progress/models.py`) | `id` (`uobs_`), `text`, `topic_tag`, `generated_at` | `consumer` → `Consumer`. Patterns card = latest row; failed generation retains prior. |
+| **MoodEntry** (`api/mood/models.py`) | `id` (`mood_`), `mood_score` (1–5), `note`, `created_at` | `consumer` → `Consumer`. Multiple entries per day allowed. Labels: Low/Flat/Okay/Good/Great. |
 
-Progress field-key defaults: mood = `mood` (slider 0–10), stress = `stress_points` (comma-joined multi-select). Streaks/dates use Django `TIME_ZONE` (v1; no per-user TZ yet).
+Progress field-key defaults: mood = `mood` (slider 0–10), stress = `stress_points` (comma-joined multi-select). Streaks/dates use Django `TIME_ZONE` (v1; no per-user TZ yet). Dedicated check-ins live in `MoodEntry` via `/mood-entries` (1–5 + note); they are not yet wired into `GET /progress/mood`.
 
 ---
 
