@@ -241,6 +241,7 @@ def valid_exercise_flexible_thinking():
     return {
         "title": "Flexible Thinking",
         "subtitle": "Interpreting a situation",
+        "category": "Thinking",
         "icon": "leaf",
         "icon_background_color": "tan",
         "status": Constants.EXERCISE_STATUS_PUBLISHED,

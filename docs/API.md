@@ -79,7 +79,7 @@ Session detail includes `phase` (`pre_exercise` / `exercise` / `completed` / `ge
 
 | Method | Path | Function |
 |---|---|---|
-| GET, POST | `/exercises` | List / create exercises (pre-exercise fields; filter `?pre_exercise=all\|enabled\|disabled`) |
+| GET, POST | `/exercises` | List / create exercises (fields include `category`; filter `?category=`, `?pre_exercise=all\|enabled\|disabled`) |
 | POST | `/exercises/duplicate` | Duplicate an existing exercise |
 | POST | `/exercises/<id>/test-pre-exercise-prompt` | Resolve tokens for a consumer; optional dry-run opening message |
 | GET, PATCH, DELETE | `/exercises/<id>` | Retrieve / update / delete |

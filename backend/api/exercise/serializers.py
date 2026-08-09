@@ -56,12 +56,15 @@ class ExerciseCreateSerializer(CreateModelSerializer):
         default="Start exercise",
     )
 
+    category = serializers.CharField(required=False, allow_blank=True, default="")
+
     class Meta:
         model = Exercise
         fields = [
             "title",
             "subtitle",
             "description",
+            "category",
             "status",
             "icon",
             "icon_svg",
@@ -116,12 +119,15 @@ class ExerciseEditSerializer(EditModelSerializer):
         allow_blank=True,
     )
 
+    category = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Exercise
         fields = [
             "title",
             "subtitle",
             "description",
+            "category",
             "status",
             "icon",
             "icon_svg",
@@ -156,6 +162,7 @@ class ExerciseListSerializer(ListModelSerializer):
             "id",
             "title",
             "subtitle",
+            "category",
             "icon",
             "icon_svg",
             "icon_background_color",

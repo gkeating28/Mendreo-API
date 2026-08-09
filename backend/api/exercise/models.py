@@ -14,6 +14,7 @@ class Exercise(SmartModel):
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=255)
     description = models.TextField()
+    category = models.CharField(max_length=255, blank=True, default="")
 
     status = EnumField(options=Constants.EXERCISE_STATUSES, default=Constants.EXERCISE_STATUS_DRAFT)
 
