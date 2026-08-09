@@ -40,6 +40,7 @@ class ListCreate(SmartPaginationAPIView):
 
     permission_classes = [IsAdminPermission | IsConsumerPermission]
     role_permission = True
+    allow_disable_pagination = True
 
     def add_filters(self, query, request):
         # Serializers render nested steps/questions; prefetch to avoid N+1
