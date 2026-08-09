@@ -412,6 +412,23 @@ PROGRESS_STRESS_FIELD_KEY = "stress_points"
 PROGRESS_MAX_RANGE_DAYS = 366
 PROGRESS_STREAK_COPY = "Consistency matters more than perfection"
 
+# Dedicated mood check-ins (MoodEntry): 1–5 scale with fixed labels.
+MOOD_SCORE_MIN = 1
+MOOD_SCORE_MAX = 5
+MOOD_SCORE_LOW = 1
+MOOD_SCORE_FLAT = 2
+MOOD_SCORE_OKAY = 3
+MOOD_SCORE_GOOD = 4
+MOOD_SCORE_GREAT = 5
+MOOD_SCORE_LABELS = {
+    MOOD_SCORE_LOW: "Low",
+    MOOD_SCORE_FLAT: "Flat",
+    MOOD_SCORE_OKAY: "Okay",
+    MOOD_SCORE_GOOD: "Good",
+    MOOD_SCORE_GREAT: "Great",
+}
+MOOD_SCORES = list(MOOD_SCORE_LABELS.keys())
+
 AI_PROVIDER_GOOGLE = "google"
 AI_PROVIDER_OPENAI = "openai"
 AI_PROVIDER_ANTHROPIC = "anthropic"

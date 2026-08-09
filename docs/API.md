@@ -149,13 +149,32 @@ See also [`V2_BACKEND_IMPLEMENTATION_PLAN.md`](./V2_BACKEND_IMPLEMENTATION_PLAN.
 
 ---
 
+## Mood check-ins — `/mood-entries`
+
+Dedicated mood recordings (separate from Knowledge/`GET /progress/mood`). Multiple entries per day are allowed.
+
+`mood_score` is an integer **1–5** with fixed labels: `1` Low, `2` Flat, `3` Okay, `4` Good, `5` Great. Optional free-text `note`. Timestamp is `created_at`.
+
+| Method | Path | Function |
+|---|---|---|
+| GET, POST | `/mood-entries` | List (paginated) / create a mood entry |
+| GET, PATCH, DELETE | `/mood-entries/<id>` | Retrieve / edit / soft-delete |
+
+- **Consumer**: create/list/edit/delete own entries only. `consumer` is injected on create.
+- **Admin**: list all (filter `?consumer_id=`), create on behalf of a consumer (body must include `consumer`), retrieve/edit/delete any entry.
+- List filters: `?mood_score=`, `?from=` / `?to=` (YYYY-MM-DD on `created_at` date), `?consumer_id=` (admin).
+
+Create body example: `{ "mood_score": 4, "note": "Felt steady after a walk" }`.
+
+---
+
 ## Progress & Insights (V2 Slice E) — `/progress`
 
 Consumer-only. Default range = current calendar week (Mon–Sun) in Django `TIME_ZONE`. Pass `?from=&to=` (YYYY-MM-DD). Streaks ignore range.
 
 | Method | Path | Function |
 |---|---|---|
-| GET | `/progress/mood` | Daily mood points (gaps, not zeros), summary avg/Δ/count; field key `mood` |
+| GET | `/progress/mood` | Daily mood points from Knowledge field `mood` (0–10 slider; gaps, not zeros), summary avg/Δ/count |
 | GET | `/progress/exercises` | Completions total, heatmap, per-exercise breakdown |
 | GET | `/progress/patterns` | Latest observation card + stress-point bars (`stress_points` multi-select) |
 | GET | `/progress/streaks` | Check-in + exercise current/best streaks |

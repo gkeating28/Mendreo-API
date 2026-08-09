@@ -44,6 +44,8 @@ urlpatterns = [
     path('knowledge-entries', include('api.knowledge.entry_urls')),
 
     path('progress', include('api.progress.urls')),
+
+    path('mood-entries', include('api.mood.urls')),
 ]
 
 
