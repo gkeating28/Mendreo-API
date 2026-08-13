@@ -103,6 +103,10 @@ class QuestionDetail(SmartDetailAPIView):
     def queryset(self, request, id):
         return KnowledgeQuestionListSerializer.optimise(super().queryset(request, id))
 
+    def handle_delete(self, instance):
+        KnowledgeEntry.objects.filter(knowledge_question=instance).delete()
+        return instance.delete()
+
 
 class QuestionTestExtraction(SmartAPIView):
     permission_classes = [IsAdminPermission]

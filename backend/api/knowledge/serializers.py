@@ -1,3 +1,4 @@
+from django.db.models import Count, Q
 from rest_framework import serializers
 
 from .models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
@@ -314,6 +315,7 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
 
 class KnowledgeQuestionListSerializer(ListModelSerializer):
     target_field = KnowledgeFieldBriefSerializer()
+    entry_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = KnowledgeQuestion
@@ -336,11 +338,14 @@ class KnowledgeQuestionListSerializer(ListModelSerializer):
             "active",
             "created_at",
             "updated_at",
+            "entry_count",
         ]
 
     @staticmethod
     def optimise(queryset):
-        return queryset.select_related("target_field")
+        return queryset.select_related("target_field").annotate(
+            entry_count=Count("entries", filter=Q(entries__deleted_at__isnull=True))
+        )
 
 
 class KnowledgeQuestionDetailSerializer(KnowledgeQuestionListSerializer):
