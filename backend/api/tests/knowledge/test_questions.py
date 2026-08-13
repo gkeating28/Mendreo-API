@@ -3,7 +3,7 @@ from unittest import mock
 from rest_framework import status
 
 from ..utils.BaseTest import BaseTest
-from ...knowledge.models import KnowledgeField, KnowledgeQuestion
+from ...knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
 from ...utils import Constants
 
 
@@ -122,3 +122,71 @@ class KnowledgeQuestionTests(BaseTest):
         self.assertEqual(multi.status_code, status.HTTP_201_CREATED, multi.json)
         self.assertEqual(multi.json["min_selections"], 1)
         self.assertEqual(multi.json["max_selections"], 2)
+
+    def test_list_includes_entry_count(self):
+        question = KnowledgeQuestion.objects.create(
+            prompt="How has sleep been?",
+            target_field=self.field,
+            active=True,
+        )
+        for value in ("restless", "better"):
+            KnowledgeEntry.objects.create(
+                consumer=self.consumer_one,
+                field=self.field,
+                value=value,
+                source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+                knowledge_question=question,
+            )
+        deleted_entry = KnowledgeEntry.objects.create(
+            consumer=self.consumer_one,
+            field=self.field,
+            value="old",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+            knowledge_question=question,
+        )
+        deleted_entry.delete()
+
+        listed = self._list(
+            self.admin_one_access_token,
+            {"target_field_id": self.field.id, "paginated": "false"},
+        )
+        self.assertEqual(listed.status_code, status.HTTP_200_OK, listed.json)
+        row = next(item for item in listed.json if item["id"] == question.id)
+        self.assertEqual(row["entry_count"], 2)
+
+        detail = self._get(question, self.admin_one_access_token)
+        self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.json)
+        self.assertEqual(detail.json["entry_count"], 2)
+
+    def test_delete_cascades_to_linked_entries(self):
+        question = KnowledgeQuestion.objects.create(
+            prompt="How has sleep been?",
+            target_field=self.field,
+            active=True,
+        )
+        linked = KnowledgeEntry.objects.create(
+            consumer=self.consumer_one,
+            field=self.field,
+            value="restless",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+            knowledge_question=question,
+        )
+        unrelated = KnowledgeEntry.objects.create(
+            consumer=self.consumer_one,
+            field=self.field,
+            value="cycling",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN,
+        )
+
+        deleted = self._delete(question, self.admin_one_access_token)
+        self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+
+        self.assertFalse(KnowledgeQuestion.objects.filter(id=question.id).exists())
+        self.assertFalse(KnowledgeEntry.objects.filter(id=linked.id).exists())
+        self.assertTrue(KnowledgeEntry.objects.filter(id=unrelated.id).exists())
+        self.assertIsNotNone(KnowledgeEntry.all_objects.get(id=linked.id).deleted_at)
+        self.assertIsNotNone(KnowledgeQuestion.all_objects.get(id=question.id).deleted_at)
+        self.assertEqual(
+            KnowledgeEntry.all_objects.get(id=linked.id).knowledge_question_id,
+            question.id,
+        )
