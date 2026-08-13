@@ -48,8 +48,8 @@ def test_extraction(extraction_prompt: str, sample_reply: str, value_type: str |
     Dry-run extraction: send extraction prompt + sample reply to the model.
     Does not persist anything.
 
-    AI is imported lazily so Vercel builds (which omit google-genai from
-    requirements-vercel.txt) can still import knowledge URLs for migrate.
+    AI is imported lazily so knowledge URL modules can load without pulling
+    the model client in at import time.
     """
     from ..utils.AI import AI
 
