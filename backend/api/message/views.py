@@ -7,6 +7,7 @@ from .models import Message
 from .serializers import MessageDetailSerializer, MessageCreateSerializer, MessageListSerializer
 from ..utils import QueryParams
 from ..utils.AIWorkerClient import enqueue_agent_response, request_agent_response
+from ..utils.ExerciseOffer import maybe_handle_offer_response
 from ..utils.Permissions import (
     IsConsumerPermission, IsAdminPermission,
 )
@@ -78,8 +79,12 @@ class ListCreate(SmartPaginationAPIView):
             create_serializer.is_valid(raise_exception=True)
             instance = create_serializer.save()
 
-        # Transaction has committed — Railway / Celery can see user_message_id.
-        if settings.AI_ASYNC_MESSAGES:
+        from_suggested_response = _from_suggested_response(request.data)
+
+        offer_reply = maybe_handle_offer_response(instance, from_suggested_response)
+        if offer_reply is not None:
+            instance = offer_reply
+        elif settings.AI_ASYNC_MESSAGES:
             enqueue_agent_response(instance)
             request._ai_pending = True
             # Return the user message immediately; clients poll GET /messages
@@ -92,3 +97,14 @@ class ListCreate(SmartPaginationAPIView):
         data = self.override_response_data(request, data, instance)
 
         return self.post_response(request, instance, data)
+
+
+def _from_suggested_response(data) -> bool:
+    if not data:
+        return False
+    value = data.get("from_suggested_response")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)

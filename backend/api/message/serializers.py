@@ -9,6 +9,7 @@ from ..message.models import Message
 from ..participant.models import Participant
 from ..participant.serializers import ParticipantListSerializer
 
+from ..utils.ExerciseOffer import exercise_session_payload_for_message
 from ..utils.Serializers import CreateModelSerializer, ListModelSerializer
 
 
@@ -75,15 +76,22 @@ class MessageListSerializer(ListModelSerializer):
             "is_step_complete",
             "asset",
             "exercise",
+            "exercise_session",
             "usage",
             "created_at",
             "updated_at",
         ]
+
+    exercise_session = serializers.SerializerMethodField()
+
+    def get_exercise_session(self, message):
+        return exercise_session_payload_for_message(self, message)
     
     @classmethod
     def get_select_related_fields(cls):
         return [
             "exercise",
+            "session",
             "sender__agent__avatar",
             "sender__consumer__user",
             "asset__file",

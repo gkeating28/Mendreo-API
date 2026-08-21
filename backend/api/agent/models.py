@@ -136,6 +136,10 @@ class Agent(SmartModel):
         else:
             response, usage, asset, exercise = AgentUtils.get_response(consumer_message=user_message, session=session)
 
+        from ..utils.ExerciseOffer import format_agent_offer
+
+        suggested_responses, text = format_agent_offer(response, exercise, session)
+
         step_no = response.step_no if hasattr(response, "step_no") else None
         completion_result = response.completion_result if hasattr(response, "completion_result") else None
         is_step_complete = response.is_step_complete if hasattr(response, "is_step_complete") else None
@@ -157,12 +161,12 @@ class Agent(SmartModel):
             step_no=step_no,
             session=session,
             exercise=exercise,
-            text=response.text,
+            text=text,
             sender=participant,
             reasoning=response.reasoning,
             is_step_complete=is_step_complete,
             completion_result=completion_result,
-            suggested_responses=response.suggested_responses,
+            suggested_responses=suggested_responses,
         )
 
         return agent_message

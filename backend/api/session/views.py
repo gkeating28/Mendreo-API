@@ -28,6 +28,7 @@ class List(SmartPaginationAPIView):
 
     model = Session
     list_serializer = SessionListSerializer
+    detail_serializer = SessionDetailSerializer
 
     permission_classes = [IsAdminPermission | IsConsumerPermission]
     role_permission = True  
@@ -42,6 +43,7 @@ class List(SmartPaginationAPIView):
         risk_level = QueryParams.get_str(request, "risk_level")
         min_rating = QueryParams.get_float(request, "min_rating")
         max_rating = QueryParams.get_float(request, "max_rating")
+        general = QueryParams.get_bool(request, "general")
 
         if self.is_consumer_request():
             consumer_id = self.get_consumer_from_request().user_id
@@ -51,6 +53,11 @@ class List(SmartPaginationAPIView):
 
         if exercise_id:
             queryset = queryset.filter(exercise_id=exercise_id)
+
+        if general:
+            queryset = queryset.filter(exercise__isnull=True)
+            self.paginator.ordering = ["-updated_at", "-id"]
+            queryset = queryset.order_by("-updated_at", "-id")
 
         if risk_level:
             queryset = queryset.filter(risk_level=risk_level)
@@ -62,8 +69,24 @@ class List(SmartPaginationAPIView):
             queryset = queryset.filter(rating__lte=max_rating)
         
         return queryset
-    
-    
+
+    def post(self, request):
+        if not self.has_permission(request, "POST"):
+            return self.get_permission_denied_response(request, "POST")
+
+        session = Session.create_general(self.get_consumer_from_request())
+        session = SessionDetailSerializer.optimise(
+            Session.objects.filter(id=session.id)
+        ).first()
+        data = SessionDetailSerializer(session).data
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    def has_permission(self, request, method):
+        if method == "POST":
+            return self.is_consumer_request()
+        return True
+
+
 class Today(SmartAPIView):
 
     permission_classes = [IsConsumerPermission]

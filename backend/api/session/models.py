@@ -137,6 +137,20 @@ class Session(SmartModel):
         return session
 
     @staticmethod
+    def create_general(consumer):
+        """Always create a fresh general chat. Does not reuse today's session."""
+        from ..participant.models import Participant
+
+        session = Session.objects.create(
+            consumer=consumer,
+            risk_level=None,
+            exercise=None,
+            completed=None,
+        )
+        Participant.create_participants(session=session)
+        return session
+
+    @staticmethod
     def get_with_messages(date, consumer, exercise):
         start, end = DateUtils.day_bounds(date)
 

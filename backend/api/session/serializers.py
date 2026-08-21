@@ -28,11 +28,19 @@ class SessionLastMessageSerializer(ListModelSerializer):
             "completion_label",
             "asset",
             "exercise",
+            "exercise_session",
         ]
 
     def get_sender(self, message):
         from ..participant.serializers import ParticipantListSerializer
         return ParticipantListSerializer(message.sender).data
+
+    exercise_session = serializers.SerializerMethodField()
+
+    def get_exercise_session(self, message):
+        from ..utils.ExerciseOffer import exercise_session_payload_for_message
+
+        return exercise_session_payload_for_message(self, message)
 
 
 class SessionListSerializer(ListModelSerializer):
@@ -57,6 +65,8 @@ class SessionListSerializer(ListModelSerializer):
             "last_message__sender__consumer__user",
             "last_message__sender__agent",
             "last_message__sender__agent__avatar",
+            "last_message__session",
+            "last_message__exercise",
         ]
 
     @classmethod

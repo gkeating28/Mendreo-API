@@ -493,8 +493,13 @@ def update_session(session_ai_prompt, session):
 
 def _prepare_prompt(session: Session) -> str:
 
-    if session.cached_prompt:
-        return session.cached_prompt
+    cached = session.cached_prompt
+    if cached:
+        # Older general-chat prompts told Toni to "click the exercise".
+        # Rebuild so today's session asks Yes / No instead.
+        if session.exercise_id or "click the exercise" not in cached:
+            return cached
+        session.cached_prompt = None
 
     consumer = session.consumer
     today_date_str = DateUtils.today().strftime(PROMPT_DATE_FORMAT)

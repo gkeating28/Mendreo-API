@@ -49,6 +49,25 @@ class ListTest(BaseListTest):
             user=self.consumer_one.user
         )
 
+    def test_consumer_general_filter_excludes_exercise_sessions(self):
+        exercise = General.create_exercise()
+        General.create_session(consumer=self.consumer_one, exercise=exercise)
+
+        older = self.objects[0]
+        newer = self.objects[2]
+        with freeze_time("2026-08-21 10:00:00"):
+            older.save()
+        with freeze_time("2026-08-21 12:00:00"):
+            newer.save()
+
+        self.valid_list(
+            query_params_data={"general": "true"},
+            access_token=self.consumer_one_access_token,
+            results_no=2,
+            results_match_data=[{"id": newer.id}, {"id": older.id}],
+            user=self.consumer_one.user,
+        )
+
     def endpoint(self):
         return "sessions"
 
