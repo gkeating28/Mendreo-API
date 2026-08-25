@@ -43,8 +43,9 @@ def resolve_variant(consumer, requested: str | None = None) -> str:
     """
     Server-selected variant, or honor ?variant= when allowed.
 
-    - Not onboarded: always initial
-    - Onboarded: return or refresh (initial rejected)
+    - Not onboarded: always initial (other variants rejected)
+    - Onboarded: default return/refresh; an explicit variant is honored so
+      replay/testing can load the initial knowledge flow again
     """
     if not consumer.onboarded:
         if requested and requested != Constants.KNOWLEDGE_FLOW_INITIAL:
@@ -54,10 +55,6 @@ def resolve_variant(consumer, requested: str | None = None) -> str:
         return Constants.KNOWLEDGE_FLOW_INITIAL
 
     if requested:
-        if requested == Constants.KNOWLEDGE_FLOW_INITIAL:
-            raise serializers.ValidationError(
-                {"variant": "Initial flow is only available before onboarding is complete."}
-            )
         if requested not in Constants.KNOWLEDGE_FLOWS:
             raise serializers.ValidationError({"variant": f"Unknown variant '{requested}'."})
         return requested
@@ -312,5 +309,109 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
         "complete": complete,
         "entries_written": len(written),
         "entry_ids": [e.id for e in written],
+        "status": build_status_payload(consumer),
+        "closing_action": (
+            "enter_mendreo"
+            if variant == Constants.KNOWLEDGE_FLOW_INITIAL
+            else "back_to_today"
+        ),
+    }
+
+
+def placeholder_value_for(question: KnowledgeQuestion):
+    """Deterministic skip-complete answers for local testing."""
+    suggested = list(question.suggested_responses or [])
+    response_type = question.response_type
+
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER:
+        return (Constants.SLIDER_MIN + Constants.SLIDER_MAX) // 2
+
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_SINGLE_CHOICE:
+        return suggested[0] if suggested else "test"
+
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE:
+        needed = question.min_selections or 1
+        if suggested:
+            return suggested[:needed]
+        return ["test"] * needed
+
+    return "test"
+
+
+def complete_onboarding_with_placeholders(consumer):
+    """
+    Skip the conversational flow by writing valid placeholder answers
+    for the recommended variant and marking it complete.
+    """
+    variant = recommend_variant(consumer)
+    questions = questions_for_variant(variant)
+
+    if not questions:
+        now = timezone.now()
+        update_fields = [
+            "last_onboarding_flow_completed_at",
+            "last_onboarding_flow_variant",
+            "updated_at",
+        ]
+        consumer.last_onboarding_flow_completed_at = now
+        consumer.last_onboarding_flow_variant = variant
+        if variant == Constants.KNOWLEDGE_FLOW_INITIAL and not consumer.onboarded:
+            consumer.onboarded = True
+            update_fields.append("onboarded")
+        consumer.save(update_fields=update_fields)
+        from ..knowledge.services import invalidate_consumer_prompt_cache
+
+        invalidate_consumer_prompt_cache(consumer)
+        return {
+            "variant": variant,
+            "complete": True,
+            "entries_written": 0,
+            "entry_ids": [],
+            "status": build_status_payload(consumer),
+            "closing_action": (
+                "enter_mendreo"
+                if variant == Constants.KNOWLEDGE_FLOW_INITIAL
+                else "back_to_today"
+            ),
+        }
+
+    answers = [
+        {"knowledge_question_id": question.id, "value": placeholder_value_for(question)}
+        for question in questions
+    ]
+    return submit_flow_answers(
+        consumer, variant=variant, answers=answers, complete=True
+    )
+
+
+def restart_onboarding(consumer):
+    """
+    Clear onboarding progress so the initial flow can be re-run with new values.
+    Soft-deletes knowledge written during onboarding and legacy Attribute answers.
+    """
+    from ..attribute.models import Attribute
+    from ..knowledge.services import invalidate_consumer_prompt_cache
+
+    KnowledgeEntry.objects.filter(consumer=consumer).delete()
+    Attribute.objects.filter(
+        consumer=consumer,
+        question__survey=False,
+        question__exercise__isnull=True,
+    ).delete()
+
+    consumer.onboarded = False
+    consumer.last_onboarding_flow_completed_at = None
+    consumer.last_onboarding_flow_variant = None
+    consumer.save(
+        update_fields=[
+            "onboarded",
+            "last_onboarding_flow_completed_at",
+            "last_onboarding_flow_variant",
+            "updated_at",
+        ]
+    )
+    invalidate_consumer_prompt_cache(consumer)
+    return {
+        "restarted": True,
         "status": build_status_payload(consumer),
     }

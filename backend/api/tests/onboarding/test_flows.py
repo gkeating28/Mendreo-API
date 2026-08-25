@@ -221,6 +221,77 @@ class OnboardingFlowTests(BaseTest):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_complete_shortcut_onboards_with_placeholders(self):
+        response = self._post(
+            "/onboarding/complete", {}, self.consumer_one_access_token
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertTrue(response.json["complete"])
+        self.assertEqual(response.json["variant"], "initial")
+        self.assertEqual(response.json["closing_action"], "enter_mendreo")
+        self.assertTrue(response.json["status"]["onboarded"])
+        self.assertEqual(response.json["entries_written"], 3)
+
+        self.consumer_one.refresh_from_db()
+        self.assertTrue(self.consumer_one.onboarded)
+        mood = KnowledgeEntry.current_for(self.consumer_one, self.mood)
+        self.assertEqual(mood.value, "5")
+        sleep = KnowledgeEntry.current_for(self.consumer_one, self.sleep)
+        self.assertEqual(sleep.value, "Great")
+
+    def test_restart_clears_onboarding_for_retest(self):
+        self._post("/onboarding/complete", {}, self.consumer_one_access_token)
+        self.consumer_one.refresh_from_db()
+        self.assertTrue(self.consumer_one.onboarded)
+
+        response = self._post(
+            "/onboarding/restart", {}, self.consumer_one_access_token
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertTrue(response.json["restarted"])
+        self.assertFalse(response.json["status"]["onboarded"])
+        self.assertIsNone(response.json["status"]["last_completed_at"])
+
+        self.consumer_one.refresh_from_db()
+        self.assertFalse(self.consumer_one.onboarded)
+        self.assertIsNone(self.consumer_one.last_onboarding_flow_completed_at)
+        self.assertEqual(
+            KnowledgeEntry.objects.filter(consumer=self.consumer_one).count(), 0
+        )
+
+        flow = self._get_path("/onboarding/flow", self.consumer_one_access_token)
+        self.assertEqual(flow.json["variant"], "initial")
+        self.assertIsNone(flow.json["questions"][0]["prior_value"])
+
+    def test_explicit_initial_allowed_when_onboarded(self):
+        self.consumer_one.onboarded = True
+        self.consumer_one.last_onboarding_flow_completed_at = timezone.now()
+        self.consumer_one.last_onboarding_flow_variant = Constants.KNOWLEDGE_FLOW_INITIAL
+        self.consumer_one.save()
+
+        response = self._get_path(
+            "/onboarding/flow",
+            self.consumer_one_access_token,
+            {"variant": "initial"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["variant"], "initial")
+        self.assertEqual(response.json["questions_total"], 3)
+
+        step = self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": False,
+                "answers": [
+                    {"knowledge_question_id": self.q_mood.id, "value": 6},
+                ],
+            },
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(step.status_code, status.HTTP_200_OK, step.json)
+        self.assertFalse(step.json["complete"])
+
     def _get_path(self, path, access_token, query_params_dict=None):
         from ..TestCase import TestCase
 

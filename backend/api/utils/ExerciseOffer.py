@@ -30,16 +30,25 @@ def _normalize_offer_text(text: str) -> str:
     return (text or "").lower().replace("\u2019", "'").replace("\u2018", "'")
 
 
+_START_INVITE_MARKERS = (
+    "would you like to start",
+    "would you like to begin",
+    "would you like to try",
+    "let's work through",
+    "lets work through",
+    "tap below to start",
+    "tap to start",
+    "begin this exercise",
+    "start this exercise",
+    "ready to start",
+    "ready to begin",
+)
+
+
 def already_invites_exercise_start(text: str | None) -> bool:
     """True when Toni already named the exercise and asked to start it."""
     lower = _normalize_offer_text(text or "")
-    return (
-        "would you like to start" in lower
-        or "let's work through" in lower
-        or "lets work through" in lower
-        or "tap below to start" in lower
-        or "tap to start" in lower
-    )
+    return any(marker in lower for marker in _START_INVITE_MARKERS)
 
 
 def with_offer_question(text: str | None, exercise) -> str:

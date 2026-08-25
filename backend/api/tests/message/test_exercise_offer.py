@@ -102,6 +102,33 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(response.json["exercise"]["id"], self.exercise.id)
 
     @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_offer_keeps_begin_this_exercise_copy_and_only_adds_chips(self):
+        mocked = GeneralResponse(
+            text=(
+                f"{self.exercise.title} is designed to help break the cycle of anxiety. "
+                "Would you like to begin this exercise now?"
+            ),
+            reasoning="Unified Protocol",
+            suggested_responses=["Tell me more"],
+        )
+
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, self.exercise
+            response = self._post_message("I've been worrying a lot")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.json["suggested_responses"],
+            Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES,
+        )
+        self.assertIn("Would you like to begin this exercise now?", response.json["text"])
+        self.assertNotIn(
+            "There's an exercise that fits what you're describing",
+            response.json["text"],
+        )
+        self.assertEqual(response.json["exercise"]["id"], self.exercise.id)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
     def test_yes_chip_saves_message_only_and_does_not_start_session(self):
         offer = self._create_offer()
 

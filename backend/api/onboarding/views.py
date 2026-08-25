@@ -8,7 +8,9 @@ from .serializers import OnboardingAnswersSerializer
 from .services import (
     build_flow_payload,
     build_status_payload,
+    complete_onboarding_with_placeholders,
     resolve_variant,
+    restart_onboarding,
     submit_flow_answers,
 )
 
@@ -128,6 +130,37 @@ class OnboardingAnswers(SmartAPIView):
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class OnboardingComplete(SmartAPIView):
+    """Testing shortcut: submit placeholder answers and mark the flow complete."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        try:
+            result = complete_onboarding_with_placeholders(consumer)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class OnboardingRestart(SmartAPIView):
+    """Testing shortcut: clear onboarding so the initial flow can be re-run."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(restart_onboarding(consumer), status=status.HTTP_200_OK)
 
     def has_permission(self, request, method):
         return method == "POST"
