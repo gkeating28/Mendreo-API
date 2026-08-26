@@ -77,7 +77,7 @@ class Agent(SmartModel):
                     is_step_complete=True,
                     text="Step Auto Skipped",
                     step_no=session.current_step_no,
-                    completion_result="Step Skipped",
+                    completion_result=AgentUtils.SKIP_COMPLETION_RESULT,
                     reasoning="Skip step triggered",
                     suggested_responses=[]
                 )
@@ -150,9 +150,13 @@ class Agent(SmartModel):
         if session.exercise_id and step_no > session.current_step_no and not is_step_complete:
             is_step_complete = True
 
-        if is_step_complete and not completion_result:
-            # todo handle this properly
-            completion_result = None
+        if session.exercise_id:
+            completion_result = AgentUtils.coerce_completion_result(
+                completion_result=completion_result,
+                is_step_complete=is_step_complete,
+                session=session,
+                user_message=user_message,
+            )
 
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
         agent_message = Message.objects.create(

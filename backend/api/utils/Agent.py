@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import traceback
 from datetime import timedelta
@@ -67,8 +68,113 @@ class ExerciseResponse(GeneralResponse):
         description="Required. Whether the current step has been completed successfully,user must have been confirm they are ready proceed to the next step if this is not the last step."
     )
     completion_result: Optional[str] = Field(
-        description="Optional. If a step has just been completed this should be the result based on the completion prompt for that steps. "
-                    "This must be specified if 'is_step_complete' is true"
+        description=(
+            "Required when is_step_complete is true. The user's captured answer for this "
+            "step (what COMPLETION_PROMPT asked them to produce), in their own words. "
+            "Quote the substance from earlier in the step if the latest message is only "
+            "yes/ok to proceed. Never N/A, None, unknown, or similar placeholders."
+        )
+    )
+
+
+SKIP_COMPLETION_RESULT = "Step Skipped"
+_COMPLETION_RESULT_MAX_LEN = 400
+
+_PLACEHOLDER_COMPLETION = re.compile(
+    r"^(n/?a\.?|n\.a\.|na|none|null|nil|-|unknown|not sure|nothing)$",
+    re.IGNORECASE,
+)
+_STEP_COMPLETED_PLACEHOLDER = re.compile(
+    r"^step\s+\d+(\s+of\s+\d+)?\s+completed\.?$",
+    re.IGNORECASE,
+)
+_PROCEED_CONFIRMATION = re.compile(
+    r"^(y|yes|yeah|yep|yup|ok|okay|k|sure|ready|continue|next|"
+    r"let'?s go|lets go|go ahead|please|do it|i('?m| am) ready|"
+    r"sounds good|alright|all right)[\s!.]*$",
+    re.IGNORECASE,
+)
+_QA_COMMAND_TEXTS = {
+    "qa skip step",
+    "qa asset image",
+    "qa asset post",
+    "qa asset file",
+    "qa exercise",
+}
+
+
+def is_usable_completion_result(value: Optional[str]) -> bool:
+    """True when the model (or a user turn) is a real captured answer, not a placeholder."""
+    text = (value or "").strip()
+    if not text:
+        return False
+    if text.lower() in _QA_COMMAND_TEXTS:
+        return False
+    if _PLACEHOLDER_COMPLETION.match(text):
+        return False
+    if _STEP_COMPLETED_PLACEHOLDER.match(text):
+        return False
+    if _PROCEED_CONFIRMATION.match(text):
+        return False
+    return True
+
+
+def pick_completion_result_from_texts(texts: List[str]) -> Optional[str]:
+    """Newest-first: first substantial user utterance, skipping yes/ok and placeholders."""
+    for raw in texts:
+        text = (raw or "").strip()
+        if not is_usable_completion_result(text):
+            continue
+        if len(text) > _COMPLETION_RESULT_MAX_LEN:
+            text = text[: _COMPLETION_RESULT_MAX_LEN - 3].rstrip() + "..."
+        return text
+    return None
+
+
+def consumer_texts_for_current_step(session, latest_user_message: Optional[Message] = None) -> List[str]:
+    """Consumer messages since the previous step completed (newest first)."""
+    last_complete_at = (
+        Message.objects.filter(session=session, is_step_complete=True)
+        .order_by("-created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    qs = Message.objects.filter(
+        session=session,
+        sender__consumer__isnull=False,
+    ).exclude(text="")
+    if last_complete_at:
+        qs = qs.filter(created_at__gt=last_complete_at)
+
+    texts: List[str] = []
+    if latest_user_message and latest_user_message.text:
+        texts.append(latest_user_message.text)
+
+    for text in qs.order_by("-created_at").values_list("text", flat=True)[:30]:
+        if text not in texts:
+            texts.append(text)
+    return texts
+
+
+def coerce_completion_result(
+    *,
+    completion_result: Optional[str],
+    is_step_complete: Optional[bool],
+    session,
+    user_message: Optional[Message] = None,
+) -> Optional[str]:
+    """Keep a real captured answer; if the model dumped N/A / Yes, recover it from the step."""
+    if not is_step_complete:
+        return None
+
+    text = (completion_result or "").strip() or None
+    if text == SKIP_COMPLETION_RESULT:
+        return SKIP_COMPLETION_RESULT
+    if is_usable_completion_result(text):
+        return text
+
+    return pick_completion_result_from_texts(
+        consumer_texts_for_current_step(session, user_message)
     )
 
 
