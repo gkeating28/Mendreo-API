@@ -254,7 +254,10 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         - Instead of asking the user if something makes sense in your text, instead use the 'suggested_responses' to offer the
           user an option to say they don't understand.
           
-        - suggested_responses must be fully self contained answers the user can reply to you with.
+        - suggested_responses are tap-to-send replies in the user's voice. They must be fully self-contained answers
+          the user can send back, never a question and never a shortened restatement of what you just asked.
+          If your text asks when they can work, chips are times ("Tonight", "This weekend"), not "When can you work?".
+          If you cannot offer real answers, omit suggested_responses.
           
         - Events are recorded in special messages in the format:
           [EVENT ....]

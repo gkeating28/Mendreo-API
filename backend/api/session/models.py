@@ -36,6 +36,10 @@ class Session(SmartModel):
 
     completed = models.BooleanField(null=True, default=False)
 
+    # Paused exercise run the user left to start a different attempt.
+    # Keep the row and its answers; do not surface it as in_progress.
+    abandoned = models.BooleanField(default=False)
+
     current_step_no = models.PositiveIntegerField(null=True)
 
     cached_prompt = models.TextField(null=True)
@@ -77,21 +81,34 @@ class Session(SmartModel):
         return self.pre_exercise_completed_at is not None
 
     @staticmethod
-    def get_or_create(consumer, exercise: Exercise = None):
+    def get_or_create(consumer, exercise: Exercise = None, force_new: bool = False):
         from ..participant.models import Participant
         from ..exercise.pre_exercise import should_run_pre_exercise_checkin
 
-        start, end = DateUtils.day_bounds()
+        if exercise:
+            paused = Session.objects.filter(
+                consumer=consumer,
+                exercise=exercise,
+                completed=False,
+                abandoned=False,
+            )
+            if force_new:
+                paused.update(abandoned=True)
+            else:
+                existing = paused.order_by("-updated_at", "-created_at").first()
+                if existing:
+                    return existing
+        else:
+            start, end = DateUtils.day_bounds()
+            session = Session.objects.filter(
+                consumer=consumer,
+                exercise=None,
+                created_at__gte=start,
+                created_at__lt=end,
+            ).order_by("-created_at").first()
 
-        session = Session.objects.filter(
-            consumer=consumer,
-            exercise=exercise,
-            created_at__gte=start,
-            created_at__lt=end,
-        ).order_by("-created_at").first()
-
-        if session and not session.completed:
-            return session
+            if session and not session.completed:
+                return session
 
         completed = None
         total_steps_no = None
@@ -103,7 +120,7 @@ class Session(SmartModel):
             total_steps_no = exercise.steps_no
             run_pre_exercise = should_run_pre_exercise_checkin(consumer, exercise)
             # Cadence: every repeat (incl. same-day second runs after a completed session).
-            # Resume of an incomplete same-day session is handled above via get_or_create.
+            # Resume of an incomplete paused run is handled above via get_or_create.
             current_step_no = 0 if run_pre_exercise else 1
 
         session = Session.objects.create(

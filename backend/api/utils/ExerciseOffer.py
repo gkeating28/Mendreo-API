@@ -64,9 +64,14 @@ def with_offer_question(text: str | None, exercise) -> str:
 
 def format_agent_offer(response, exercise, session) -> tuple[list | None, str]:
     """Return (suggested_responses, text) for the persisted agent message."""
+    from .SuggestedResponses import sanitize_suggested_responses
+
     chips = force_offer_suggested_responses(exercise, session)
     if chips is None:
-        return response.suggested_responses, response.text
+        return (
+            sanitize_suggested_responses(response.suggested_responses, response.text),
+            response.text,
+        )
     return chips, with_offer_question(response.text, exercise)
 
 
@@ -113,6 +118,7 @@ def latest_exercise_session(consumer_id, exercise_id) -> Session | None:
         Session.objects.filter(
             consumer_id=consumer_id,
             exercise_id=exercise_id,
+            abandoned=False,
         )
         .order_by("-created_at")
         .only("id", "completed", "current_step_no", "total_steps_no")

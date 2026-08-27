@@ -128,8 +128,11 @@ class Start(SmartAPIView):
             exercise = Exercise.objects.get(id=exercise_id)
 
         consumer = self.get_consumer_from_request()
+        force_new = bool(QueryParams.get_bool(request, "restart", False))
 
-        session = Session.get_or_create(consumer=consumer, exercise=exercise)
+        session = Session.get_or_create(
+            consumer=consumer, exercise=exercise, force_new=force_new
+        )
         session = SessionDetailSerializer.optimise(
             Session.objects.filter(id=session.id)
         ).first()

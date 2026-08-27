@@ -27,6 +27,7 @@ from ..exercise_summary.models import Exercise, ExerciseSummary
 from ..session.serializers import Session, SessionDetailSerializer
 
 from ..utils import DateUtils, Constants, S3 as S3Utils
+from .SuggestedResponses import sanitize_suggested_responses
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
 STATIC_FILES_DIR = 'api/utils/files'
@@ -50,7 +51,15 @@ class GeneralResponse(BaseModel):
       description="""Required. A text based response to your clients question""",
     )
     suggested_responses: Optional[List] = Field(
-        description="""Optional. Suggest up to 3 client responses to your message where appropriate, each must be a string between 1 and 4 words."""
+        description=(
+            "Optional. Up to 3 tap-to-send replies in the client's own voice, each 1–4 words. "
+            "These are answers the client would send back, never your question restated. "
+            "If `text` asks something, chips must answer it "
+            '(e.g. text: "When would evenings or weekends work?" → ["Tonight", "This weekend"]). '
+            'Also allowed: "Tell me more", "I don\'t understand". '
+            'Never use a question or prompt label ("When can you work?", "How are you feeling?"). '
+            "Omit this field rather than filling it with questions."
+        )
     )
     reasoning: str = Field(
       description="""Required. Why you chose this response include clear references""",
@@ -354,6 +363,11 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         **usage,
         'response_time_in_sec': round(timer_end - timer_start, 3)
     }
+
+    response_data.suggested_responses = sanitize_suggested_responses(
+        response_data.suggested_responses,
+        response_data.text,
+    )
 
     return response_data, usage, dependencies.asset, dependencies.matched_exercise
 
