@@ -85,6 +85,19 @@ class ResolveStepProgressTests(SimpleTestCase):
         self.assertEqual(step, 2)
         self.assertTrue(complete)
 
+    def test_forces_complete_after_gate_and_yes_when_model_forgets_the_flag(self):
+        step, complete = resolve_step_progress(
+            current_step_no=1,
+            total_steps_no=3,
+            tagged_step_no=2,
+            is_step_complete=False,
+            agent_text="Let's name the thinking trap that showed up.",
+            user_text="Yes, ready to continue",
+            last_agent_text="Are you ready to move on to the next step?",
+        )
+        self.assertEqual(step, 1)
+        self.assertTrue(complete)
+
     def test_last_step_does_not_need_a_gate(self):
         _, complete = resolve_step_progress(
             current_step_no=3,

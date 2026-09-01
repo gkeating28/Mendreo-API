@@ -100,15 +100,19 @@ def resolve_step_progress(
         return current, True
 
     complete = bool(is_step_complete)
+    gated = is_advance_gate_text(last_agent_text) and is_progress_confirm_text(
+        user_text
+    )
+
+    # User confirmed a dedicated next-step ask. Close this step even if the
+    # model forgot is_step_complete and started narrating the next step.
+    if gated and (not total or current < total):
+        complete = True
 
     if complete and is_advance_gate_text(agent_text):
         complete = False
 
-    if complete and total and current < total:
-        if not (
-            is_advance_gate_text(last_agent_text)
-            and is_progress_confirm_text(user_text)
-        ):
-            complete = False
+    if complete and total and current < total and not gated:
+        complete = False
 
     return current, complete
