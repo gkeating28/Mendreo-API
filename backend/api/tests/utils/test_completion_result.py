@@ -30,6 +30,10 @@ class CompletionResultTextTests(SimpleTestCase):
             "okay",
             "Step 1 completed.",
             "qa skip step",
+            "User ready for Step 3.",
+            "User ready for Step 3",
+            "The user identified all-or-nothing thinking",
+            "User provided two strong responses.",
         ]:
             self.assertFalse(is_usable_completion_result(value), msg=repr(value))
 

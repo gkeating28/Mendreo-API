@@ -13,6 +13,7 @@ from .services import (
     restart_onboarding,
     submit_flow_answers,
 )
+from ..knowledge.services import get_knowledge_profile
 
 from ..question.serializers import (
     Question,
@@ -133,6 +134,22 @@ class OnboardingAnswers(SmartAPIView):
 
     def has_permission(self, request, method):
         return method == "POST"
+
+
+class OnboardingKnowledge(SmartAPIView):
+    """GET /onboarding/knowledge — this consumer's stored onboarding + check-in answers."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def get(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(
+            get_knowledge_profile(consumer, obscure_pii=False, active_fields_only=True),
+            status=status.HTTP_200_OK,
+        )
+
+    def has_permission(self, request, method):
+        return method == "GET"
 
 
 class OnboardingComplete(SmartAPIView):

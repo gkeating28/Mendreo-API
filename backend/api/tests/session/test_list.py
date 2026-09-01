@@ -49,6 +49,24 @@ class ListTest(BaseListTest):
             user=self.consumer_one.user
         )
 
+    def test_consumer_general_false_returns_active_exercise_sessions(self):
+        exercise = General.create_exercise()
+        finished = General.create_session(consumer=self.consumer_one, exercise=exercise)
+        finished.completed = True
+        finished.save(update_fields=["completed"])
+        abandoned = General.create_session(consumer=self.consumer_one, exercise=exercise)
+        abandoned.abandoned = True
+        abandoned.save(update_fields=["abandoned"])
+        active = General.create_session(consumer=self.consumer_one, exercise=exercise)
+
+        self.valid_list(
+            query_params_data={"general": "false"},
+            access_token=self.consumer_one_access_token,
+            results_no=1,
+            results_match_data=[{"id": active.id}],
+            user=self.consumer_one.user,
+        )
+
     def test_consumer_general_filter_excludes_exercise_sessions(self):
         exercise = General.create_exercise()
         General.create_session(consumer=self.consumer_one, exercise=exercise)

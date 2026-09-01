@@ -51,6 +51,8 @@ class Session(SmartModel):
     # Pre-Exercise Prompt check-in (V2). During check-in, current_step_no is 0.
     pre_exercise_prompt_summary = models.TextField(null=True, blank=True)
     pre_exercise_completed_at = models.DateTimeField(null=True, blank=True)
+    # When the exercise run itself finished (heatmap / Progress activity day).
+    completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         indexes = [
@@ -79,6 +81,15 @@ class Session(SmartModel):
     def had_pre_exercise_checkin(self) -> bool:
         """True if a pre-exercise check-in completed for this session."""
         return self.pre_exercise_completed_at is not None
+
+    def mark_completed(self, when=None):
+        """Mark the exercise run finished and stamp completed_at once."""
+        from django.utils import timezone
+
+        self.completed = True
+        if self.completed_at is None:
+            self.completed_at = when or timezone.now()
+        return self
 
     @staticmethod
     def get_or_create(consumer, exercise: Exercise = None, force_new: bool = False):

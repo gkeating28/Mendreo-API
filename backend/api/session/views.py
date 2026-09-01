@@ -58,6 +58,13 @@ class List(SmartPaginationAPIView):
             queryset = queryset.filter(exercise__isnull=True)
             self.paginator.ordering = ["-updated_at", "-id"]
             queryset = queryset.order_by("-updated_at", "-id")
+        elif general is False:
+            # Library resume dialog: active exercise runs only, most recently updated first.
+            queryset = queryset.filter(exercise__isnull=False, abandoned=False).exclude(
+                completed=True
+            )
+            self.paginator.ordering = ["-updated_at", "-id"]
+            queryset = queryset.order_by("-updated_at", "-id")
 
         if risk_level:
             queryset = queryset.filter(risk_level=risk_level)

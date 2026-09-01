@@ -124,6 +124,27 @@ class OnboardingFlowTests(BaseTest):
         mood = KnowledgeEntry.current_for(self.consumer_one, self.mood)
         self.assertEqual(mood.value, "7")
         self.assertEqual(mood.source, Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION)
+        written = {row["field_key"]: row["value"] for row in response.json["entries"]}
+        self.assertEqual(written["mood"], "7")
+        self.assertEqual(written["sleep_quality"], "Okay")
+
+        profile = self._get_path("/onboarding/knowledge", self.consumer_one_access_token)
+        self.assertEqual(profile.status_code, status.HTTP_200_OK, profile.json)
+        fields = [
+            row
+            for category in profile.json.get("categories", [])
+            for row in category.get("fields", [])
+        ]
+        if not fields:
+            fields = profile.json.get("fields") or []
+        by_key = {}
+        for row in fields:
+            nested = row.get("field") if isinstance(row.get("field"), dict) else row
+            key = nested.get("key") if isinstance(nested, dict) else None
+            if key:
+                by_key[key] = row.get("value")
+        self.assertEqual(by_key.get("mood"), "7")
+        self.assertEqual(by_key.get("sleep_quality"), "Okay")
 
     def test_return_flow_resolves_prior_knowledge_and_is_discardable(self):
         self.consumer_one.onboarded = True

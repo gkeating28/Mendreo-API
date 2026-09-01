@@ -309,6 +309,19 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
         "complete": complete,
         "entries_written": len(written),
         "entry_ids": [e.id for e in written],
+        "entries": [
+            {
+                "id": entry.id,
+                "field_id": entry.field_id,
+                "field_key": entry.field.key if entry.field_id else None,
+                "field_label": entry.field.label if entry.field_id else None,
+                "knowledge_question_id": entry.knowledge_question_id,
+                "value": entry.value,
+                "source": entry.source,
+                "created_at": entry.created_at,
+            }
+            for entry in written
+        ],
         "status": build_status_payload(consumer),
         "closing_action": (
             "enter_mendreo"

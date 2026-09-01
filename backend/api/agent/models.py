@@ -137,6 +137,7 @@ class Agent(SmartModel):
             response, usage, asset, exercise = AgentUtils.get_response(consumer_message=user_message, session=session)
 
         from ..utils.ExerciseOffer import format_agent_offer
+        from ..utils.StepProgress import last_agent_text_for_session, resolve_step_progress
 
         suggested_responses, text = format_agent_offer(response, exercise, session)
 
@@ -147,8 +148,17 @@ class Agent(SmartModel):
         if step_no == 0 and session.exercise_id:
             step_no = 1
 
-        if session.exercise_id and step_no > session.current_step_no and not is_step_complete:
-            is_step_complete = True
+        if session.exercise_id:
+            step_no, is_step_complete = resolve_step_progress(
+                current_step_no=session.current_step_no or 1,
+                total_steps_no=session.total_steps_no or 0,
+                tagged_step_no=step_no,
+                is_step_complete=bool(is_step_complete),
+                agent_text=text or "",
+                user_text=user_message.text or "",
+                last_agent_text=last_agent_text_for_session(session),
+                is_skip=user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP,
+            )
 
         if session.exercise_id:
             completion_result = AgentUtils.coerce_completion_result(

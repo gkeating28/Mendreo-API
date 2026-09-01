@@ -77,7 +77,7 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                     if session.current_step_no < session.total_steps_no:
                         session.current_step_no += 1
                     else:
-                        session.completed = True
+                        session.mark_completed()
                         Exercise.all_objects.filter(id=session.exercise_id).update(
                             completions_no=F("completions_no") + 1
                         )
@@ -109,6 +109,7 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                 "consumer_messages_no",
                 "current_step_no",
                 "completed",
+                "completed_at",
                 "updated_at",
             ]
         )

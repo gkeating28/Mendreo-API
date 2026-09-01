@@ -48,7 +48,7 @@ class Dependencies:
 
 class GeneralResponse(BaseModel):
     text: str = Field(
-      description="""Required. A text based response to your clients question""",
+      description="""Required. A text based response to your client's question. Speak to the client in second person. Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'.""",
     )
     suggested_responses: Optional[List] = Field(
         description=(
@@ -68,20 +68,27 @@ class GeneralResponse(BaseModel):
 
 
 class ExerciseResponse(GeneralResponse):
-    step_no: int = Field(
-        ...,
-        description="Required. The current step number in the exercise (1-based index)."
-    )
     is_step_complete: bool = Field(
         ...,
-        description="Required. Whether the current step has been completed successfully,user must have been confirm they are ready proceed to the next step if this is not the last step."
+        description=(
+            "Required. True only after this step's work is done AND (if this is not the last "
+            "step) the user has confirmed a dedicated 'ready to progress to the next step?' "
+            "ask. Never true in the same turn as that ask. Never true just because you "
+            "incremented step_no. 'Move on' / 'ready to proceed' inside the step instructions "
+            "means continue THIS step."
+        )
+    )
+    step_no: int = Field(
+        ...,
+        description="Required. The current step number (1-based). Stay on the live step until is_step_complete is true."
     )
     completion_result: Optional[str] = Field(
         description=(
             "Required when is_step_complete is true. The user's captured answer for this "
             "step (what COMPLETION_PROMPT asked them to produce), in their own words. "
             "Quote the substance from earlier in the step if the latest message is only "
-            "yes/ok to proceed. Never N/A, None, unknown, or similar placeholders."
+            "yes/ok to proceed. Never N/A, None, unknown, status notes like "
+            "'User ready for Step 3', or third-person facilitator copy about 'the user'."
         )
     )
 
@@ -96,6 +103,15 @@ _PLACEHOLDER_COMPLETION = re.compile(
 _STEP_COMPLETED_PLACEHOLDER = re.compile(
     r"^step\s+\d+(\s+of\s+\d+)?\s+completed\.?$",
     re.IGNORECASE,
+)
+_FACILITATOR_COMPLETION = re.compile(
+    r"user ready for step|"
+    r"ready for step\s+\d+|"
+    r"user provided|"
+    r"\bthe user\b|"
+    r"\bhelp the user\b|"
+    r"^user\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _PROCEED_CONFIRMATION = re.compile(
     r"^(y|yes|yeah|yep|yup|ok|okay|k|sure|ready|continue|next|"
@@ -122,6 +138,8 @@ def is_usable_completion_result(value: Optional[str]) -> bool:
     if _PLACEHOLDER_COMPLETION.match(text):
         return False
     if _STEP_COMPLETED_PLACEHOLDER.match(text):
+        return False
+    if _FACILITATOR_COMPLETION.search(text):
         return False
     if _PROCEED_CONFIRMATION.match(text):
         return False
@@ -693,9 +711,13 @@ def _get_formatted_exercise_steps_text(exercise):
         completion_criteria = step.completion_criteria
         if i < steps_no - 1:
             completion_criteria += (
-                "\n\nYou also must also have:"
-                " - Explicitly asked the user if they are ready to move onto the next step"
-                " - Received a confirmation from the user to progress to the next step"
+                "\n\nAfter this step's work is finished, send a SEPARATE message whose ONLY "
+                "question is whether they are ready for the next step "
+                '(e.g. "Are you ready to progress to the next step?"). '
+                "Do not set is_step_complete in that message. "
+                "Only set is_step_complete after they confirm (yes/ok). "
+                "'Move on' or 'ready to proceed' in this step's instructions means continue "
+                "THIS step — it is not permission to complete it."
             )
         steps += Constants.PROMPT_STEP.format(
             step_title=step.title,

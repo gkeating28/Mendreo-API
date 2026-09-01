@@ -6,6 +6,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
+from django.db.models import Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -19,12 +21,12 @@ from .models import UserObservation
 def parse_date_range(request) -> tuple[date, date]:
     """
     Parse ?from=&to= ISO dates. Default = current calendar week (Mon–Sun)
-    in Django TIME_ZONE. Reject inverted ranges and spans > ~12 months.
+    in Ireland (Europe/Dublin). Reject inverted ranges and spans > ~12 months.
     """
     from_param = request.query_params.get("from") or request.query_params.get("from_date")
     to_param = request.query_params.get("to") or request.query_params.get("to_date")
 
-    today = DateUtils.local_date()
+    today = DateUtils.progress_calendar_date()
     if from_param or to_param:
         if not from_param or not to_param:
             raise serializers.ValidationError(
@@ -61,17 +63,69 @@ def _daterange(start: date, end: date):
 
 
 def _range_bounds(start: date, end: date):
-    range_start, _ = DateUtils.day_bounds(start)
-    _, range_end = DateUtils.day_bounds(end)
-    return range_start, range_end
+    return DateUtils.progress_day_bounds(start, end)
+
+
+def _mood_slider_questions():
+    sliders = list(
+        KnowledgeQuestion.objects.filter(
+            active=True,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER,
+        )
+        .filter(
+            Q(flows__contains=[Constants.KNOWLEDGE_FLOW_RETURN])
+            | Q(flows__contains=[Constants.KNOWLEDGE_FLOW_INITIAL])
+        )
+        .select_related("target_field")
+    )
+    sliders.sort(
+        key=lambda question: (
+            question.order_for_flow(Constants.KNOWLEDGE_FLOW_RETURN),
+            question.created_at,
+        )
+    )
+    return sliders
+
+
+def _looks_like_mood_question(question) -> bool:
+    field = question.target_field
+    key = (getattr(field, "key", None) or "").lower()
+    if key == Constants.PROGRESS_MOOD_FIELD_KEY or "mood" in key:
+        return True
+    prompt = (question.prompt or "").lower()
+    return "mood" in prompt or "feeling" in prompt or "how are you" in prompt
 
 
 def _mood_field():
-    return KnowledgeField.objects.filter(key=Constants.PROGRESS_MOOD_FIELD_KEY).first()
+    sliders = _mood_slider_questions()
+    named = KnowledgeField.objects.filter(key=Constants.PROGRESS_MOOD_FIELD_KEY).first()
+    if named and any(question.target_field_id == named.id for question in sliders):
+        return named
+    for question in sliders:
+        if _looks_like_mood_question(question) and question.target_field_id:
+            return question.target_field
+    # Return-flow mood is often the second knowledge question when both are sliders.
+    if len(sliders) >= 2 and sliders[1].target_field_id:
+        return sliders[1].target_field
+    slider = sliders[0] if sliders else None
+    return slider.target_field if slider else None
 
 
 def _stress_field():
     return KnowledgeField.objects.filter(key=Constants.PROGRESS_STRESS_FIELD_KEY).first()
+
+
+def _parse_slider_value(raw):
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            return None
+    if value < Constants.SLIDER_MIN or value > Constants.SLIDER_MAX:
+        return None
+    return value
 
 
 def _slider_value_labels(field) -> list[str]:
@@ -109,16 +163,18 @@ def get_mood_progress(consumer, start: date, end: date) -> dict:
         )
         by_day = {}
         for entry in entries:
-            day = DateUtils.local_date(entry.created_at)
-            try:
-                value = int(entry.value)
-            except (TypeError, ValueError):
-                continue
-            if value < Constants.SLIDER_MIN or value > Constants.SLIDER_MAX:
+            day = DateUtils.progress_calendar_date(entry.created_at)
+            value = _parse_slider_value(entry.value)
+            if value is None:
                 continue
             label = ""
             if 0 <= value < len(labels):
                 label = labels[value] or ""
+            existing = by_day.get(day)
+            # A later empty/zero write (wrong field, default slider) must not
+            # wipe a real Toni check-in from the same calendar day.
+            if existing and value == 0 and existing["value"] > 0:
+                continue
             by_day[day] = {
                 "date": day.isoformat(),
                 "value": value,
@@ -127,24 +183,25 @@ def get_mood_progress(consumer, start: date, end: date) -> dict:
             }
         points = [by_day[d] for d in sorted(by_day.keys())]
 
-    check_in_count = len(points)
+    check_in_days = sorted(_check_in_days(consumer, start, end))
+    check_in_count = len(check_in_days)
     sparse = check_in_count < 2
     empty = check_in_count == 0
 
     summary = None
     if check_in_count > 0:
-        values = [p["value"] for p in points]
-        average = round(sum(values) / len(values), 2)
-
-        period_days = (end - start).days + 1
-        prev_end = start - timedelta(days=1)
-        prev_start = prev_end - timedelta(days=period_days - 1)
-        prev_points = _mood_points_only(consumer, field, prev_start, prev_end, labels)
-        prev_avg = None
-        if prev_points:
-            prev_avg = sum(p["value"] for p in prev_points) / len(prev_points)
-        delta = None if prev_avg is None else round(average - prev_avg, 2)
-
+        average = None
+        delta = None
+        if points:
+            values = [p["value"] for p in points]
+            average = round(sum(values) / len(values), 2)
+            period_days = (end - start).days + 1
+            prev_end = start - timedelta(days=1)
+            prev_start = prev_end - timedelta(days=period_days - 1)
+            prev_points = _mood_points_only(consumer, field, prev_start, prev_end, labels)
+            if prev_points:
+                prev_avg = sum(p["value"] for p in prev_points) / len(prev_points)
+                delta = round(average - prev_avg, 2)
         summary = {
             "average": average,
             "delta": delta,
@@ -156,6 +213,7 @@ def get_mood_progress(consumer, start: date, end: date) -> dict:
         "to": end.isoformat(),
         "points": points,
         "summary": summary,
+        "check_in_dates": [day.isoformat() for day in check_in_days],
         "empty": empty,
         "sparse": sparse,
         "return_onboarding_cta": sparse,
@@ -177,16 +235,36 @@ def _mood_points_only(consumer, field, start, end, labels):
     )
     by_day = {}
     for entry in entries:
-        day = DateUtils.local_date(entry.created_at)
-        try:
-            value = int(entry.value)
-        except (TypeError, ValueError):
+        day = DateUtils.progress_calendar_date(entry.created_at)
+        value = _parse_slider_value(entry.value)
+        if value is None:
             continue
         label = ""
         if 0 <= value < len(labels):
             label = labels[value] or ""
         by_day[day] = {"date": day.isoformat(), "value": value, "label": label}
     return [by_day[d] for d in sorted(by_day.keys())]
+
+
+def _session_activity_minutes(session) -> int:
+    """
+    Minutes the person actually spent, not the catalogue estimate.
+
+    Same clock as the completion screen: last message − start, then
+    completed_at. Never fall back to exercise.average_duration (step
+    defaults, often ~30 min) — a two-minute run must stay two minutes.
+    Cap overnight / paused runs so one bar cannot overflow the chart.
+    """
+    start = session.created_at
+    last_message = getattr(session, "last_message", None)
+    end = getattr(last_message, "created_at", None) or session.completed_at or session.updated_at
+    if not start or not end:
+        return 1
+    seconds = (end - start).total_seconds()
+    if seconds <= 0:
+        return 1
+    actual = max(1, round(seconds / 60))
+    return min(actual, Constants.PROGRESS_ACTIVITY_MAX_MINUTES)
 
 
 def get_exercises_progress(consumer, start: date, end: date) -> dict:
@@ -196,20 +274,25 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
             consumer=consumer,
             completed=True,
             exercise__isnull=False,
-            created_at__gte=range_start,
-            created_at__lt=range_end,
         )
-        .select_related("exercise")
-        .order_by("created_at")
+        .annotate(
+            activity_at=Coalesce("completed_at", "updated_at", "created_at"),
+        )
+        .filter(activity_at__gte=range_start, activity_at__lt=range_end)
+        .select_related("exercise", "last_message")
+        .order_by("activity_at")
     )
 
     completed_days = set()
+    minutes_by_day: dict[date, int] = {}
     by_exercise = {}
     total = 0
     for session in sessions:
         total += 1
-        day = DateUtils.local_date(session.created_at)
+        when = session.activity_at
+        day = DateUtils.progress_calendar_date(when)
         completed_days.add(day)
+        minutes_by_day[day] = minutes_by_day.get(day, 0) + _session_activity_minutes(session)
         exercise = session.exercise
         row = by_exercise.get(exercise.id)
         if not row:
@@ -220,12 +303,12 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
                 "icon_svg": exercise.icon_svg,
                 "icon_background_color": exercise.icon_background_color,
                 "completions": 0,
-                "last_completed_at": session.created_at,
+                "last_completed_at": when,
             }
             by_exercise[exercise.id] = row
         row["completions"] += 1
-        if session.created_at > row["last_completed_at"]:
-            row["last_completed_at"] = session.created_at
+        if when > row["last_completed_at"]:
+            row["last_completed_at"] = when
 
     breakdown = sorted(
         by_exercise.values(),
@@ -235,7 +318,11 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
         row["last_completed_at"] = row["last_completed_at"].isoformat()
 
     heatmap = [
-        {"date": d.isoformat(), "completed": d in completed_days}
+        {
+            "date": d.isoformat(),
+            "completed": d in completed_days,
+            "minutes": minutes_by_day.get(d, 0),
+        }
         for d in _daterange(start, end)
     ]
 
@@ -288,7 +375,7 @@ def _aggregate_stress_points(consumer, start: date, end: date) -> list[dict]:
     counts = defaultdict(int)
     recent_dates = defaultdict(list)
     for entry in entries:
-        day = DateUtils.local_date(entry.created_at).isoformat()
+        day = DateUtils.progress_calendar_date(entry.created_at).isoformat()
         for part in [p.strip() for p in (entry.value or "").split(",") if p.strip()]:
             counts[part] += 1
             if day not in recent_dates[part]:
@@ -308,35 +395,42 @@ def _aggregate_stress_points(consumer, start: date, end: date) -> list[dict]:
 
 
 def get_streaks(consumer) -> dict:
-    mood_days = _activity_days_mood(consumer)
-    exercise_days = _activity_days_exercise(consumer)
     return {
-        "check_in": _streak_stats(mood_days),
-        "exercise": _streak_stats(exercise_days),
+        "check_in": _streak_stats(_check_in_days(consumer)),
+        "exercise": _streak_stats(_activity_days_exercise(consumer)),
         "copy": Constants.PROGRESS_STREAK_COPY,
     }
 
 
-def _activity_days_mood(consumer) -> set[date]:
-    field = _mood_field()
-    if not field:
-        return set()
+def _check_in_days(consumer, start: Optional[date] = None, end: Optional[date] = None) -> set[date]:
+    """Days the consumer completed a Toni/onboarding check-in (any knowledge answer)."""
+    qs = KnowledgeEntry.objects.filter(consumer=consumer).exclude(
+        source__in=[
+            Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN,
+            Constants.KNOWLEDGE_ENTRY_SOURCE_AI,
+        ]
+    )
+    if start is not None and end is not None:
+        range_start, range_end = _range_bounds(start, end)
+        qs = qs.filter(created_at__gte=range_start, created_at__lt=range_end)
     days = set()
-    for created_at in KnowledgeEntry.objects.filter(
-        consumer=consumer, field=field
-    ).values_list("created_at", flat=True):
-        days.add(DateUtils.local_date(created_at))
+    for created_at in qs.values_list("created_at", flat=True):
+        days.add(DateUtils.progress_calendar_date(created_at))
     return days
+
+
+def _activity_days_mood(consumer) -> set[date]:
+    return _check_in_days(consumer)
 
 
 def _activity_days_exercise(consumer) -> set[date]:
     days = set()
-    for created_at in Session.objects.filter(
+    for completed_at, updated_at, created_at in Session.objects.filter(
         consumer=consumer,
         completed=True,
         exercise__isnull=False,
-    ).values_list("created_at", flat=True):
-        days.add(DateUtils.local_date(created_at))
+    ).values_list("completed_at", "updated_at", "created_at"):
+        days.add(DateUtils.progress_calendar_date(completed_at or updated_at or created_at))
     return days
 
 
@@ -354,7 +448,7 @@ def _streak_stats(days: set[date]) -> dict:
         else:
             run = 1
 
-    today = DateUtils.local_date()
+    today = DateUtils.progress_calendar_date()
     current = 0
     cursor = today
     # Allow streak to still count if last activity was yesterday (day not over)

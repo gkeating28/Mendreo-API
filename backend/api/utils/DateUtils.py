@@ -1,8 +1,13 @@
 import calendar
 import datetime
 
+from zoneinfo import ZoneInfo
+
 from django.utils import timezone
 import dateutil.parser
+
+# Progress board calendar days (spec 4.5.1) — Ireland, not Django TIME_ZONE (UTC).
+PROGRESS_TZ = ZoneInfo("Europe/Dublin")
 
 
 def greater_than(date, days_ago):
@@ -159,3 +164,19 @@ def workday_before(date_):
 
 def date_in_past(date):
     return date < today().date()
+
+
+def progress_calendar_date(dt=None):
+    """Calendar date in Ireland for Progress heatmap / mood day buckets."""
+    if dt is None:
+        dt = timezone.now()
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.utc)
+    return dt.astimezone(PROGRESS_TZ).date()
+
+
+def progress_day_bounds(start, end):
+    """Inclusive start/end dates as Ireland-local [start 00:00, end+1 00:00)."""
+    range_start = datetime.datetime.combine(start, datetime.time.min, tzinfo=PROGRESS_TZ)
+    range_end = datetime.datetime.combine(end, datetime.time.min, tzinfo=PROGRESS_TZ) + datetime.timedelta(days=1)
+    return range_start, range_end

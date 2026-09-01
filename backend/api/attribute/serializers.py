@@ -41,8 +41,8 @@ class AttributeCreateSerializer(CreateModelSerializer):
         if question.can_complete_exercise and value.lower() == question.complete_on_value.lower():
             session = question.session
             if session and not session.completed:
-                session.completed = True
-                session.save()
+                session.mark_completed()
+                session.save(update_fields=["completed", "completed_at", "updated_at"])
 
         if not consumer.onboarded:
             consumer.update_onboarding_status()

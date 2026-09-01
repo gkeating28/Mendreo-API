@@ -418,6 +418,9 @@ PROGRESS_MOOD_FIELD_KEY = "mood"
 PROGRESS_STRESS_FIELD_KEY = "stress_points"
 PROGRESS_MAX_RANGE_DAYS = 366
 PROGRESS_STREAK_COPY = "Consistency matters more than perfection"
+# Wall-clock session length can be hours if a run was left open. Cap the
+# Progress activity bar so one completion cannot overflow the chart.
+PROGRESS_ACTIVITY_MAX_MINUTES = 90
 
 # Dedicated mood check-ins (MoodEntry): 1–5 scale with fixed labels.
 MOOD_SCORE_MIN = 1
