@@ -246,24 +246,51 @@ def _mood_points_only(consumer, field, start, end, labels):
     return [by_day[d] for d in sorted(by_day.keys())]
 
 
+def _session_activity_stamps(session, start, end) -> list:
+    stamps = [start]
+    cached = getattr(session, "_prefetched_objects_cache", None) or {}
+    if "messages" in cached:
+        stamps.extend(message.created_at for message in session.messages.all() if message.created_at)
+    else:
+        stamps.extend(session.messages.order_by("created_at").values_list("created_at", flat=True))
+    stamps.append(end)
+    return sorted(ts for ts in stamps if ts is not None)
+
+
 def _session_activity_minutes(session) -> int:
     """
     Minutes the person actually spent, not the catalogue estimate.
 
-    Same clock as the completion screen: last message − start, then
-    completed_at. Never fall back to exercise.average_duration (step
-    defaults, often ~30 min) — a two-minute run must stay two minutes.
-    Cap overnight / paused runs so one bar cannot overflow the chart.
+    Sum gaps between session start, messages, and completed_at. Skip idle
+    pauses longer than PROGRESS_ACTIVITY_IDLE_GAP_MINUTES so a resumed run
+    does not fill the Progress bar. Never use exercise.average_duration.
     """
     start = session.created_at
     last_message = getattr(session, "last_message", None)
     end = getattr(last_message, "created_at", None) or session.completed_at or session.updated_at
     if not start or not end:
         return 1
-    seconds = (end - start).total_seconds()
-    if seconds <= 0:
-        return 1
-    actual = max(1, round(seconds / 60))
+
+    max_idle = Constants.PROGRESS_ACTIVITY_IDLE_GAP_MINUTES * 60
+    total = 0.0
+    prev = None
+    for ts in _session_activity_stamps(session, start, end):
+        if prev is not None:
+            gap = (ts - prev).total_seconds()
+            if 0 < gap <= max_idle:
+                total += gap
+        prev = ts
+
+    if total <= 0:
+        seconds = (end - start).total_seconds()
+        if seconds <= 0:
+            return 1
+        if seconds <= max_idle:
+            total = seconds
+        else:
+            return 1
+
+    actual = max(1, round(total / 60))
     return min(actual, Constants.PROGRESS_ACTIVITY_MAX_MINUTES)
 
 
@@ -280,6 +307,7 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
         )
         .filter(activity_at__gte=range_start, activity_at__lt=range_end)
         .select_related("exercise", "last_message")
+        .prefetch_related("messages")
         .order_by("activity_at")
     )
 

@@ -221,6 +221,46 @@ class ProgressApiTests(BaseTest):
         today_cell = next(cell for cell in response.json["heatmap"] if cell["date"] == today.isoformat())
         self.assertEqual(today_cell["minutes"], 8)
 
+    def test_exercises_heatmap_ignores_idle_pause_gaps(self):
+        from ...message.models import Message
+        from ...participant.models import Participant
+
+        exercise = General.create_exercise()
+        today = DateUtils.progress_calendar_date()
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            completed=True,
+            current_step_no=exercise.steps_no,
+            total_steps_no=exercise.steps_no,
+        )
+        consumer_pt, agent_pt = Participant.create_participants(session)
+        started = timezone.now() - timedelta(days=2)
+        active_start = timezone.now() - timedelta(minutes=8)
+        finished = timezone.now()
+        first = Message.objects.create(session=session, sender=consumer_pt, text="start")
+        last = Message.objects.create(session=session, sender=agent_pt, text="done")
+        Message.objects.filter(id=first.id).update(created_at=active_start)
+        Message.objects.filter(id=last.id).update(created_at=finished)
+        Session.objects.filter(id=session.id).update(
+            created_at=started,
+            completed_at=finished,
+            updated_at=finished,
+            last_message_id=last.id,
+        )
+
+        response = self._get_progress(
+            "/progress/exercises",
+            {
+                "from": (today - timedelta(days=3)).isoformat(),
+                "to": today.isoformat(),
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        today_cell = next(cell for cell in response.json["heatmap"] if cell["date"] == today.isoformat())
+        self.assertEqual(today_cell["minutes"], 8)
+        self.assertLess(today_cell["minutes"], Constants.PROGRESS_ACTIVITY_MAX_MINUTES)
+
     def test_exercises_heatmap_does_not_use_catalogue_when_elapsed_is_missing(self):
         exercise = General.create_exercise()
         Exercise.objects.filter(id=exercise.id).update(average_duration=1800)

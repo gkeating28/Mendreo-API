@@ -421,6 +421,8 @@ PROGRESS_STREAK_COPY = "Consistency matters more than perfection"
 # Wall-clock session length can be hours if a run was left open. Cap the
 # Progress activity bar so one completion cannot overflow the chart.
 PROGRESS_ACTIVITY_MAX_MINUTES = 90
+# Gaps longer than this between session timestamps are idle/pause, not practice.
+PROGRESS_ACTIVITY_IDLE_GAP_MINUTES = 20
 
 # Dedicated mood check-ins (MoodEntry): 1–5 scale with fixed labels.
 MOOD_SCORE_MIN = 1
