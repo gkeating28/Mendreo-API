@@ -33,11 +33,12 @@ class SanitizeSuggestedResponsesTests(SimpleTestCase):
         )
 
     def test_drops_can_you_and_how_are_you_chips(self):
-        self.assertIsNone(
+        self.assertEqual(
             sanitize_suggested_responses(
                 ["Can you explain", "How are you feeling?"],
                 "Does that make sense?",
-            )
+            ),
+            ["Yes", "No", "Not sure"],
         )
 
     def test_drops_chip_copied_from_agent_text(self):

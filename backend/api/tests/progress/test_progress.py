@@ -36,6 +36,7 @@ class ProgressApiTests(BaseTest):
             target_field=self.mood,
             response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER,
             value_labels=["Really low"] + [""] * 4 + ["Alright"] + [""] * 4 + ["Great"],
+            flows=[Constants.KNOWLEDGE_FLOW_INITIAL, Constants.KNOWLEDGE_FLOW_RETURN],
             active=True,
         )
 
