@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
@@ -10,6 +11,7 @@ from ..session.models import Session
 from ..tasks import check_subscriptions
 from ..utils.AIWorkerClient import _run_session_greeting
 from ..utils.MessageFlow import apply_agent_response
+from ..utils.PerfStats import perf_stats
 from .auth import require_cron_secret, require_internal_secret
 
 
@@ -59,3 +61,30 @@ class CheckSubscriptionsCron(APIView):
         require_cron_secret(request)
         check_subscriptions()
         return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+
+class PerfSummary(APIView):
+    """Live latency percentiles for this process (Railway worker / Vercel instance)."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        require_internal_secret(request)
+        top_n = request.query_params.get("top")
+        try:
+            top = max(1, min(50, int(top_n))) if top_n is not None else 15
+        except (TypeError, ValueError):
+            top = 15
+        return Response(
+            {
+                "service": "mendreo-api",
+                "target": settings.DEPLOYMENT_TARGET,
+                "note": (
+                    "In-process window only — each Vercel/Railway instance has its own "
+                    "samples. Use structured `perf` logs for fleet-wide analysis."
+                ),
+                **perf_stats.summary(top_n=top),
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -96,6 +96,8 @@ if DEBUG:
     INSTALLED_APPS.insert(9, 'debug_toolbar')
 
 MIDDLEWARE = [
+    # Outermost: wall-clock + DB timing for every API request (skip / and /healthz).
+    'api.middleware.request_timing.RequestTimingMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -112,6 +114,13 @@ MIDDLEWARE += [
 
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_CREDENTIALS = True
+# Let browser DevTools / fetch() read API timing headers from cross-origin calls.
+CORS_EXPOSE_HEADERS = ['Server-Timing', 'X-Response-Time', 'X-DB-Queries']
+
+# Request timing / bottleneck diagnosis (see docs/PERFORMANCE.md).
+PERF_SLOW_REQUEST_MS = int(os.environ.get('PERF_SLOW_REQUEST_MS', '1000'))
+PERF_SAMPLE_SIZE = int(os.environ.get('PERF_SAMPLE_SIZE', '500'))
+PERF_LOG_ALL = os.environ.get('PERF_LOG_ALL', 'true').lower() in ('true', '1', 'yes')
 
 ROOT_URLCONF = 'mendreo.urls'
 
@@ -377,6 +386,8 @@ LOGGING = {
     "loggers": {
         "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
         "django.security": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        # Structured request timing lines: `perf {"method":...}` (see RequestTimingMiddleware).
+        "api.perf": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
 
