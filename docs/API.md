@@ -23,6 +23,7 @@ Base URL: your dev URL (Replit `.replit.dev`) in development, or your `.replit.a
 | POST | `/user/logout` | Invalidate session/token |
 | POST | `/user/refresh-token` | Exchange refresh token for new access token |
 | GET | `/user/info` | Current authenticated user's profile |
+| GET, PATCH | `/user/settings` | Current user's preferences (timezone + notification flags) |
 | POST | `/user/request-reset-password` | Email a password-reset code |
 | POST | `/user/reset-password` | Reset password using the code |
 | POST | `/user/request-verify-email` | Email an account-verification code |

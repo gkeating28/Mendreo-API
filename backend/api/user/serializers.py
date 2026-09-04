@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password, check_password
+from zoneinfo import available_timezones
 
-from .models import User
+from .models import User, UserSettings
 
 from ..utils import Constants
 
@@ -208,6 +209,42 @@ class UserAdminListSerializer(ListModelSerializer):
 
 class UserAdminDetailSerializer(UserAdminListSerializer):
     pass
+
+
+class UserSettingsDetailSerializer(ListModelSerializer):
+
+    class Meta:
+        model = UserSettings
+        fields = [
+            "timezone",
+            "notification_push_enabled",
+            "notification_daily_reminder_enabled",
+            "notification_daily_reminder_time",
+        ]
+
+
+class UserSettingsEditSerializer(EditModelSerializer):
+    timezone = serializers.CharField(required=False)
+    notification_push_enabled = serializers.BooleanField(required=False)
+    notification_daily_reminder_enabled = serializers.BooleanField(required=False)
+    notification_daily_reminder_time = serializers.TimeField(required=False, allow_null=True)
+
+    class Meta:
+        model = UserSettings
+        fields = [
+            "timezone",
+            "notification_push_enabled",
+            "notification_daily_reminder_enabled",
+            "notification_daily_reminder_time",
+        ]
+
+    def validate_timezone(self, value):
+        if not value or value not in available_timezones():
+            self.raise_validation_error(
+                "timezone",
+                "Must be a valid IANA timezone name",
+            )
+        return value
 
 
 def password_validate(password, raise_error_with_serializer=True):

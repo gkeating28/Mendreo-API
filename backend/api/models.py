@@ -1,7 +1,7 @@
 from django.db import models
 
 # Create your models here.
-from .user.models import User
+from .user.models import User, UserSettings
 from .session.models import Session
 from .summary.models import Summary
 from .ai_provider.models import AiProvider, AiProviderAuditLog

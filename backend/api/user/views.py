@@ -13,8 +13,13 @@ from rest_framework.views import APIView
 
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
-from .models import User
-from .serializers import UserDetailSerializer, password_validate
+from .models import User, UserSettings
+from .serializers import (
+    UserDetailSerializer,
+    UserSettingsDetailSerializer,
+    UserSettingsEditSerializer,
+    password_validate,
+)
 
 from ..admin.models import Admin
 from ..admin.serializers import AdminDetailSerializer
@@ -346,6 +351,39 @@ class FacebookCode(SmartAPIView):
         code_response_json = code_response.json()
 
         return Response(code_response_json, status=code_response.status_code)
+
+
+class Settings(SmartAPIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        check_if_user_active(user)
+
+        settings = UserSettings.for_user(user)
+        return Response(
+            UserSettingsDetailSerializer(settings).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request):
+        user = request.user
+        check_if_user_active(user)
+
+        settings = UserSettings.for_user(user)
+        serializer = UserSettingsEditSerializer(
+            settings,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            UserSettingsDetailSerializer(settings).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 def get_detailed(user):

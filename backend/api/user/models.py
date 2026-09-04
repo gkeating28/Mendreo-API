@@ -5,6 +5,7 @@ from ..user.managers import UserManager
 
 from ..utils import Constants
 from ..utils.Fields import EnumField, CharIDField
+from ..utils.Models import SmartModel
 
 
 class User(AbstractBaseUser):
@@ -60,5 +61,30 @@ class User(AbstractBaseUser):
         else:
             self.full_name = None
         super(User, self).save(*args, **kwargs)
+
+
+class UserSettings(SmartModel):
+    """Per-user preferences, separate from Knowledge/onboarding and global Setting."""
+
+    user = models.OneToOneField(
+        User,
+        primary_key=True,
+        related_name="settings",
+        on_delete=models.CASCADE,
+    )
+
+    timezone = models.CharField(max_length=64, default="UTC")
+
+    notification_push_enabled = models.BooleanField(default=True)
+    notification_daily_reminder_enabled = models.BooleanField(default=False)
+    notification_daily_reminder_time = models.TimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"UserSettings: {self.user_id}"
+
+    @classmethod
+    def for_user(cls, user):
+        settings, _created = cls.objects.get_or_create(user=user)
+        return settings
 
 
