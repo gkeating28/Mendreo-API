@@ -367,7 +367,7 @@ external call is the LLM (Google) via pydantic-ai.
 
 ## 8. Agent / summarization internals (`api/utils/Agent.py`)
 
-Not an endpoint, but the engine behind §7 and summaries.
+Not an endpoint, but the engine behind §7 and summaries. Step-by-step coverage of every model call (chat, exercises, pre-exercise, nightly jobs, articles) is in [`AI_INTERACTIONS.md`](./AI_INTERACTIONS.md).
 
 - **`get_response(session, consumer_message)`**: builds a pydantic-ai `Agent` on
   `GoogleModel(consumer.agent.model)`, output schema `ExerciseResponse` (exercise sessions) or

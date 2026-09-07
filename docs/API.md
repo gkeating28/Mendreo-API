@@ -3,6 +3,8 @@
 Base URL: your dev URL (Replit `.replit.dev`) in development, or your `.replit.app` domain in production. All paths below are relative.
 
 > For a deep dive into the models behind each endpoint and exactly how each one reads from and writes to the database (including the shared `Smart*` view machinery, soft-deletes, transactions, PII obscuring, and the session/message/LLM/upload/subscription flows), see [`API_DATABASE_DEEP_DIVE.md`](./API_DATABASE_DEEP_DIVE.md).
+>
+> For a step-by-step description of every language- and image-model call (general chat, exercise greetings and steps, pre-exercise check-in, summaries, observations, extraction tests, articles), see [`AI_INTERACTIONS.md`](./AI_INTERACTIONS.md).
 
 ## Conventions (from the `Smart*` base views)
 
