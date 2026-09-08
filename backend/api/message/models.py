@@ -24,9 +24,27 @@ class Message(SmartModel):
 
     usage = models.JSONField(null=True)
 
+    # Voice (ElevenLabs) idempotency — nullable; typed chat leaves these unset.
+    voice_conversation_id = models.CharField(max_length=64, null=True, blank=True)
+    voice_turn_index = models.PositiveIntegerField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=["session", "created_at"], name="message_session_created_idx"),
+            models.Index(
+                fields=["session", "voice_conversation_id", "voice_turn_index"],
+                name="message_voice_turn_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "voice_conversation_id", "voice_turn_index"],
+                condition=models.Q(
+                    voice_conversation_id__isnull=False,
+                    voice_turn_index__isnull=False,
+                ),
+                name="uniq_message_voice_turn",
+            ),
         ]
 
     def __str__(self):

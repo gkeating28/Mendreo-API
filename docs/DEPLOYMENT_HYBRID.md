@@ -269,6 +269,13 @@ STRIPE_SECRET_KEY=...
 INTERNAL_API_SECRET=<same-as-vercel>
 GUNICORN_TIMEOUT=150
 # Do NOT set AI_WORKER_URL on the worker (AI runs locally there)
+
+# ElevenLabs Conversational AI (staging first — separate values from prod, which is not wired yet)
+ELEVENLABS_API_KEY=...
+ELEVENLABS_AGENT_ID=...
+ELEVENLABS_LLM_SECRET=...            # Custom LLM dashboard "API key"; Bearer on /internal/elevenlabs/v1/chat/completions
+ELEVENLABS_WEBHOOK_SECRET=...        # HMAC for /internal/elevenlabs/webhook (not the LLM secret)
+# ELEVENLABS_GRANT_TTL_HOURS=4
 ```
 
 The worker exposes:
@@ -278,9 +285,21 @@ The worker exposes:
 | `GET /` | Health check |
 | `POST /internal/ai/message-response` | AI chat (called by Vercel) |
 | `POST /internal/ai/session-greeting` | Exercise session opener |
-| All public API routes | Available but normally unused |
+| `POST /internal/elevenlabs/v1/chat/completions` | ElevenLabs Custom LLM (Gemini inline, SSE) |
+| `POST /internal/elevenlabs/webhook` | ElevenLabs post-call transcript safety net |
+| All public API routes | Available but normally unused (`POST /voice/token` is the client mint) |
 
-Internal endpoints require header: `X-Internal-Secret: <INTERNAL_API_SECRET>`
+Internal AI endpoints require header: `X-Internal-Secret: <INTERNAL_API_SECRET>`.
+
+**ElevenLabs Custom LLM must target the Railway worker HTTPS host**, not Vercel. Vercel is the public JWT API (including `POST /voice/token`); Gemini for voice runs inline on the worker the same way `/internal/ai/message-response` does. Point the agent's Custom LLM server URL at:
+
+`https://<worker-host>/internal/elevenlabs/v1/chat/completions`
+
+and the post-call webhook at:
+
+`https://<worker-host>/internal/elevenlabs/webhook`
+
+Use staging credentials and test accounts only. Do not set production ElevenLabs secrets until a HIPAA/BAA rollout.
 
 ---
 
@@ -433,6 +452,10 @@ bash run_dev.sh
 | `AI_WORKER_URL` | worker URL | unset | unset or worker URL |
 | `INTERNAL_API_SECRET` | yes | yes | optional |
 | `CRON_SECRET` | yes | no | no |
+| `ELEVENLABS_API_KEY` | optional (token mint) | yes (staging) | optional |
+| `ELEVENLABS_AGENT_ID` | optional (token mint) | yes (staging) | optional |
+| `ELEVENLABS_LLM_SECRET` | no (Custom LLM hits worker) | yes (staging) | optional |
+| `ELEVENLABS_WEBHOOK_SECRET` | no (webhook hits worker) | yes (staging) | optional |
 | `BROKER_URL` | yes | yes | `memory://` |
 | `CELERY_TASK_ALWAYS_EAGER` | auto `False` | auto `False` | auto `True` if `DEBUG` |
 | `DATABASE_CONN_MAX_AGE` | `0` (default) | `300` (default) | `300` (default) |

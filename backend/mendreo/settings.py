@@ -287,6 +287,22 @@ _ai_async_default = 'true' if DEPLOYMENT_TARGET == 'vercel' else 'false'
 AI_ASYNC_MESSAGES = os.environ.get('AI_ASYNC_MESSAGES', _ai_async_default).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
+# ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.
+# Staging/dev first; do not point production agents at these until a BAA/rollout.
+ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
+ELEVENLABS_AGENT_ID = os.environ.get('ELEVENLABS_AGENT_ID', '')
+# Configured as the Custom LLM "API key" in the ElevenLabs agent dashboard.
+ELEVENLABS_LLM_SECRET = os.environ.get('ELEVENLABS_LLM_SECRET', '')
+# Distinct from ELEVENLABS_LLM_SECRET. Used to HMAC-verify post-call webhooks.
+ELEVENLABS_WEBHOOK_SECRET = os.environ.get('ELEVENLABS_WEBHOOK_SECRET', '')
+ELEVENLABS_GRANT_TTL_HOURS = int(os.environ.get('ELEVENLABS_GRANT_TTL_HOURS', '4'))
+# Spoken while Gemini is still running (ElevenLabs slow-LLM buffer-word pattern).
+ELEVENLABS_LLM_FILLER = os.environ.get(
+    'ELEVENLABS_LLM_FILLER',
+    'Let me think about that... ',
+)
+ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE', 'https://api.elevenlabs.io')
+
 # App cache: Redis when BROKER_URL is redis(s), else per-process locmem.
 # Used for Setting prompts and published exercise catalogs.
 _broker = CELERY_BROKER_URL or ''

@@ -47,6 +47,8 @@ urlpatterns = [
     path('runs', include('api.run.urls')),
 
     path('mood-entries', include('api.mood.urls')),
+
+    path('voice', include('api.voice.urls')),
 ]
 
 

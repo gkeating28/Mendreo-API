@@ -12,3 +12,4 @@ from .knowledge.models import KnowledgeField, KnowledgeQuestion, KnowledgeEntry
 from .mood.models import MoodEntry  # noqa: F401
 from .progress.models import UserObservation  # noqa: F401
 from .run.models import ExerciseReflection  # noqa: F401
+from .voice.models import VoiceGrant  # noqa: F401
