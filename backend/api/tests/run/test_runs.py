@@ -1,3 +1,6 @@
+import inspect
+
+from django.test import SimpleTestCase
 from django.utils import timezone
 from rest_framework import status
 
@@ -7,6 +10,14 @@ from ..TestCase import TestCase
 from ...message.models import Message
 from ...participant.models import Participant
 from ...session.models import Session, SessionStep
+from ...run import services as run_services
+
+
+class RunServicesImportTests(SimpleTestCase):
+    def test_does_not_import_agent_at_module_level(self):
+        source = inspect.getsource(run_services)
+        self.assertNotIn("utils.Agent", source)
+        self.assertIn("utils.completion", source)
 
 
 class ReflectRunApiTests(BaseTest):

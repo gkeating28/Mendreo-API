@@ -5,9 +5,8 @@ from django.test import SimpleTestCase
 from ...message.models import Message
 from ...participant.models import Participant
 from ...tests.TestCase import TestCase
-from ...utils.Agent import (
-    SKIP_COMPLETION_RESULT,
-    coerce_completion_result,
+from ...utils.Agent import SKIP_COMPLETION_RESULT, coerce_completion_result
+from ...utils.completion import (
     is_usable_completion_result,
     pick_completion_result_from_texts,
 )

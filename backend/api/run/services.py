@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from ..message.models import Message
 from ..session.models import Session, SessionStep
-from ..utils.Agent import is_usable_completion_result
+from ..utils.completion import is_usable_completion_result
 from .models import SUMMARY_STEP_ID, ExerciseReflection
 
 BASIS_KEYWORDS = {
