@@ -87,6 +87,8 @@ Recommended layout: **GitHub** (source + CI) → **Vercel** (public API) + **Rai
 
 See [`docs/DEPLOYMENT_HYBRID.md`](docs/DEPLOYMENT_HYBRID.md) for architecture charts and step-by-step setup.
 
+Performance / bottleneck diagnosis (API timing headers, `perf` logs, Speed Insights for the web apps): [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+
 | Service | Role | Key env |
 |---|---|---|
 | GitHub | Source + Actions CI | — |
