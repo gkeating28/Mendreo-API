@@ -26,6 +26,8 @@ class UserSettingsApiTests(BaseTest):
                 "notification_push_enabled": True,
                 "notification_daily_reminder_enabled": False,
                 "notification_daily_reminder_time": None,
+                "chat_text_size": "medium",
+                "chat_speed": "normal",
             },
         )
 
@@ -65,6 +67,40 @@ class UserSettingsApiTests(BaseTest):
         self.assertFalse(response.json["notification_push_enabled"])
         self.assertFalse(response.json["notification_daily_reminder_enabled"])
         self.assertIsNone(response.json["notification_daily_reminder_time"])
+        self.assertEqual(response.json["chat_text_size"], "medium")
+        self.assertEqual(response.json["chat_speed"], "normal")
+
+    def test_patch_chat_text_size_and_speed(self):
+        response = self._patch_settings(
+            {
+                "chat_text_size": "xlarge",
+                "chat_speed": "instant",
+            },
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["chat_text_size"], "xlarge")
+        self.assertEqual(response.json["chat_speed"], "instant")
+        self.assertEqual(response.json["timezone"], "UTC")
+
+        stored = UserSettings.objects.get(user=self.consumer_one.user)
+        self.assertEqual(stored.chat_text_size, "xlarge")
+        self.assertEqual(stored.chat_speed, "instant")
+
+    def test_invalid_chat_prefs_rejected(self):
+        size = self._patch_settings(
+            {"chat_text_size": "huge"},
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(size.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("chat_text_size", size.json)
+
+        speed = self._patch_settings(
+            {"chat_speed": "turbo"},
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(speed.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("chat_speed", speed.json)
 
     def test_can_clear_reminder_time(self):
         self._patch_settings(

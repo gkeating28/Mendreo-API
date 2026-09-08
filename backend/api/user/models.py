@@ -79,6 +79,28 @@ class UserSettings(SmartModel):
     notification_daily_reminder_enabled = models.BooleanField(default=False)
     notification_daily_reminder_time = models.TimeField(null=True, blank=True)
 
+    class ChatTextSize(models.TextChoices):
+        SMALL = "small"
+        MEDIUM = "medium"
+        LARGE = "large"
+        XLARGE = "xlarge"
+
+    class ChatSpeed(models.TextChoices):
+        INSTANT = "instant"
+        NORMAL = "normal"
+        SLOW = "slow"
+
+    chat_text_size = models.CharField(
+        max_length=16,
+        choices=ChatTextSize.choices,
+        default=ChatTextSize.MEDIUM,
+    )
+    chat_speed = models.CharField(
+        max_length=16,
+        choices=ChatSpeed.choices,
+        default=ChatSpeed.NORMAL,
+    )
+
     def __str__(self):
         return f"UserSettings: {self.user_id}"
 

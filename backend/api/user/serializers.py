@@ -220,6 +220,8 @@ class UserSettingsDetailSerializer(ListModelSerializer):
             "notification_push_enabled",
             "notification_daily_reminder_enabled",
             "notification_daily_reminder_time",
+            "chat_text_size",
+            "chat_speed",
         ]
 
 
@@ -228,6 +230,8 @@ class UserSettingsEditSerializer(EditModelSerializer):
     notification_push_enabled = serializers.BooleanField(required=False)
     notification_daily_reminder_enabled = serializers.BooleanField(required=False)
     notification_daily_reminder_time = serializers.TimeField(required=False, allow_null=True)
+    chat_text_size = serializers.CharField(required=False)
+    chat_speed = serializers.CharField(required=False)
 
     class Meta:
         model = UserSettings
@@ -236,6 +240,8 @@ class UserSettingsEditSerializer(EditModelSerializer):
             "notification_push_enabled",
             "notification_daily_reminder_enabled",
             "notification_daily_reminder_time",
+            "chat_text_size",
+            "chat_speed",
         ]
 
     def validate_timezone(self, value):
@@ -243,6 +249,22 @@ class UserSettingsEditSerializer(EditModelSerializer):
             self.raise_validation_error(
                 "timezone",
                 "Must be a valid IANA timezone name",
+            )
+        return value
+
+    def validate_chat_text_size(self, value):
+        if value not in UserSettings.ChatTextSize.values:
+            self.raise_validation_error(
+                "chat_text_size",
+                "Must be one of: small, medium, large, xlarge",
+            )
+        return value
+
+    def validate_chat_speed(self, value):
+        if value not in UserSettings.ChatSpeed.values:
+            self.raise_validation_error(
+                "chat_speed",
+                "Must be one of: instant, normal, slow",
             )
         return value
 
