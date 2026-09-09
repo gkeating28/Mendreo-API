@@ -17,6 +17,7 @@ Including another URLconf
 from django.urls import path, include
 from django.http import JsonResponse
 
+
 def home(_request):
     return JsonResponse({
         "service": "mendreo-api",
@@ -24,8 +25,18 @@ def home(_request):
         "docs": "DRF endpoints live under /sessions, /consumers, etc.",
     })
 
+
+def elevenlabs_config(_request):
+    """TEMPORARY: presence-only probe for Railway env debugging. Do not return values."""
+    from api.voice.elevenlabs_client import config_presence
+
+    return JsonResponse(config_presence())
+
+
 urlpatterns = [
     path("", home, name="home"),
+    # Not intercepted by wsgi.py (`/` and `/healthz` are static). Remove after debug.
+    path("healthz/elevenlabs", elevenlabs_config, name="elevenlabs_config"),
     path("internal/", include("api.internal.urls")),
     path("", include('api.urls')),
 ]

@@ -54,6 +54,47 @@ def _sse_contents(body: str) -> list[str]:
     return texts
 
 
+class ElevenLabsConfigProbeTests(TestCase):
+    @override_settings(ELEVENLABS_API_KEY="", ELEVENLABS_AGENT_ID="")
+    def test_reports_missing_settings(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(
+            set(response.json),
+            {
+                "settings_api_key",
+                "settings_agent_id",
+                "environ_api_key",
+                "environ_agent_id",
+                "configured",
+            },
+        )
+        for key, value in response.json.items():
+            self.assertIsInstance(value, bool, key)
+        self.assertFalse(response.json["settings_api_key"])
+        self.assertFalse(response.json["settings_agent_id"])
+        self.assertFalse(response.json["configured"])
+
+    @override_settings(ELEVENLABS_API_KEY="sk-test", ELEVENLABS_AGENT_ID="agent-test")
+    def test_reports_settings_present_without_values(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertTrue(response.json["settings_api_key"])
+        self.assertTrue(response.json["settings_agent_id"])
+        self.assertTrue(response.json["configured"])
+        dumped = json.dumps(response.json)
+        self.assertNotIn("sk-test", dumped)
+        self.assertNotIn("agent-test", dumped)
+
+    @override_settings(ELEVENLABS_API_KEY="  ", ELEVENLABS_AGENT_ID="agent-test")
+    def test_whitespace_api_key_counts_as_missing(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertFalse(response.json["settings_api_key"])
+        self.assertTrue(response.json["settings_agent_id"])
+        self.assertFalse(response.json["configured"])
+
+
 class VoiceTokenTests(TestCase):
     def setUp(self):
         self.consumer = Auth.create_consumer()

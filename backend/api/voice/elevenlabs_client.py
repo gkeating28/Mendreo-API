@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import requests
 from django.conf import settings
@@ -18,6 +19,28 @@ class ElevenLabsRequestError(Exception):
     def __init__(self, message, status_code=None):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _nonempty(value) -> bool:
+    return bool((value or "").strip())
+
+
+def config_presence() -> dict:
+    """Presence flags only — never return secret values.
+
+    `settings_*` is what `/voice/token` uses (snapshotted at process import).
+    `environ_*` is `os.environ` at request time. A mismatch means the process
+    started before the vars were injected.
+    """
+    settings_api_key = _nonempty(getattr(settings, "ELEVENLABS_API_KEY", None))
+    settings_agent_id = _nonempty(getattr(settings, "ELEVENLABS_AGENT_ID", None))
+    return {
+        "settings_api_key": settings_api_key,
+        "settings_agent_id": settings_agent_id,
+        "environ_api_key": _nonempty(os.environ.get("ELEVENLABS_API_KEY")),
+        "environ_agent_id": _nonempty(os.environ.get("ELEVENLABS_AGENT_ID")),
+        "configured": settings_api_key and settings_agent_id,
+    }
 
 
 def _require_config():
