@@ -1,6 +1,6 @@
 # Mendreo API
 
-Django/DRF backend for Mendreo. See [`docs/API.md`](docs/API.md) for endpoint reference.
+Django/DRF backend for Mendreo. See [`docs/API.md`](docs/API.md) for endpoint reference and [`docs/AI_CHAT_AND_EXERCISE.md`](docs/AI_CHAT_AND_EXERCISE.md) for how standard chat and exercise AI prompts are assembled.
 
 ## Requirements
 

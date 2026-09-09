@@ -74,6 +74,8 @@ Session detail includes `phase` (`pre_exercise` / `exercise` / `completed` / `ge
 
 **Async AI (Vercel):** `POST /messages` creates the user message, enqueues Gemini on the worker via Celery, and returns the user message with `ai_pending: true`. Poll `GET /messages?session_id=<id>` (or `GET /sessions/<id>`) until the agent reply appears as `last_message`. Local/dev defaults to synchronous replies unless `AI_ASYNC_MESSAGES=true`.
 
+How Toni builds replies (standard chat vs exercise execution, hardcoded templates vs `Setting` / exercise / knowledge prompts): [`AI_CHAT_AND_EXERCISE.md`](./AI_CHAT_AND_EXERCISE.md).
+
 ---
 
 ## Exercises
