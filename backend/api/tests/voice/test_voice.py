@@ -362,6 +362,23 @@ class CustomLlmTests(TestCase):
         ).get()
         self.assertEqual(agent_message.text, "Voice reply from Toni")
 
+    @override_settings(ELEVENLABS_LLM_FILLER="")
+    def test_empty_filler_is_not_spoken(self):
+        mocked = GeneralResponse(
+            text="Voice reply from Toni",
+            reasoning="should not be spoken",
+            suggested_responses=[],
+        )
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(self._payload())
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+
+        contents = _sse_contents(body)
+        self.assertEqual(contents, ["Voice reply from Toni"])
+        self.assertNotIn("Let me think about that", body)
+
     def test_conversation_id_mismatch_is_rejected(self):
         mocked = GeneralResponse(text="ok", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:
