@@ -31,6 +31,9 @@ def config_presence() -> dict:
     `settings_*` is what `/voice/token` uses (snapshotted at process import).
     `environ_*` is `os.environ` at request time. A mismatch means the process
     started before the vars were injected.
+
+    Railway injects `RAILWAY_SERVICE_ID` / `RAILWAY_DEPLOYMENT_ID` on every
+    service; include them so a live probe can be matched to the dashboard.
     """
     settings_api_key = _nonempty(getattr(settings, "ELEVENLABS_API_KEY", None))
     settings_agent_id = _nonempty(getattr(settings, "ELEVENLABS_AGENT_ID", None))
@@ -40,6 +43,8 @@ def config_presence() -> dict:
         "environ_api_key": _nonempty(os.environ.get("ELEVENLABS_API_KEY")),
         "environ_agent_id": _nonempty(os.environ.get("ELEVENLABS_AGENT_ID")),
         "configured": settings_api_key and settings_agent_id,
+        "railway_service_id": (os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
+        "railway_deployment_id": (os.environ.get("RAILWAY_DEPLOYMENT_ID") or "").strip(),
     }
 
 

@@ -54,26 +54,43 @@ def _sse_contents(body: str) -> list[str]:
     return texts
 
 
+_PROBE_BOOL_KEYS = {
+    "settings_api_key",
+    "settings_agent_id",
+    "environ_api_key",
+    "environ_agent_id",
+    "configured",
+}
+_PROBE_KEYS = _PROBE_BOOL_KEYS | {"railway_service_id", "railway_deployment_id"}
+
+
 class ElevenLabsConfigProbeTests(TestCase):
     @override_settings(ELEVENLABS_API_KEY="", ELEVENLABS_AGENT_ID="")
     def test_reports_missing_settings(self):
         response = self._get("/healthz/elevenlabs")
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
-        self.assertEqual(
-            set(response.json),
-            {
-                "settings_api_key",
-                "settings_agent_id",
-                "environ_api_key",
-                "environ_agent_id",
-                "configured",
-            },
-        )
-        for key, value in response.json.items():
-            self.assertIsInstance(value, bool, key)
+        self.assertEqual(set(response.json), _PROBE_KEYS)
+        for key in _PROBE_BOOL_KEYS:
+            self.assertIsInstance(response.json[key], bool, key)
         self.assertFalse(response.json["settings_api_key"])
         self.assertFalse(response.json["settings_agent_id"])
         self.assertFalse(response.json["configured"])
+        self.assertIsInstance(response.json["railway_service_id"], str)
+        self.assertIsInstance(response.json["railway_deployment_id"], str)
+
+    @mock.patch.dict(
+        "api.voice.elevenlabs_client.os.environ",
+        {
+            "RAILWAY_SERVICE_ID": "svc-from-dashboard",
+            "RAILWAY_DEPLOYMENT_ID": "dpl-from-dashboard",
+        },
+        clear=False,
+    )
+    def test_reports_railway_ids_from_environ(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["railway_service_id"], "svc-from-dashboard")
+        self.assertEqual(response.json["railway_deployment_id"], "dpl-from-dashboard")
 
     @override_settings(ELEVENLABS_API_KEY="sk-test", ELEVENLABS_AGENT_ID="agent-test")
     def test_reports_settings_present_without_values(self):
