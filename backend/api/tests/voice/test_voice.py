@@ -411,27 +411,6 @@ class CustomLlmTests(TestCase):
         self.assertEqual(called, [1])
         self.assertIn(b"Voice reply from Toni", rest)
 
-    def test_heartbeat_while_session_lock_is_busy(self):
-        mocked = GeneralResponse(text="Follow-up reply", reasoning="r", suggested_responses=[])
-        attempts = {"n": 0}
-
-        def acquire(_session_id):
-            attempts["n"] += 1
-            return attempts["n"] >= 2
-
-        with mock.patch("api.voice.services.time.sleep", return_value=None):
-            with mock.patch("api.voice.services.try_acquire_session_lock", side_effect=acquire):
-                with mock.patch("api.utils.Agent.get_response") as get_agent_response:
-                    get_agent_response.return_value = mocked, {}, None, None
-                    response = self._post_completions(self._payload(user_text="the follow up"))
-                    body = _sse_body(response)
-
-        contents = _sse_contents(body)
-        self.assertEqual(contents[0], "Let me think about that... ")
-        self.assertIn("... ", contents)
-        self.assertIn("Follow-up reply", contents)
-        self.assertGreaterEqual(attempts["n"], 2)
-
     def test_conversation_id_mismatch_is_rejected(self):
         mocked = GeneralResponse(text="ok", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:

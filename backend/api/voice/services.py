@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 import time
 from datetime import timedelta
 from typing import Iterable
 
 from django.conf import settings
-from django.core.cache import cache
-from django.db import close_old_connections, connection, transaction
+from django.db import transaction
 from django.db.models import Q
 from django.db.utils import IntegrityError
 from django.utils import timezone
@@ -42,13 +40,9 @@ VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # finishes — which is after cascade_timeout_seconds (default 8s).
 ELEVENLABS_KEEPALIVE = "Let me think about that... "
 SSE_FLUSH_PAD_CHARS = 8192
-# Keep the Custom LLM stream alive after the first filler. Turn 2+ Gemini is
-# slower (cached_history) and can exceed cascade_timeout_seconds (~8s) even
-# when the filler already went out.
-HEARTBEAT_TEXT = "... "
-HEARTBEAT_INTERVAL_SECONDS = 2.0
-SESSION_LOCK_TTL_SECONDS = 120
-SESSION_LOCK_RETRY_SECONDS = 0.4
+UNDERSTANDING_FALLBACK = (
+    "Sorry, I had an issue understanding your message, can you repeat it or rephrase it for me please?"
+)
 _HAS_SPEECH_RE = re.compile(r"[A-Za-z0-9]")
 
 
@@ -110,34 +104,6 @@ def spoken_llm_keepalive() -> str:
     if filler:
         return filler if filler.endswith(" ") else f"{filler} "
     return ELEVENLABS_KEEPALIVE
-
-
-def _session_lock_cache_key(session_id: str) -> str:
-    return f"voice-gen-lock:{session_id}"
-
-
-def try_acquire_session_lock(session_id: str) -> bool:
-    """Cross-worker lock. Redis in production; locmem in tests.
-
-    Do not use pg_advisory_lock — Supabase transaction pooling drops the
-    backend connection between statements, so unlock often no-ops and the
-    next Talk turn blocks after the filler.
-    """
-    return bool(
-        cache.add(_session_lock_cache_key(session_id), "1", timeout=SESSION_LOCK_TTL_SECONDS)
-    )
-
-
-def release_session_lock(session_id: str) -> None:
-    cache.delete(_session_lock_cache_key(session_id))
-
-
-def _produce_spoken_turn_in_thread(grant: VoiceGrant, user_text: str) -> str:
-    close_old_connections()
-    try:
-        return produce_spoken_turn(grant, user_text)
-    finally:
-        close_old_connections()
 
 
 def _message_content_text(content) -> str:
@@ -390,17 +356,17 @@ def existing_agent_reply_for_utterance(grant: VoiceGrant, user_text: str) -> str
 
 
 def produce_spoken_turn(grant: VoiceGrant, user_text: str) -> str:
-    """Repeat / offer / Gemini under the session lock. Returns text to speak."""
-    if is_repeat_voice_utterance(grant, user_text):
-        replay = existing_agent_reply_for_utterance(grant, user_text)
-        if replay:
-            return replay
-
+    """Offer / replay / Gemini on the request thread. Returns text to speak."""
     offer_result = try_voice_offer_reply(grant, user_text)
     if offer_result is not None:
         if getattr(offer_result.sender, "agent_id", None):
             return (offer_result.text or "").strip()
         return ""
+
+    if is_repeat_voice_utterance(grant, user_text):
+        replay = existing_agent_reply_for_utterance(grant, user_text)
+        if replay and replay != UNDERSTANDING_FALLBACK:
+            return replay
 
     agent_message = run_toni_reply(grant, user_text)
     return (agent_message.text or "").strip()
@@ -419,11 +385,15 @@ def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
 
 
 def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
+    """Filler + flush, then Gemini on this request. No background work.
+
+    A daemon thread + cache lock caused today's regressions: ORM objects
+    crossed threads (Gemini fallback / "please repeat"), and orphan Gemini
+    writes showed up as late replies after hangup. Keep this path linear.
+    """
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
     model = "mendreo-toni"
-    session_id = grant.session_id
-    lock_held = False
 
     def _chunk(content: str | None, finish_reason=None) -> bytes:
         return sse_chunk(
@@ -435,45 +405,9 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
         )
 
     try:
-        # First two yields: no DB, no lock. Same on every turn of the call.
         yield _chunk(spoken_llm_keepalive())
         yield sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
-
-        deadline = time.monotonic() + SESSION_LOCK_TTL_SECONDS
-        while not try_acquire_session_lock(session_id):
-            if time.monotonic() >= deadline:
-                raise TimeoutError("voice generation lock timeout")
-            yield _chunk(HEARTBEAT_TEXT)
-            time.sleep(SESSION_LOCK_RETRY_SECONDS)
-        lock_held = True
-
-        if connection.in_atomic_block:
-            # Django TestCase wraps the test in a transaction; a thread
-            # cannot see that data. Production requests are not atomic here.
-            spoken = produce_spoken_turn(grant, user_text)
-        else:
-            result: dict = {}
-
-            def work():
-                try:
-                    result["spoken"] = _produce_spoken_turn_in_thread(grant, user_text)
-                except Exception as exc:
-                    result["error"] = exc
-
-            thread = threading.Thread(
-                target=work,
-                name=f"voice-gemini-{session_id}",
-                daemon=True,
-            )
-            thread.start()
-            while thread.is_alive():
-                thread.join(HEARTBEAT_INTERVAL_SECONDS)
-                if thread.is_alive():
-                    yield _chunk(HEARTBEAT_TEXT)
-            if result.get("error"):
-                raise result["error"]
-            spoken = result.get("spoken") or ""
-
+        spoken = produce_spoken_turn(grant, user_text)
         if spoken:
             yield _chunk(spoken)
         yield _chunk(None, finish_reason="stop")
@@ -484,13 +418,9 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
             grant.id,
             grant.session_id,
         )
-        fallback = "Sorry, I had an issue understanding your message, can you repeat it or rephrase it for me please?"
-        yield _chunk(fallback)
+        yield _chunk(UNDERSTANDING_FALLBACK)
         yield _chunk(None, finish_reason="stop")
         yield b"data: [DONE]\n\n"
-    finally:
-        if lock_held:
-            release_session_lock(session_id)
 
 
 def _turn_role(turn: dict) -> str:

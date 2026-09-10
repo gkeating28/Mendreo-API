@@ -296,8 +296,8 @@ ELEVENLABS_LLM_SECRET = os.environ.get('ELEVENLABS_LLM_SECRET', '')
 # Distinct from ELEVENLABS_LLM_SECRET. Used to HMAC-verify post-call webhooks.
 ELEVENLABS_WEBHOOK_SECRET = os.environ.get('ELEVENLABS_WEBHOOK_SECRET', '')
 ELEVENLABS_GRANT_TTL_HOURS = int(os.environ.get('ELEVENLABS_GRANT_TTL_HOURS', '4'))
-# Optional first SSE tokens spoken while Gemini runs. Empty still emits the
-# official Custom LLM buffer ("Let me think about that... ") plus flush padding.
+# Optional first SSE tokens spoken while Gemini runs. Empty still emits
+# "Let me think about that... " plus flush padding. Not used as a lock/heartbeat.
 ELEVENLABS_LLM_FILLER = os.environ.get('ELEVENLABS_LLM_FILLER', '')
 ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE', 'https://api.elevenlabs.io')
 
