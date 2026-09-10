@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from datetime import timedelta
 from typing import Iterable
 
 from django.conf import settings
@@ -18,6 +20,12 @@ from ..agent.models import Agent
 from ..message.models import Message
 from ..participant.models import Participant
 from ..session.models import Session
+from ..utils.ExerciseOffer import (
+    maybe_handle_offer_response,
+    pending_offer_message,
+    spoken_offer_chip,
+    unresolved_offer_message,
+)
 from ..utils.MessageFlow import apply_agent_response
 from .elevenlabs_client import mint_conversation_credentials
 from .models import VoiceGrant, hash_grant_token
@@ -25,6 +33,8 @@ from .models import VoiceGrant, hash_grant_token
 logger = logging.getLogger(__name__)
 
 GENERAL_CHAT_ONLY = "Voice is only available for general chat."
+VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
+_HAS_SPEECH_RE = re.compile(r"[A-Za-z0-9]")
 
 
 def _json_obj(value):
@@ -61,7 +71,7 @@ def extract_conversation_id(data: dict) -> str | None:
 
 
 def latest_user_text(messages) -> str:
-    """Last user utterance. Ignore system/assistant history (Toni uses Session cache)."""
+    """Last user turn only. Empty last turns must not fall back to earlier speech."""
     if not isinstance(messages, list):
         return ""
     for item in reversed(messages):
@@ -69,10 +79,15 @@ def latest_user_text(messages) -> str:
             continue
         if (item.get("role") or "").lower() != "user":
             continue
-        text = _message_content_text(item.get("content"))
-        if text:
-            return text
+        return _message_content_text(item.get("content"))
     return ""
+
+
+def usable_voice_user_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned or not _HAS_SPEECH_RE.search(cleaned):
+        return ""
+    return cleaned
 
 
 def _message_content_text(content) -> str:
@@ -240,17 +255,72 @@ def sse_chunk(content: str | None, *, finish_reason=None, chunk_id: str, created
     return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
+def iter_silent_completion_sse() -> Iterable[bytes]:
+    """Acknowledge a non-turn (silence / duplicate) without calling Gemini."""
+    created = int(time.time())
+    chunk_id = "chatcmpl-silent"
+    model = "mendreo-toni"
+    yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
+    yield b"data: [DONE]\n\n"
+
+
+def is_repeat_voice_utterance(grant: VoiceGrant, user_text: str) -> bool:
+    last = (
+        Message.objects.filter(
+            session=grant.session,
+            sender__consumer=grant.consumer,
+            voice_conversation_id=voice_conversation_key(grant),
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if last is None:
+        return False
+    if (last.text or "").strip() != user_text.strip():
+        return False
+    return last.created_at >= timezone.now() - VOICE_DUPLICATE_WINDOW
+
+
+def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
+    """Route spoken Yes/No through the chip handler. None = not an offer turn."""
+    chip = spoken_offer_chip(user_text)
+    if not chip or grant.session.exercise_id:
+        return None
+    if pending_offer_message(grant.session) is None and unresolved_offer_message(grant.session) is None:
+        return None
+    user_message = create_user_voice_message(grant=grant, text=chip)
+    result = maybe_handle_offer_response(user_message, True)
+    return result if result is not None else user_message
+
+
 def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
     model = "mendreo-toni"
-    filler = (settings.ELEVENLABS_LLM_FILLER or "").strip()
-    if filler and not filler.endswith(" "):
-        filler = filler + " "
-    if filler:
-        yield sse_chunk(filler, chunk_id=chunk_id, created=created, model=model)
 
     try:
+        if is_repeat_voice_utterance(grant, user_text):
+            yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
+            yield b"data: [DONE]\n\n"
+            return
+
+        offer_result = try_voice_offer_reply(grant, user_text)
+        if offer_result is not None:
+            spoken = ""
+            if getattr(offer_result.sender, "agent_id", None):
+                spoken = (offer_result.text or "").strip()
+            if spoken:
+                yield sse_chunk(spoken, chunk_id=chunk_id, created=created, model=model)
+            yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
+            yield b"data: [DONE]\n\n"
+            return
+
+        filler = (settings.ELEVENLABS_LLM_FILLER or "").strip()
+        if filler and not filler.endswith(" "):
+            filler = filler + " "
+        if filler:
+            yield sse_chunk(filler, chunk_id=chunk_id, created=created, model=model)
+
         agent_message = run_toni_reply(grant, user_text)
         text = (agent_message.text or "").strip()
         if text:

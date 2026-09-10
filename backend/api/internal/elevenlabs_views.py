@@ -17,10 +17,12 @@ from ..voice.services import (
     extract_grant_token,
     extra_body_from_request,
     iter_completion_sse,
+    iter_silent_completion_sse,
     latest_user_text,
     reconcile_post_call_transcript,
     resolve_usable_grant,
     stamp_conversation_id,
+    usable_voice_user_text,
 )
 from ..voice.webhook_auth import ElevenLabsWebhookError, construct_event
 
@@ -54,12 +56,15 @@ class ElevenLabsChatCompletions(APIView):
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
 
-        user_text = latest_user_text(data.get("messages"))
+        user_text = usable_voice_user_text(latest_user_text(data.get("messages")))
         if not user_text:
-            return Response(
-                {"detail": "A user message is required."},
-                status=status.HTTP_400_BAD_REQUEST,
+            response = StreamingHttpResponse(
+                iter_silent_completion_sse(),
+                content_type="text/event-stream",
             )
+            response["Cache-Control"] = "no-cache"
+            response["X-Accel-Buffering"] = "no"
+            return response
 
         # Explicitly ignore extra_body user/consumer ids — they are not trusted.
         extra = extra_body_from_request(data)

@@ -426,6 +426,87 @@ class CustomLlmTests(TestCase):
             "latest spoken turn",
         )
 
+    def test_empty_last_user_turn_does_not_replay_previous(self):
+        mocked = GeneralResponse(text="should not speak", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(
+                self._payload(
+                    messages=[
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "hi there"},
+                        {"role": "user", "content": ""},
+                    ]
+                )
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+            get_agent_response.assert_not_called()
+
+        self.assertTrue(body.strip().endswith("data: [DONE]"))
+        self.assertNotIn("should not speak", body)
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            0,
+        )
+
+    def test_repeat_utterance_does_not_call_gemini(self):
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            first = self._post_completions(self._payload(user_text="hello again"))
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            self.assertEqual(get_agent_response.call_count, 1)
+
+            second = self._post_completions(self._payload(user_text="hello again"))
+            self.assertEqual(second.status_code, status.HTTP_200_OK)
+            self.assertEqual(get_agent_response.call_count, 1)
+
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            1,
+        )
+
+    def test_spoken_yes_skips_gemini_and_clears_offer(self):
+        from ...participant.models import Participant
+        from ...utils import Constants
+
+        exercise = General.create_exercise()
+        exercise.status = Constants.EXERCISE_STATUS_PUBLISHED
+        exercise.save(update_fields=["status"])
+        agent_participant = Participant.objects.filter(
+            session=self.session,
+            agent=self.consumer.agent,
+        ).first()
+        offer = Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text=f"Would you like to start {exercise.title}?",
+            exercise=exercise,
+            suggested_responses=list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+            reasoning="triage",
+        )
+
+        mocked = GeneralResponse(text="should not speak", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(self._payload(user_text="yeah"))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+            get_agent_response.assert_not_called()
+
+        self.assertNotIn("should not speak", body)
+        offer.refresh_from_db()
+        self.assertEqual(offer.suggested_responses, [])
+        user_messages = Message.objects.filter(
+            session=self.session,
+            sender__consumer=self.consumer,
+        )
+        self.assertEqual(user_messages.count(), 1)
+        self.assertEqual(user_messages.get().text, "Yes")
+        self.session.refresh_from_db()
+        self.assertIsNone(self.session.exercise_id)
+
 
 @override_settings(ELEVENLABS_WEBHOOK_SECRET=WEBHOOK_SECRET)
 class VoiceWebhookTests(TestCase):

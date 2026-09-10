@@ -1,3 +1,5 @@
+import re
+
 from django.db import transaction
 
 from ..message.models import Message
@@ -149,6 +151,30 @@ def exercise_session_payload_for_message(serializer, message) -> dict | None:
     return cache[message.exercise_id]
 
 
+_BARE_YES_RE = re.compile(
+    r"^(yes|yeah|yep|yup|sure|ok|okay|please)(\s+please)?([.!?]?)$"
+)
+_BARE_NO_RE = re.compile(
+    r"^(no|nope|nah|no thanks|not now|not right now|maybe later|later|skip)([.!?]?)$"
+)
+_START_RE = re.compile(r"^(let'?s\s+)?(start|begin|do it|go ahead|let'?s go)([.!?]?)$")
+_START_EXERCISE_RE = re.compile(
+    r"^(start|begin)(\s+(the\s+)?(exercise|that|it|now))?([.!?]?)$"
+)
+
+
+def spoken_offer_chip(text: str) -> str | None:
+    """Map a spoken utterance to Yes/No chips. None = not an offer reply."""
+    t = _normalize_offer_text(text).strip()
+    if not t:
+        return None
+    if _BARE_NO_RE.match(t):
+        return Constants.EXERCISE_OFFER_NO
+    if _BARE_YES_RE.match(t) or _START_RE.match(t) or _START_EXERCISE_RE.match(t):
+        return Constants.EXERCISE_OFFER_YES
+    return None
+
+
 def maybe_handle_offer_response(
     user_message: Message,
     from_suggested_response: bool,
@@ -177,12 +203,12 @@ def maybe_handle_offer_response(
         offer = None
 
     if offer is None:
-        if text != Constants.EXERCISE_OFFER_NO:
-            return None
         offer = unresolved_offer_message(session)
-
-    if offer is None:
-        return None
+        if offer is None:
+            return None
+        if text == Constants.EXERCISE_OFFER_YES:
+            # Chips already cleared (e.g. voice adapter + client chip POST).
+            return user_message
 
     return _resolve_offer(user_message, offer, text)
 
