@@ -60,8 +60,15 @@ _PROBE_BOOL_KEYS = {
     "environ_api_key",
     "environ_agent_id",
     "configured",
+    "agent_id_quoted",
 }
-_PROBE_KEYS = _PROBE_BOOL_KEYS | {"railway_service_id", "railway_deployment_id"}
+_PROBE_KEYS = _PROBE_BOOL_KEYS | {
+    "railway_service_id",
+    "railway_deployment_id",
+    "agent_id_kind",
+    "agent_id_length",
+    "api_base_host",
+}
 
 
 class ElevenLabsConfigProbeTests(TestCase):
@@ -77,6 +84,10 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertFalse(response.json["configured"])
         self.assertIsInstance(response.json["railway_service_id"], str)
         self.assertIsInstance(response.json["railway_deployment_id"], str)
+        self.assertFalse(response.json["agent_id_quoted"])
+        self.assertEqual(response.json["agent_id_kind"], "missing")
+        self.assertEqual(response.json["agent_id_length"], 0)
+        self.assertIsInstance(response.json["api_base_host"], str)
 
     @mock.patch.dict(
         "api.voice.elevenlabs_client.os.environ",
@@ -102,6 +113,9 @@ class ElevenLabsConfigProbeTests(TestCase):
         dumped = json.dumps(response.json)
         self.assertNotIn("sk-test", dumped)
         self.assertNotIn("agent-test", dumped)
+        self.assertEqual(response.json["agent_id_kind"], "other")
+        self.assertEqual(response.json["agent_id_length"], 10)
+        self.assertFalse(response.json["agent_id_quoted"])
 
     @override_settings(ELEVENLABS_API_KEY="  ", ELEVENLABS_AGENT_ID="agent-test")
     def test_whitespace_api_key_counts_as_missing(self):
@@ -110,6 +124,54 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertFalse(response.json["settings_api_key"])
         self.assertTrue(response.json["settings_agent_id"])
         self.assertFalse(response.json["configured"])
+
+    @override_settings(ELEVENLABS_API_KEY='"sk-test"', ELEVENLABS_AGENT_ID='"agent_abc"')
+    def test_quoted_agent_id_is_cleaned_in_probe(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertTrue(response.json["configured"])
+        self.assertTrue(response.json["agent_id_quoted"])
+        self.assertEqual(response.json["agent_id_kind"], "agent")
+        self.assertEqual(response.json["agent_id_length"], 9)
+        dumped = json.dumps(response.json)
+        self.assertNotIn("agent_abc", dumped)
+
+
+class MintConversationCredentialsTests(TestCase):
+    @override_settings(
+        ELEVENLABS_API_KEY='"sk-test"',
+        ELEVENLABS_AGENT_ID='"agent_abc"',
+        ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+    )
+    @mock.patch("api.voice.elevenlabs_client.requests.get")
+    def test_strips_quotes_and_forwards_elevenlabs_detail(self, get):
+        from api.voice.elevenlabs_client import (
+            ElevenLabsRequestError,
+            mint_conversation_credentials,
+        )
+
+        signed = mock.Mock(ok=False, status_code=400, text='{"detail":{"message":"invalid agent_id"}}')
+        signed.json.return_value = {"detail": {"message": "invalid agent_id", "param": "agent_id"}}
+        token = mock.Mock(
+            ok=False,
+            status_code=400,
+            text='{"detail":[{"msg":"String should match pattern","loc":["query","agent_id"]}]}',
+        )
+        token.json.return_value = {
+            "detail": [{"msg": "String should match pattern", "loc": ["query", "agent_id"]}]
+        }
+        get.side_effect = [signed, token]
+
+        with self.assertRaises(ElevenLabsRequestError) as ctx:
+            mint_conversation_credentials()
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIn("invalid agent_id", str(ctx.exception))
+        self.assertIn("String should match pattern", str(ctx.exception))
+        self.assertEqual(get.call_count, 2)
+        for call in get.call_args_list:
+            self.assertEqual(call.kwargs["params"]["agent_id"], "agent_abc")
+            self.assertEqual(call.kwargs["headers"]["xi-api-key"], "sk-test")
 
 
 class VoiceTokenTests(TestCase):

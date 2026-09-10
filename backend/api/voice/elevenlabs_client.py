@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -21,8 +22,36 @@ class ElevenLabsRequestError(Exception):
         self.status_code = status_code
 
 
+def _clean_secret(value) -> str:
+    """Strip BOM, whitespace, and wrapping quotes from env-sourced secrets."""
+    text = (value or "").replace("\ufeff", "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].replace("\ufeff", "").strip()
+    return text
+
+
 def _nonempty(value) -> bool:
-    return bool((value or "").strip())
+    return bool(_clean_secret(value))
+
+
+def _is_quoted(value) -> bool:
+    text = (value or "").replace("\ufeff", "").strip()
+    return len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}
+
+
+def _agent_id_kind(agent_id: str) -> str:
+    if not agent_id:
+        return "missing"
+    if agent_id.startswith("agent_"):
+        return "agent"
+    if agent_id.startswith("seng_"):
+        return "seng"
+    return "other"
+
+
+def _api_base_host() -> str:
+    base = _clean_secret(getattr(settings, "ELEVENLABS_API_BASE", None) or "https://api.elevenlabs.io")
+    return urlparse(base).netloc or base
 
 
 def config_presence() -> dict:
@@ -34,28 +63,68 @@ def config_presence() -> dict:
 
     Railway injects `RAILWAY_SERVICE_ID` / `RAILWAY_DEPLOYMENT_ID` on every
     service; include them so a live probe can be matched to the dashboard.
+
+    `agent_id_kind` / `agent_id_length` diagnose 400s from ElevenLabs without
+    exposing the id. Valid conversational agents start with `agent_` or `seng_`.
     """
     settings_api_key = _nonempty(getattr(settings, "ELEVENLABS_API_KEY", None))
-    settings_agent_id = _nonempty(getattr(settings, "ELEVENLABS_AGENT_ID", None))
+    raw_settings_agent = getattr(settings, "ELEVENLABS_AGENT_ID", None) or ""
+    raw_environ_agent = os.environ.get("ELEVENLABS_AGENT_ID") or ""
+    agent_id = _clean_secret(raw_settings_agent)
     return {
         "settings_api_key": settings_api_key,
-        "settings_agent_id": settings_agent_id,
+        "settings_agent_id": _nonempty(raw_settings_agent),
         "environ_api_key": _nonempty(os.environ.get("ELEVENLABS_API_KEY")),
-        "environ_agent_id": _nonempty(os.environ.get("ELEVENLABS_AGENT_ID")),
-        "configured": settings_api_key and settings_agent_id,
+        "environ_agent_id": _nonempty(raw_environ_agent),
+        "configured": settings_api_key and _nonempty(raw_settings_agent),
         "railway_service_id": (os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
         "railway_deployment_id": (os.environ.get("RAILWAY_DEPLOYMENT_ID") or "").strip(),
+        "agent_id_quoted": _is_quoted(raw_settings_agent) or _is_quoted(raw_environ_agent),
+        "agent_id_kind": _agent_id_kind(agent_id),
+        "agent_id_length": len(agent_id),
+        "api_base_host": _api_base_host(),
     }
 
 
 def _require_config():
-    api_key = (settings.ELEVENLABS_API_KEY or "").strip()
-    agent_id = (settings.ELEVENLABS_AGENT_ID or "").strip()
+    api_key = _clean_secret(settings.ELEVENLABS_API_KEY)
+    agent_id = _clean_secret(settings.ELEVENLABS_AGENT_ID)
     if not api_key or not agent_id:
         raise ElevenLabsConfigError(
             "ElevenLabs is not configured (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID)."
         )
     return api_key, agent_id
+
+
+def _elevenlabs_error_summary(response) -> str:
+    """Short, non-secret reason from an ElevenLabs error body."""
+    try:
+        data = response.json()
+    except ValueError:
+        text = (getattr(response, "text", None) or "").strip()
+        return f"{response.status_code} {text[:160]}".strip()
+
+    detail = data.get("detail") if isinstance(data, dict) else None
+    if isinstance(detail, dict):
+        msg = detail.get("message") or detail.get("code") or detail.get("status") or detail.get("type")
+        param = detail.get("param")
+        if msg and param:
+            return f"{response.status_code} {msg} ({param})"
+        if msg:
+            return f"{response.status_code} {msg}"
+    if isinstance(detail, list) and detail:
+        first = detail[0]
+        if isinstance(first, dict):
+            msg = first.get("msg") or first.get("message") or "validation_error"
+            loc = first.get("loc")
+            if loc:
+                return f"{response.status_code} {msg} loc={loc}"
+            return f"{response.status_code} {msg}"
+        if isinstance(first, str) and first.strip():
+            return f"{response.status_code} {first.strip()[:160]}"
+    if isinstance(detail, str) and detail.strip():
+        return f"{response.status_code} {detail.strip()[:160]}"
+    return str(response.status_code)
 
 
 def mint_conversation_credentials() -> dict:
@@ -66,7 +135,7 @@ def mint_conversation_credentials() -> dict:
     uses whichever connection type it supports.
     """
     api_key, agent_id = _require_config()
-    base = (settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
+    base = _clean_secret(settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
     headers = {"xi-api-key": api_key}
 
     signed_url = None
@@ -83,7 +152,7 @@ def mint_conversation_credentials() -> dict:
         if signed.ok:
             signed_url = (signed.json() or {}).get("signed_url")
         else:
-            errors.append(f"signed-url {signed.status_code}")
+            errors.append(f"signed-url {_elevenlabs_error_summary(signed)}")
             logger.warning(
                 "ElevenLabs signed-url failed status=%s body=%s",
                 signed.status_code,
@@ -104,7 +173,7 @@ def mint_conversation_credentials() -> dict:
             body = token_resp.json() or {}
             conversation_token = body.get("token") or body.get("conversation_token")
         else:
-            errors.append(f"token {token_resp.status_code}")
+            errors.append(f"token {_elevenlabs_error_summary(token_resp)}")
             logger.warning(
                 "ElevenLabs conversation token failed status=%s body=%s",
                 token_resp.status_code,
