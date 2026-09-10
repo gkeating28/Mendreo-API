@@ -363,7 +363,7 @@ class CustomLlmTests(TestCase):
         self.assertEqual(agent_message.text, "Voice reply from Toni")
 
     @override_settings(ELEVENLABS_LLM_FILLER="")
-    def test_empty_filler_is_not_spoken(self):
+    def test_empty_filler_still_keeps_the_sse_stream_alive(self):
         mocked = GeneralResponse(
             text="Voice reply from Toni",
             reasoning="should not be spoken",
@@ -376,7 +376,8 @@ class CustomLlmTests(TestCase):
             body = _sse_body(response)
 
         contents = _sse_contents(body)
-        self.assertEqual(contents, ["Voice reply from Toni"])
+        self.assertEqual(contents[0], "... ")
+        self.assertIn("Voice reply from Toni", contents)
         self.assertNotIn("Let me think about that", body)
 
     def test_conversation_id_mismatch_is_rejected(self):
@@ -426,6 +427,23 @@ class CustomLlmTests(TestCase):
             "latest spoken turn",
         )
 
+    def test_dict_user_content_is_parsed(self):
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(
+                self._payload(
+                    messages=[
+                        {"role": "user", "content": {"type": "text", "text": "dict spoken turn"}},
+                    ]
+                )
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            _sse_body(response)
+            user_message = get_agent_response.call_args.kwargs["consumer_message"]
+
+        self.assertEqual(user_message.text, "dict spoken turn")
+
     def test_empty_last_user_turn_does_not_replay_previous(self):
         mocked = GeneralResponse(text="should not speak", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:
@@ -456,10 +474,12 @@ class CustomLlmTests(TestCase):
             get_agent_response.return_value = mocked, {}, None, None
             first = self._post_completions(self._payload(user_text="hello again"))
             self.assertEqual(first.status_code, status.HTTP_200_OK)
+            _sse_body(first)
             self.assertEqual(get_agent_response.call_count, 1)
 
             second = self._post_completions(self._payload(user_text="hello again"))
             self.assertEqual(second.status_code, status.HTTP_200_OK)
+            _sse_body(second)
             self.assertEqual(get_agent_response.call_count, 1)
 
         self.assertEqual(

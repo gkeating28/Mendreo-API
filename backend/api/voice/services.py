@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+import threading
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Iterable
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from django.db.utils import IntegrityError
 from django.utils import timezone
@@ -34,7 +37,13 @@ logger = logging.getLogger(__name__)
 
 GENERAL_CHAT_ONLY = "Voice is only available for general chat."
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
+# ElevenLabs cascade_timeout_seconds defaults to 8s. Emit this before Gemini
+# so time-to-first-token is immediate. Trailing space keeps TTS from gluing
+# the real reply onto the ellipsis.
+ELEVENLABS_KEEPALIVE = "... "
 _HAS_SPEECH_RE = re.compile(r"[A-Za-z0-9]")
+_SESSION_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_SESSION_THREAD_GUARDS = threading.Lock()
 
 
 def _json_obj(value):
@@ -90,9 +99,48 @@ def usable_voice_user_text(text: str) -> str:
     return cleaned
 
 
+def spoken_llm_keepalive() -> str:
+    filler = (settings.ELEVENLABS_LLM_FILLER or "").strip()
+    if filler:
+        return filler if filler.endswith(" ") else f"{filler} "
+    return ELEVENLABS_KEEPALIVE
+
+
+def _session_lock_key(session_id: str) -> int:
+    digest = hashlib.sha256(str(session_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@contextmanager
+def session_generation_lock(session_id: str):
+    """Serialize Gemini for one chat session across Gunicorn workers."""
+    if connection.vendor == "postgresql":
+        key = _session_lock_key(session_id)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock(%s)", [key])
+        try:
+            yield
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
+        return
+
+    with _SESSION_THREAD_GUARDS:
+        lock = _SESSION_THREAD_LOCKS.setdefault(str(session_id), threading.Lock())
+    with lock:
+        yield
+
+
 def _message_content_text(content) -> str:
     if isinstance(content, str):
         return content.strip()
+    if isinstance(content, dict):
+        nested = content.get("text") or content.get("content")
+        if isinstance(nested, str):
+            return nested.strip()
+        if isinstance(nested, list):
+            return _message_content_text(nested)
+        return ""
     if isinstance(content, list):
         parts = []
         for block in content:
@@ -232,8 +280,10 @@ def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message:
     Neither helper reads the HTTP request or JWT — they only need Session + Message.
     Do not call POST /messages (that would enqueue/double-fire Gemini).
     """
+    session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
+    session.refresh_from_db(fields=["cached_history", "cached_prompt"])
     user_message = create_user_voice_message(grant=grant, text=user_text)
-    agent_message = Agent.get_response(session=grant.session, user_message=user_message)
+    agent_message = Agent.get_response(session=session, user_message=user_message)
     apply_agent_response(user_message, agent_message)
     return stamp_agent_voice_fields(agent_message, grant)
 
@@ -315,13 +365,11 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
             yield b"data: [DONE]\n\n"
             return
 
-        filler = (settings.ELEVENLABS_LLM_FILLER or "").strip()
-        if filler and not filler.endswith(" "):
-            filler = filler + " "
-        if filler:
-            yield sse_chunk(filler, chunk_id=chunk_id, created=created, model=model)
+        keepalive = spoken_llm_keepalive()
+        yield sse_chunk(keepalive, chunk_id=chunk_id, created=created, model=model)
 
-        agent_message = run_toni_reply(grant, user_text)
+        with session_generation_lock(grant.session_id):
+            agent_message = run_toni_reply(grant, user_text)
         text = (agent_message.text or "").strip()
         if text:
             yield sse_chunk(text, chunk_id=chunk_id, created=created, model=model)

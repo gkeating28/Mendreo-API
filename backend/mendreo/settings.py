@@ -296,7 +296,8 @@ ELEVENLABS_LLM_SECRET = os.environ.get('ELEVENLABS_LLM_SECRET', '')
 # Distinct from ELEVENLABS_LLM_SECRET. Used to HMAC-verify post-call webhooks.
 ELEVENLABS_WEBHOOK_SECRET = os.environ.get('ELEVENLABS_WEBHOOK_SECRET', '')
 ELEVENLABS_GRANT_TTL_HOURS = int(os.environ.get('ELEVENLABS_GRANT_TTL_HOURS', '4'))
-# Optional first SSE tokens spoken while Gemini runs. Empty = no filler (preferred).
+# Optional first SSE tokens spoken while Gemini runs. Empty still emits "... "
+# so ElevenLabs does not cascade-timeout before the first real token.
 ELEVENLABS_LLM_FILLER = os.environ.get('ELEVENLABS_LLM_FILLER', '')
 ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE', 'https://api.elevenlabs.io')
 
