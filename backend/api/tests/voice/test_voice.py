@@ -67,6 +67,7 @@ _PROBE_KEYS = _PROBE_BOOL_KEYS | {
     "railway_deployment_id",
     "agent_id_kind",
     "agent_id_length",
+    "api_key_kind",
     "api_base_host",
 }
 
@@ -87,6 +88,7 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertFalse(response.json["agent_id_quoted"])
         self.assertEqual(response.json["agent_id_kind"], "missing")
         self.assertEqual(response.json["agent_id_length"], 0)
+        self.assertEqual(response.json["api_key_kind"], "missing")
         self.assertIsInstance(response.json["api_base_host"], str)
 
     @mock.patch.dict(
@@ -115,6 +117,7 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertNotIn("agent-test", dumped)
         self.assertEqual(response.json["agent_id_kind"], "other")
         self.assertEqual(response.json["agent_id_length"], 10)
+        self.assertEqual(response.json["api_key_kind"], "other")
         self.assertFalse(response.json["agent_id_quoted"])
 
     @override_settings(ELEVENLABS_API_KEY="  ", ELEVENLABS_AGENT_ID="agent-test")
@@ -125,7 +128,7 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertTrue(response.json["settings_agent_id"])
         self.assertFalse(response.json["configured"])
 
-    @override_settings(ELEVENLABS_API_KEY='"sk-test"', ELEVENLABS_AGENT_ID='"agent_abc"')
+    @override_settings(ELEVENLABS_API_KEY='"sk_test"', ELEVENLABS_AGENT_ID='"agent_abc"')
     def test_quoted_agent_id_is_cleaned_in_probe(self):
         response = self._get("/healthz/elevenlabs")
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
@@ -133,13 +136,24 @@ class ElevenLabsConfigProbeTests(TestCase):
         self.assertTrue(response.json["agent_id_quoted"])
         self.assertEqual(response.json["agent_id_kind"], "agent")
         self.assertEqual(response.json["agent_id_length"], 9)
+        self.assertEqual(response.json["api_key_kind"], "sk")
         dumped = json.dumps(response.json)
         self.assertNotIn("agent_abc", dumped)
+        self.assertNotIn("sk_test", dumped)
+
+    @override_settings(ELEVENLABS_API_KEY="key_abc123", ELEVENLABS_AGENT_ID="agent_abc")
+    def test_reports_api_key_id_without_value(self):
+        response = self._get("/healthz/elevenlabs")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertTrue(response.json["configured"])
+        self.assertEqual(response.json["api_key_kind"], "key_id")
+        dumped = json.dumps(response.json)
+        self.assertNotIn("key_abc123", dumped)
 
 
 class MintConversationCredentialsTests(TestCase):
     @override_settings(
-        ELEVENLABS_API_KEY='"sk-test"',
+        ELEVENLABS_API_KEY='"sk_test"',
         ELEVENLABS_AGENT_ID='"agent_abc"',
         ELEVENLABS_API_BASE="https://api.elevenlabs.io",
     )
@@ -171,7 +185,21 @@ class MintConversationCredentialsTests(TestCase):
         self.assertEqual(get.call_count, 2)
         for call in get.call_args_list:
             self.assertEqual(call.kwargs["params"]["agent_id"], "agent_abc")
-            self.assertEqual(call.kwargs["headers"]["xi-api-key"], "sk-test")
+            self.assertEqual(call.kwargs["headers"]["xi-api-key"], "sk_test")
+
+    @override_settings(ELEVENLABS_API_KEY="key_not_a_secret", ELEVENLABS_AGENT_ID="agent_abc")
+    @mock.patch("api.voice.elevenlabs_client.requests.get")
+    def test_rejects_api_key_id_without_calling_elevenlabs(self, get):
+        from api.voice.elevenlabs_client import (
+            ElevenLabsConfigError,
+            mint_conversation_credentials,
+        )
+
+        with self.assertRaises(ElevenLabsConfigError) as ctx:
+            mint_conversation_credentials()
+
+        self.assertIn("sk_…", str(ctx.exception))
+        get.assert_not_called()
 
 
 class VoiceTokenTests(TestCase):

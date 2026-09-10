@@ -49,6 +49,16 @@ def _agent_id_kind(agent_id: str) -> str:
     return "other"
 
 
+def _api_key_kind(api_key: str) -> str:
+    if not api_key:
+        return "missing"
+    if api_key.startswith("sk_"):
+        return "sk"
+    if api_key.startswith("key_"):
+        return "key_id"
+    return "other"
+
+
 def _api_base_host() -> str:
     base = _clean_secret(getattr(settings, "ELEVENLABS_API_BASE", None) or "https://api.elevenlabs.io")
     return urlparse(base).netloc or base
@@ -66,15 +76,20 @@ def config_presence() -> dict:
 
     `agent_id_kind` / `agent_id_length` diagnose 400s from ElevenLabs without
     exposing the id. Valid conversational agents start with `agent_` or `seng_`.
+    `api_key_kind` is `sk` for secrets (`sk_…`); `key_id` means the dashboard
+    key identifier was stored instead of the secret.
     """
-    settings_api_key = _nonempty(getattr(settings, "ELEVENLABS_API_KEY", None))
+    raw_settings_key = getattr(settings, "ELEVENLABS_API_KEY", None) or ""
+    raw_environ_key = os.environ.get("ELEVENLABS_API_KEY") or ""
+    settings_api_key = _nonempty(raw_settings_key)
     raw_settings_agent = getattr(settings, "ELEVENLABS_AGENT_ID", None) or ""
     raw_environ_agent = os.environ.get("ELEVENLABS_AGENT_ID") or ""
     agent_id = _clean_secret(raw_settings_agent)
+    api_key = _clean_secret(raw_settings_key)
     return {
         "settings_api_key": settings_api_key,
         "settings_agent_id": _nonempty(raw_settings_agent),
-        "environ_api_key": _nonempty(os.environ.get("ELEVENLABS_API_KEY")),
+        "environ_api_key": _nonempty(raw_environ_key),
         "environ_agent_id": _nonempty(raw_environ_agent),
         "configured": settings_api_key and _nonempty(raw_settings_agent),
         "railway_service_id": (os.environ.get("RAILWAY_SERVICE_ID") or "").strip(),
@@ -82,8 +97,15 @@ def config_presence() -> dict:
         "agent_id_quoted": _is_quoted(raw_settings_agent) or _is_quoted(raw_environ_agent),
         "agent_id_kind": _agent_id_kind(agent_id),
         "agent_id_length": len(agent_id),
+        "api_key_kind": _api_key_kind(api_key),
         "api_base_host": _api_base_host(),
     }
+
+
+API_KEY_ID_MESSAGE = (
+    "ELEVENLABS_API_KEY is a key ID, not the secret. "
+    "Paste the sk_… value shown once when the key is created or rotated."
+)
 
 
 def _require_config():
@@ -93,6 +115,8 @@ def _require_config():
         raise ElevenLabsConfigError(
             "ElevenLabs is not configured (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID)."
         )
+    if not api_key.startswith("sk_"):
+        raise ElevenLabsConfigError(API_KEY_ID_MESSAGE)
     return api_key, agent_id
 
 
