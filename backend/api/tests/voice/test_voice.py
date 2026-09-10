@@ -376,9 +376,40 @@ class CustomLlmTests(TestCase):
             body = _sse_body(response)
 
         contents = _sse_contents(body)
-        self.assertEqual(contents[0], "... ")
+        self.assertEqual(contents[0], "Let me think about that... ")
         self.assertIn("Voice reply from Toni", contents)
-        self.assertNotIn("Let me think about that", body)
+        self.assertIn("flush_padding", body)
+
+    def test_filler_and_flush_precede_gemini(self):
+        mocked = GeneralResponse(
+            text="Voice reply from Toni",
+            reasoning="r",
+            suggested_responses=[],
+        )
+        called = []
+
+        def track(*args, **kwargs):
+            called.append(1)
+            return mocked, {}, None, None
+
+        with mock.patch("api.utils.Agent.get_response", side_effect=track):
+            response = self._post_completions(self._payload())
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            iterator = iter(response.streaming_content)
+
+            first = next(iterator)
+            self.assertIn(b"Let me think about that... ", first)
+            self.assertEqual(called, [])
+
+            second = next(iterator)
+            self.assertGreater(len(second), 8000)
+            self.assertIn(b"flush_padding", second)
+            self.assertEqual(called, [])
+
+            rest = b"".join(iterator)
+
+        self.assertEqual(called, [1])
+        self.assertIn(b"Voice reply from Toni", rest)
 
     def test_conversation_id_mismatch_is_rejected(self):
         mocked = GeneralResponse(text="ok", reasoning="r", suggested_responses=[])
@@ -479,8 +510,9 @@ class CustomLlmTests(TestCase):
 
             second = self._post_completions(self._payload(user_text="hello again"))
             self.assertEqual(second.status_code, status.HTTP_200_OK)
-            _sse_body(second)
+            second_body = _sse_body(second)
             self.assertEqual(get_agent_response.call_count, 1)
+            self.assertIn("Heard you", _sse_contents(second_body))
 
         self.assertEqual(
             Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),

@@ -37,10 +37,16 @@ logger = logging.getLogger(__name__)
 
 GENERAL_CHAT_ONLY = "Voice is only available for general chat."
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
-# ElevenLabs cascade_timeout_seconds defaults to 8s. Emit this before Gemini
-# so time-to-first-token is immediate. Trailing space keeps TTS from gluing
-# the real reply onto the ellipsis.
-ELEVENLABS_KEEPALIVE = "... "
+# Official Custom LLM buffer words (docs: "Let me think about that... ").
+# "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
+# tiny first chunk is often held in Railway/Gunicorn buffers until Gemini
+# finishes — which is after cascade_timeout_seconds (default 8s).
+ELEVENLABS_KEEPALIVE = "Let me think about that... "
+SSE_FLUSH_PAD_CHARS = 8192
+# Postgres statement_timeout is 20s by default; a second Talk turn waiting
+# on pg_advisory_lock during Gemini would be cancelled. Cover one Gemini run.
+LOCK_WAIT_STATEMENT_TIMEOUT = "120s"
+RESTORE_STATEMENT_TIMEOUT = "20s"
 _HAS_SPEECH_RE = re.compile(r"[A-Za-z0-9]")
 _SESSION_THREAD_LOCKS: dict[str, threading.Lock] = {}
 _SESSION_THREAD_GUARDS = threading.Lock()
@@ -113,16 +119,22 @@ def _session_lock_key(session_id: str) -> int:
 
 @contextmanager
 def session_generation_lock(session_id: str):
-    """Serialize Gemini for one chat session across Gunicorn workers."""
+    """Serialize Gemini for one chat session across Gunicorn workers.
+
+    Must only be entered after the SSE filler + flush padding have already
+    been yielded. This lock must never run before the first byte is sent.
+    """
     if connection.vendor == "postgresql":
         key = _session_lock_key(session_id)
         with connection.cursor() as cursor:
+            cursor.execute(f"SET statement_timeout = '{LOCK_WAIT_STATEMENT_TIMEOUT}'")
             cursor.execute("SELECT pg_advisory_lock(%s)", [key])
         try:
             yield
         finally:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
+                cursor.execute(f"SET statement_timeout = '{RESTORE_STATEMENT_TIMEOUT}'")
         return
 
     with _SESSION_THREAD_GUARDS:
@@ -305,6 +317,29 @@ def sse_chunk(content: str | None, *, finish_reason=None, chunk_id: str, created
     return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
 
 
+def sse_flush_padding(*, chunk_id: str, created: int, model: str) -> bytes:
+    """Second SSE chunk large enough to push the filler through proxy buffers.
+
+    Empty content so TTS does not speak the padding. Extra key is ignored by
+    OpenAI-compatible clients; ElevenLabs reads choices[].delta.content.
+    """
+    payload = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": ""},
+                "finish_reason": None,
+            }
+        ],
+        "flush_padding": " " * SSE_FLUSH_PAD_CHARS,
+    }
+    return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+
+
 def iter_silent_completion_sse() -> Iterable[bytes]:
     """Acknowledge a non-turn (silence / duplicate) without calling Gemini."""
     created = int(time.time())
@@ -331,6 +366,49 @@ def is_repeat_voice_utterance(grant: VoiceGrant, user_text: str) -> bool:
     return last.created_at >= timezone.now() - VOICE_DUPLICATE_WINDOW
 
 
+def existing_agent_reply_for_utterance(grant: VoiceGrant, user_text: str) -> str:
+    """Replay Toni's already-saved reply when ElevenLabs retries a cascaded turn."""
+    last_user = (
+        Message.objects.filter(
+            session=grant.session,
+            sender__consumer=grant.consumer,
+            voice_conversation_id=voice_conversation_key(grant),
+        )
+        .filter(text=user_text.strip())
+        .order_by("-created_at")
+        .first()
+    )
+    if last_user is None:
+        return ""
+    agent = (
+        Message.objects.filter(
+            session=grant.session,
+            sender__agent=grant.consumer.agent,
+            created_at__gte=last_user.created_at,
+        )
+        .order_by("created_at")
+        .first()
+    )
+    return (agent.text or "").strip() if agent else ""
+
+
+def produce_spoken_turn(grant: VoiceGrant, user_text: str) -> str:
+    """Repeat / offer / Gemini under the session lock. Returns text to speak."""
+    if is_repeat_voice_utterance(grant, user_text):
+        replay = existing_agent_reply_for_utterance(grant, user_text)
+        if replay:
+            return replay
+
+    offer_result = try_voice_offer_reply(grant, user_text)
+    if offer_result is not None:
+        if getattr(offer_result.sender, "agent_id", None):
+            return (offer_result.text or "").strip()
+        return ""
+
+    agent_message = run_toni_reply(grant, user_text)
+    return (agent_message.text or "").strip()
+
+
 def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
     """Route spoken Yes/No through the chip handler. None = not an offer turn."""
     chip = spoken_offer_chip(user_text)
@@ -349,30 +427,16 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
     model = "mendreo-toni"
 
     try:
-        if is_repeat_voice_utterance(grant, user_text):
-            yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
-            yield b"data: [DONE]\n\n"
-            return
-
-        offer_result = try_voice_offer_reply(grant, user_text)
-        if offer_result is not None:
-            spoken = ""
-            if getattr(offer_result.sender, "agent_id", None):
-                spoken = (offer_result.text or "").strip()
-            if spoken:
-                yield sse_chunk(spoken, chunk_id=chunk_id, created=created, model=model)
-            yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
-            yield b"data: [DONE]\n\n"
-            return
-
-        keepalive = spoken_llm_keepalive()
-        yield sse_chunk(keepalive, chunk_id=chunk_id, created=created, model=model)
+        # First two yields must do no DB and no lock. WSGI only writes a chunk
+        # after next() returns; a later lock/Gemini wait cannot delay these
+        # once they have been yielded — but proxies still need ~8KB to flush.
+        yield sse_chunk(spoken_llm_keepalive(), chunk_id=chunk_id, created=created, model=model)
+        yield sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
 
         with session_generation_lock(grant.session_id):
-            agent_message = run_toni_reply(grant, user_text)
-        text = (agent_message.text or "").strip()
-        if text:
-            yield sse_chunk(text, chunk_id=chunk_id, created=created, model=model)
+            spoken = produce_spoken_turn(grant, user_text)
+        if spoken:
+            yield sse_chunk(spoken, chunk_id=chunk_id, created=created, model=model)
         yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
         yield b"data: [DONE]\n\n"
     except Exception:

@@ -64,6 +64,7 @@ class ElevenLabsChatCompletions(APIView):
             )
             response["Cache-Control"] = "no-cache"
             response["X-Accel-Buffering"] = "no"
+            response["Connection"] = "keep-alive"
             return response
 
         # Explicitly ignore extra_body user/consumer ids — they are not trusted.
@@ -80,6 +81,7 @@ class ElevenLabsChatCompletions(APIView):
         )
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
+        response["Connection"] = "keep-alive"
         return response
 
 
