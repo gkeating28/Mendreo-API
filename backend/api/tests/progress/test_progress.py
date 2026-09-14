@@ -6,11 +6,11 @@ from django.utils import timezone
 from rest_framework import status
 
 from ..utils.BaseTest import BaseTest
-from ..utils.manager import General
+from ..utils.manager import Auth, General
 from ..TestCase import TestCase
 from ...exercise.models import Exercise
 from ...knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
-from ...progress.models import UserObservation
+from ...progress.models import ScaleSubmission, UserObservation
 from ...progress.services import generate_observation_for_consumer, get_streaks
 from ...session.models import Session
 from ...setting.models import Setting
@@ -493,3 +493,134 @@ class ProgressApiTests(BaseTest):
         self.assertIsNotNone(created)
         self.assertEqual(created.topic_tag, "sleep")
         self.assertEqual(get_streaks(self.consumer_one)["check_in"]["current"], 0)
+
+
+class CheckInApiTests(BaseTest):
+    def endpoint(self):
+        return "progress"
+
+    def _answers(self, anxiety=None, positive_emotion=None):
+        return {
+            "anxiety": anxiety if anxiety is not None else [1, 2, 3, 2, 1],
+            "positive_emotion": (
+                positive_emotion if positive_emotion is not None else [3, 3, 2, 4, 1]
+            ),
+        }
+
+    def _get_check_ins(self, query=None, access_token=None):
+        return TestCase._get(
+            "/progress/check-ins",
+            query_params_dict=query or {},
+            access_token=access_token or self.consumer_one_access_token,
+        )
+
+    def _post_check_ins(self, data=None, access_token=None):
+        return TestCase._post(
+            "/progress/check-ins",
+            data if data is not None else self._answers(),
+            access_token=access_token or self.consumer_one_access_token,
+        )
+
+    def test_get_empty_and_post_creates_both_scales(self):
+        empty = self._get_check_ins()
+        self.assertEqual(empty.status_code, status.HTTP_200_OK, empty.json)
+        self.assertFalse(empty.json["submitted_today"])
+        self.assertEqual(empty.json["anxiety"], [])
+        self.assertEqual(empty.json["positive_emotion"], [])
+
+        created = self._post_check_ins()
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.json)
+        self.assertTrue(created.json["submitted_today"])
+        self.assertEqual(created.json["anxiety"]["score"], 9)
+        self.assertEqual(created.json["positive_emotion"]["score"], 13)
+        self.assertTrue(created.json["anxiety"]["id"].startswith("ssub_"))
+        self.assertTrue(created.json["positive_emotion"]["id"].startswith("ssub_"))
+        today = DateUtils.progress_calendar_date().isoformat()
+        self.assertEqual(created.json["submitted_on"], today)
+
+        listed = self._get_check_ins()
+        self.assertEqual(listed.status_code, status.HTTP_200_OK, listed.json)
+        self.assertTrue(listed.json["submitted_today"])
+        self.assertEqual(listed.json["anxiety"], [{"date": today, "score": 9}])
+        self.assertEqual(listed.json["positive_emotion"], [{"date": today, "score": 13}])
+        self.assertEqual(ScaleSubmission.objects.filter(consumer=self.consumer_one).count(), 2)
+
+    def test_second_post_same_day_is_conflict(self):
+        first = self._post_check_ins()
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.json)
+        second = self._post_check_ins(self._answers(anxiety=[0, 0, 0, 0, 0]))
+        self.assertEqual(second.status_code, status.HTTP_409_CONFLICT, second.json)
+        self.assertEqual(second.json["detail"], "Check-in already submitted today.")
+        self.assertEqual(ScaleSubmission.objects.filter(consumer=self.consumer_one).count(), 2)
+
+    def test_partial_existing_row_blocks_resubmit(self):
+        ScaleSubmission.objects.create(
+            consumer=self.consumer_one,
+            scale_type=Constants.SCALE_TYPE_ANXIETY,
+            total_score=4,
+            submitted_on=DateUtils.progress_calendar_date(),
+        )
+        response = self._post_check_ins()
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.json)
+        self.assertEqual(ScaleSubmission.objects.filter(consumer=self.consumer_one).count(), 1)
+
+    def test_invalid_answers_rejected(self):
+        cases = [
+            {"anxiety": [1, 2, 3], "positive_emotion": [1, 2, 3, 4, 0]},
+            {"anxiety": [1, 2, 3, 4, 5], "positive_emotion": [1, 2, 3, 4, 0]},
+            {"anxiety": [1, 2, 3, 4, 0]},
+            {"positive_emotion": [1, 2, 3, 4, 0]},
+        ]
+        for payload in cases:
+            response = self._post_check_ins(payload)
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.json)
+        self.assertFalse(ScaleSubmission.objects.filter(consumer=self.consumer_one).exists())
+
+    def test_date_range_filters_points_but_submitted_today_is_global(self):
+        today = DateUtils.progress_calendar_date()
+        older = today - timedelta(days=10)
+        for scale_type, score, day in (
+            (Constants.SCALE_TYPE_ANXIETY, 6, older),
+            (Constants.SCALE_TYPE_POSITIVE_EMOTION, 14, older),
+            (Constants.SCALE_TYPE_ANXIETY, 8, today),
+            (Constants.SCALE_TYPE_POSITIVE_EMOTION, 11, today),
+        ):
+            ScaleSubmission.objects.create(
+                consumer=self.consumer_one,
+                scale_type=scale_type,
+                total_score=score,
+                submitted_on=day,
+            )
+
+        ranged = self._get_check_ins(
+            {"from": older.isoformat(), "to": older.isoformat()}
+        )
+        self.assertEqual(ranged.status_code, status.HTTP_200_OK, ranged.json)
+        self.assertTrue(ranged.json["submitted_today"])
+        self.assertEqual(ranged.json["anxiety"], [{"date": older.isoformat(), "score": 6}])
+        self.assertEqual(
+            ranged.json["positive_emotion"],
+            [{"date": older.isoformat(), "score": 14}],
+        )
+
+    def test_consumer_cannot_see_or_affect_other_check_ins(self):
+        other = Auth.create_consumer()
+        other_token = Auth.get_access_token(other.user)
+        created = self._post_check_ins(access_token=other_token)
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.json)
+
+        listed = self._get_check_ins()
+        self.assertEqual(listed.status_code, status.HTTP_200_OK, listed.json)
+        self.assertFalse(listed.json["submitted_today"])
+        self.assertEqual(listed.json["anxiety"], [])
+
+        own = self._post_check_ins()
+        self.assertEqual(own.status_code, status.HTTP_201_CREATED, own.json)
+        self.assertEqual(ScaleSubmission.objects.filter(consumer=other).count(), 2)
+        self.assertEqual(ScaleSubmission.objects.filter(consumer=self.consumer_one).count(), 2)
+
+    def test_admin_cannot_access_check_ins(self):
+        listed = self._get_check_ins(access_token=self.admin_one_access_token)
+        self.assertEqual(listed.status_code, status.HTTP_403_FORBIDDEN)
+        created = self._post_check_ins(access_token=self.admin_one_access_token)
+        self.assertEqual(created.status_code, status.HTTP_403_FORBIDDEN)

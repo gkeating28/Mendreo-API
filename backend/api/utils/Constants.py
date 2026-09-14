@@ -424,6 +424,16 @@ PROGRESS_ACTIVITY_MAX_MINUTES = 90
 # Agent replies while the tab is left open must not fill the bar.
 PROGRESS_ACTIVITY_IDLE_GAP_MINUTES = 10
 
+# Progress check-in scales (ScaleSubmission). Questions are hardcoded in code.
+SCALE_TYPE_ANXIETY = "anxiety"
+SCALE_TYPE_POSITIVE_EMOTION = "positive_emotion"
+SCALE_TYPES = [SCALE_TYPE_ANXIETY, SCALE_TYPE_POSITIVE_EMOTION]
+SCALE_ITEM_COUNT = 5
+SCALE_ITEM_MIN = 0
+SCALE_ITEM_MAX = 4
+SCALE_TOTAL_MIN = 0
+SCALE_TOTAL_MAX = 20  # 5 items × 0–4
+
 # Dedicated mood check-ins (MoodEntry): 1–5 scale with fixed labels.
 MOOD_SCORE_MIN = 1
 MOOD_SCORE_MAX = 5

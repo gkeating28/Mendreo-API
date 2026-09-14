@@ -6,8 +6,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
+from django.db import transaction
 from django.db.models import Q
 from django.db.models.functions import Coalesce
+from django.db.utils import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -15,7 +17,11 @@ from ..knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
 from ..session.models import Session
 from ..setting.models import Setting
 from ..utils import Constants, DateUtils
-from .models import UserObservation
+from .models import ScaleSubmission, UserObservation
+
+
+class CheckInAlreadySubmitted(Exception):
+    """Consumer already has a scale submission for today."""
 
 
 def parse_date_range(request) -> tuple[date, date]:
@@ -588,3 +594,89 @@ def _recent_transcript_excerpt(consumer, days: int = 7) -> str:
         text = (message.text or "")[:280]
         lines.append(f"{who}: {text}")
     return "\n".join(lines) if lines else "(no recent messages)"
+
+
+# --- Psychological scale check-ins ---
+
+
+def _today_scale_types(consumer, day: date) -> set[str]:
+    return set(
+        ScaleSubmission.objects.filter(consumer=consumer, submitted_on=day).values_list(
+            "scale_type", flat=True
+        )
+    )
+
+
+def has_submitted_check_in_today(consumer, day: Optional[date] = None) -> bool:
+    day = day or DateUtils.progress_calendar_date()
+    types = _today_scale_types(consumer, day)
+    return (
+        Constants.SCALE_TYPE_ANXIETY in types
+        and Constants.SCALE_TYPE_POSITIVE_EMOTION in types
+    )
+
+
+def get_check_in_progress(consumer, start: date, end: date) -> dict:
+    rows = ScaleSubmission.objects.filter(
+        consumer=consumer,
+        submitted_on__gte=start,
+        submitted_on__lte=end,
+    ).order_by("submitted_on", "scale_type")
+
+    anxiety = []
+    positive_emotion = []
+    for row in rows:
+        point = {"date": row.submitted_on.isoformat(), "score": row.total_score}
+        if row.scale_type == Constants.SCALE_TYPE_ANXIETY:
+            anxiety.append(point)
+        elif row.scale_type == Constants.SCALE_TYPE_POSITIVE_EMOTION:
+            positive_emotion.append(point)
+
+    return {
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "submitted_today": has_submitted_check_in_today(consumer),
+        "anxiety": anxiety,
+        "positive_emotion": positive_emotion,
+    }
+
+
+def _submission_payload(row: ScaleSubmission) -> dict:
+    return {"id": row.id, "score": row.total_score}
+
+
+def submit_check_in(consumer, anxiety_answers, positive_emotion_answers) -> dict:
+    """
+    Persist both scales for Ireland-today. Raises CheckInAlreadySubmitted if
+    either scale already exists for this consumer today.
+    """
+    today = DateUtils.progress_calendar_date()
+    anxiety_score = sum(anxiety_answers)
+    positive_score = sum(positive_emotion_answers)
+
+    if _today_scale_types(consumer, today):
+        raise CheckInAlreadySubmitted()
+
+    try:
+        with transaction.atomic():
+            anxiety = ScaleSubmission.objects.create(
+                consumer=consumer,
+                scale_type=Constants.SCALE_TYPE_ANXIETY,
+                total_score=anxiety_score,
+                submitted_on=today,
+            )
+            positive = ScaleSubmission.objects.create(
+                consumer=consumer,
+                scale_type=Constants.SCALE_TYPE_POSITIVE_EMOTION,
+                total_score=positive_score,
+                submitted_on=today,
+            )
+    except IntegrityError as exc:
+        raise CheckInAlreadySubmitted() from exc
+
+    return {
+        "submitted_on": today.isoformat(),
+        "submitted_today": True,
+        "anxiety": _submission_payload(anxiety),
+        "positive_emotion": _submission_payload(positive),
+    }

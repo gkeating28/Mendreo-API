@@ -28,8 +28,8 @@ class ExerciseReflection(SmartModel):
 
     class Meta:
         indexes = [
-            models.Index(fields=["session", "step_id"]),
-            models.Index(fields=["consumer", "-updated_at"]),
+            models.Index(fields=["session", "step_id"], name="api_rflc_session_step_idx"),
+            models.Index(fields=["consumer", "-updated_at"], name="api_rflc_consumer_upd_idx"),
         ]
 
     def __str__(self):
