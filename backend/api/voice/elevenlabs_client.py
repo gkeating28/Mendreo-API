@@ -108,10 +108,19 @@ API_KEY_ID_MESSAGE = (
 )
 
 
-# Sarah — soft, conversational. Settings voice-picker will override later.
-DEFAULT_TTS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
+DEFAULT_VOICE_ID = "female_irish"
+VOICE_LIBRARY_IDS = {
+    "male_irish": "RlSVB64yXMZJjq67jbB1",
+    "female_irish": "3b8fXc91YHS1i2DYAlBQ",
+}
 DEFAULT_TTS_MODEL_ID = "eleven_flash_v2_5"
 TTS_OUTPUT_FORMAT = "mp3_44100_128"
+
+
+def resolve_elevenlabs_voice(voice_id: str | None) -> tuple[str, str]:
+    """Map a UserSettings.voice_id key to the ElevenLabs library ID."""
+    key = voice_id if voice_id in VOICE_LIBRARY_IDS else DEFAULT_VOICE_ID
+    return key, VOICE_LIBRARY_IDS[key]
 
 
 def _require_api_key() -> str:
@@ -133,18 +142,14 @@ def _require_config():
     return api_key, agent_id
 
 
-def tts_voice_id() -> str:
-    return _clean_secret(getattr(settings, "ELEVENLABS_TTS_VOICE_ID", None)) or DEFAULT_TTS_VOICE_ID
-
-
 def tts_model_id() -> str:
     return _clean_secret(getattr(settings, "ELEVENLABS_TTS_MODEL_ID", None)) or DEFAULT_TTS_MODEL_ID
 
 
-def synthesize_speech(text: str) -> tuple[bytes, str]:
+def synthesize_speech(text: str, elevenlabs_voice_id: str) -> tuple[bytes, str]:
     """Standard ElevenLabs TTS (not Conversational AI). Returns (audio, content_type)."""
     api_key = _require_api_key()
-    voice_id = tts_voice_id()
+    voice_id = _clean_secret(elevenlabs_voice_id)
     model_id = tts_model_id()
     base = _clean_secret(settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
 

@@ -222,6 +222,7 @@ class UserSettingsDetailSerializer(ListModelSerializer):
             "notification_daily_reminder_time",
             "chat_text_size",
             "chat_speed",
+            "voice_id",
         ]
 
 
@@ -232,6 +233,7 @@ class UserSettingsEditSerializer(EditModelSerializer):
     notification_daily_reminder_time = serializers.TimeField(required=False, allow_null=True)
     chat_text_size = serializers.CharField(required=False)
     chat_speed = serializers.CharField(required=False)
+    voice_id = serializers.CharField(required=False)
 
     class Meta:
         model = UserSettings
@@ -242,6 +244,7 @@ class UserSettingsEditSerializer(EditModelSerializer):
             "notification_daily_reminder_time",
             "chat_text_size",
             "chat_speed",
+            "voice_id",
         ]
 
     def validate_timezone(self, value):
@@ -265,6 +268,14 @@ class UserSettingsEditSerializer(EditModelSerializer):
             self.raise_validation_error(
                 "chat_speed",
                 "Must be one of: instant, normal, slow",
+            )
+        return value
+
+    def validate_voice_id(self, value):
+        if value not in UserSettings.VoiceId.values:
+            self.raise_validation_error(
+                "voice_id",
+                "Must be one of: male_irish, female_irish",
             )
         return value
 

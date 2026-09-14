@@ -287,11 +287,11 @@ The worker exposes:
 | `POST /internal/ai/session-greeting` | Exercise session opener |
 | `POST /internal/elevenlabs/v1/chat/completions` | ElevenLabs Custom LLM (Gemini inline, SSE) |
 | `POST /internal/elevenlabs/webhook` | ElevenLabs post-call transcript safety net |
-| All public API routes | Available but normally unused (`POST /voice/token` is the Talk mint; `POST /voice/tts` is typed-message read-aloud) |
+| All public API routes | Available but normally unused (`POST /voice/token` is the Talk mint; `POST /voice/tts` is typed-message read-aloud; `POST /voice/preview` is the voice-picker sample) |
 
 Internal AI endpoints require header: `X-Internal-Secret: <INTERNAL_API_SECRET>`.
 
-**ElevenLabs Custom LLM must target the Railway worker HTTPS host**, not Vercel. Vercel is the public JWT API (including `POST /voice/token` and `POST /voice/tts`); Gemini for voice runs inline on the worker the same way `/internal/ai/message-response` does. Point the agent's Custom LLM server URL at:
+**ElevenLabs Custom LLM must target the Railway worker HTTPS host**, not Vercel. Vercel is the public JWT API (including `POST /voice/token`, `POST /voice/tts`, and `POST /voice/preview`); Gemini for voice runs inline on the worker the same way `/internal/ai/message-response` does. Point the agent's Custom LLM server URL at:
 
 `https://<worker-host>/internal/elevenlabs/v1/chat/completions`
 
@@ -454,7 +454,6 @@ bash run_dev.sh
 | `CRON_SECRET` | yes | no | no |
 | `ELEVENLABS_API_KEY` | optional (token mint + TTS) | yes (staging) | optional |
 | `ELEVENLABS_AGENT_ID` | optional (token mint) | yes (staging) | optional |
-| `ELEVENLABS_TTS_VOICE_ID` | optional (read-aloud default) | optional | optional |
 | `ELEVENLABS_TTS_MODEL_ID` | optional (read-aloud model) | optional | optional |
 | `ELEVENLABS_LLM_SECRET` | no (Custom LLM hits worker) | yes (staging) | optional |
 | `ELEVENLABS_WEBHOOK_SECRET` | no (webhook hits worker) | yes (staging) | optional |

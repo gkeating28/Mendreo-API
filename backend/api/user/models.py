@@ -90,6 +90,10 @@ class UserSettings(SmartModel):
         NORMAL = "normal"
         SLOW = "slow"
 
+    class VoiceId(models.TextChoices):
+        MALE_IRISH = "male_irish", "Male"
+        FEMALE_IRISH = "female_irish", "Female"
+
     chat_text_size = models.CharField(
         max_length=16,
         choices=ChatTextSize.choices,
@@ -99,6 +103,11 @@ class UserSettings(SmartModel):
         max_length=16,
         choices=ChatSpeed.choices,
         default=ChatSpeed.NORMAL,
+    )
+    voice_id = models.CharField(
+        max_length=16,
+        choices=VoiceId.choices,
+        default=VoiceId.FEMALE_IRISH,
     )
 
     def __str__(self):

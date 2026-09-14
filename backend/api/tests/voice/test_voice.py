@@ -4,7 +4,7 @@ import json
 import time
 from unittest import mock
 
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -13,16 +13,46 @@ from ...message.models import Message
 from ...participant.models import Participant
 from ...tests.TestCase import TestCase
 from ...utils.Agent import GeneralResponse
-from ...voice.elevenlabs_client import DEFAULT_TTS_MODEL_ID, DEFAULT_TTS_VOICE_ID
+from ...user.models import UserSettings
+from ...voice.elevenlabs_client import (
+    DEFAULT_TTS_MODEL_ID,
+    DEFAULT_VOICE_ID,
+    VOICE_LIBRARY_IDS,
+    resolve_elevenlabs_voice,
+)
 from ...voice.models import VoiceGrant, hash_grant_token
+from ...voice.services import VOICE_PREVIEW_TEXT
 from ..utils.manager import Auth, General
 
 LLM_SECRET = "test-elevenlabs-llm-secret"
 WEBHOOK_SECRET = "test-elevenlabs-webhook-secret"
 VOICE_TOKEN_PATH = "/voice/token"
 VOICE_TTS_PATH = "/voice/tts"
+VOICE_PREVIEW_PATH = "/voice/preview"
 CHAT_COMPLETIONS_PATH = "/internal/elevenlabs/v1/chat/completions"
 WEBHOOK_PATH = "/internal/elevenlabs/webhook"
+
+
+class VoiceMappingTests(SimpleTestCase):
+    def test_resolves_saved_keys_and_falls_back(self):
+
+        self.assertEqual(
+            resolve_elevenlabs_voice("male_irish"),
+            ("male_irish", VOICE_LIBRARY_IDS["male_irish"]),
+        )
+        self.assertEqual(
+            resolve_elevenlabs_voice("female_irish"),
+            ("female_irish", VOICE_LIBRARY_IDS["female_irish"]),
+        )
+        self.assertEqual(
+            resolve_elevenlabs_voice(None),
+            (DEFAULT_VOICE_ID, VOICE_LIBRARY_IDS["female_irish"]),
+        )
+        self.assertEqual(
+            resolve_elevenlabs_voice("female_american"),
+            (DEFAULT_VOICE_ID, VOICE_LIBRARY_IDS["female_irish"]),
+        )
+        self.assertEqual(VOICE_PREVIEW_TEXT, "Hi, I'm Toni. How are you feeling today?")
 
 
 def _sign_webhook(body: bytes, secret: str, ts: int | None = None) -> str:
@@ -232,6 +262,11 @@ class VoiceTokenTests(TestCase):
         self.assertEqual(response.json["conversation_token"], "el_conversation_token")
         self.assertEqual(response.json["signed_url"], "wss://example.elevenlabs.io/signed")
         self.assertEqual(response.json["session_id"], self.session.id)
+        self.assertEqual(response.json["voice_id"], "female_irish")
+        self.assertEqual(
+            response.json["elevenlabs_voice_id"],
+            VOICE_LIBRARY_IDS["female_irish"],
+        )
 
         grant = VoiceGrant.objects.get(session=self.session, consumer=self.consumer)
         self.assertEqual(grant.token_hash, hash_grant_token(grant_value))
@@ -257,6 +292,24 @@ class VoiceTokenTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(VoiceGrant.objects.filter(session=self.session).count(), 0)
+
+    @mock.patch("api.voice.services.mint_conversation_credentials")
+    def test_returns_saved_voice_mapping(self, mint):
+        mint.return_value = {
+            "signed_url": "wss://example.elevenlabs.io/signed",
+            "conversation_token": "el_conversation_token",
+        }
+        prefs = UserSettings.for_user(self.consumer.user)
+        prefs.voice_id = UserSettings.VoiceId.MALE_IRISH
+        prefs.save(update_fields=["voice_id"])
+
+        response = self._post(VOICE_TOKEN_PATH, {}, access_token=self.access_token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["voice_id"], "male_irish")
+        self.assertEqual(
+            response.json["elevenlabs_voice_id"],
+            VOICE_LIBRARY_IDS["male_irish"],
+        )
 
 
 @override_settings(
@@ -361,12 +414,36 @@ class VoiceTtsTests(TestCase):
         self.assertEqual(response.content, b"ID3fake-mp3")
         post.assert_called_once()
         args, kwargs = post.call_args
-        self.assertEqual(args[0], f"https://api.elevenlabs.io/v1/text-to-speech/{DEFAULT_TTS_VOICE_ID}")
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['female_irish']}",
+        )
         self.assertEqual(kwargs["params"]["output_format"], "mp3_44100_128")
         self.assertEqual(kwargs["headers"]["xi-api-key"], "sk_test")
         self.assertEqual(
             kwargs["json"],
             {"text": "Take a slow breath with me.", "model_id": DEFAULT_TTS_MODEL_ID},
+        )
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_uses_saved_voice_mapping(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3fake-mp3",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        prefs = UserSettings.for_user(self.consumer.user)
+        prefs.voice_id = UserSettings.VoiceId.MALE_IRISH
+        prefs.save(update_fields=["voice_id"])
+
+        response = self._post_tts({"message_id": self.agent_message.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        args, _kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['male_irish']}",
         )
 
     @mock.patch("api.voice.elevenlabs_client.requests.post")
@@ -393,6 +470,96 @@ class VoiceTtsTests(TestCase):
         post.return_value = failed
 
         response = self._post_tts({"message_id": self.agent_message.id})
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("invalid api key", response.json()["detail"])
+
+
+@override_settings(
+    ELEVENLABS_API_KEY="sk_test",
+    ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+)
+class VoicePreviewTests(TestCase):
+    def setUp(self):
+        self.consumer = Auth.create_consumer()
+        self.access_token = Auth.get_access_token(self.consumer.user)
+
+    def _post_preview(self, data, access_token=None):
+        return self.client.post(
+            VOICE_PREVIEW_PATH,
+            data=json.dumps(data),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=access_token if access_token is not None else self.access_token,
+        )
+
+    def test_requires_jwt(self):
+        response = self._post_preview({}, access_token="")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_rejects_unknown_voice_id(self):
+        response = self._post_preview({"voice_id": "female_american"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("voice_id", response.json())
+
+    @override_settings(ELEVENLABS_API_KEY="")
+    def test_unconfigured_key_returns_503(self):
+        response = self._post_preview({"voice_id": "male_irish"})
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn("ELEVENLABS_API_KEY", response.json()["detail"])
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_uses_saved_voice_when_omitted(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3preview",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        prefs = UserSettings.for_user(self.consumer.user)
+        prefs.voice_id = UserSettings.VoiceId.MALE_IRISH
+        prefs.save(update_fields=["voice_id"])
+
+        response = self._post_preview({})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response["Content-Type"].startswith("audio/mpeg"))
+        self.assertEqual(response.content, b"ID3preview")
+        args, kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['male_irish']}",
+        )
+        self.assertEqual(kwargs["json"]["text"], VOICE_PREVIEW_TEXT)
+        stored = UserSettings.objects.get(user=self.consumer.user)
+        self.assertEqual(stored.voice_id, "male_irish")
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_previews_requested_voice_without_saving(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3preview",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+
+        response = self._post_preview({"voice_id": "male_irish"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        args, kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['male_irish']}",
+        )
+        self.assertEqual(kwargs["json"]["text"], VOICE_PREVIEW_TEXT)
+        stored = UserSettings.objects.get(user=self.consumer.user)
+        self.assertEqual(stored.voice_id, "female_irish")
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_forwards_elevenlabs_failure(self, post):
+        failed = mock.Mock(ok=False, status_code=401, text='{"detail":{"message":"invalid api key"}}')
+        failed.json.return_value = {"detail": {"message": "invalid api key"}}
+        post.return_value = failed
+
+        response = self._post_preview({"voice_id": "female_irish"})
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertIn("invalid api key", response.json()["detail"])
 

@@ -20,6 +20,7 @@ from ..agent.models import Agent
 from ..message.models import Message
 from ..participant.models import Participant
 from ..session.models import Session
+from ..user.models import UserSettings
 from ..utils.ExerciseOffer import (
     maybe_handle_offer_response,
     pending_offer_message,
@@ -27,7 +28,11 @@ from ..utils.ExerciseOffer import (
     unresolved_offer_message,
 )
 from ..utils.MessageFlow import apply_agent_response
-from .elevenlabs_client import mint_conversation_credentials, synthesize_speech
+from .elevenlabs_client import (
+    mint_conversation_credentials,
+    resolve_elevenlabs_voice,
+    synthesize_speech,
+)
 from .models import VoiceGrant, hash_grant_token
 
 logger = logging.getLogger(__name__)
@@ -36,6 +41,7 @@ GENERAL_CHAT_ONLY = "Voice is only available for general chat."
 TTS_USER_MESSAGE = "Only Toni's messages can be read aloud."
 TTS_EMPTY_TEXT = "This message has no speakable text."
 TTS_MAX_CHARS = 5000
+VOICE_PREVIEW_TEXT = "Hi, I'm Toni. How are you feeling today?"
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # Official Custom LLM buffer words (docs: "Let me think about that... ").
 # "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
@@ -179,20 +185,43 @@ def synthesize_agent_message(consumer, message_id: str | None) -> tuple[bytes, s
     if not text:
         raise ValidationError({"detail": TTS_EMPTY_TEXT})
 
-    return synthesize_speech(text)
+    _, elevenlabs_voice_id = _consumer_voice(consumer)
+    return synthesize_speech(text, elevenlabs_voice_id)
+
+
+def synthesize_voice_preview(consumer, voice_id: str | None = None) -> tuple[bytes, str]:
+    """Sample line for a voice option. Does not write UserSettings."""
+    requested = (voice_id or "").strip() or None
+    if requested:
+        if requested not in UserSettings.VoiceId.values:
+            raise ValidationError(
+                {"voice_id": "Must be one of: male_irish, female_irish"},
+            )
+        _, elevenlabs_voice_id = resolve_elevenlabs_voice(requested)
+    else:
+        _, elevenlabs_voice_id = _consumer_voice(consumer)
+    return synthesize_speech(VOICE_PREVIEW_TEXT, elevenlabs_voice_id)
 
 
 def mint_voice_token(consumer, session_id: str | None = None) -> dict:
     session = resolve_general_session(consumer, session_id)
     credentials = mint_conversation_credentials()
     grant, raw_token = VoiceGrant.issue(consumer=consumer, session=session)
+    voice_id, elevenlabs_voice_id = _consumer_voice(consumer)
     return {
         "conversation_token": credentials.get("conversation_token"),
         "signed_url": credentials.get("signed_url"),
         "session_id": session.id,
         "expires_at": grant.expires_at,
         "custom_llm_extra_body": {"grant": raw_token},
+        "voice_id": voice_id,
+        "elevenlabs_voice_id": elevenlabs_voice_id,
     }
+
+
+def _consumer_voice(consumer) -> tuple[str, str]:
+    prefs = UserSettings.for_user(consumer.user)
+    return resolve_elevenlabs_voice(prefs.voice_id)
 
 
 def resolve_usable_grant(raw_token: str | None) -> VoiceGrant:

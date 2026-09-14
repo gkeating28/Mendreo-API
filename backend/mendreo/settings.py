@@ -301,8 +301,7 @@ ELEVENLABS_GRANT_TTL_HOURS = int(os.environ.get('ELEVENLABS_GRANT_TTL_HOURS', '4
 ELEVENLABS_LLM_FILLER = os.environ.get('ELEVENLABS_LLM_FILLER', '')
 ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE', 'https://api.elevenlabs.io')
 # Read-aloud TTS (standard /v1/text-to-speech). Distinct from Conversational AI.
-# Default voice is Sarah; Settings voice-picker will override this later.
-ELEVENLABS_TTS_VOICE_ID = os.environ.get('ELEVENLABS_TTS_VOICE_ID', '')
+# Voice comes from UserSettings.voice_id (server-side library mapping).
 ELEVENLABS_TTS_MODEL_ID = os.environ.get('ELEVENLABS_TTS_MODEL_ID', '')
 
 # App cache: Redis when BROKER_URL is redis(s), else per-process locmem.

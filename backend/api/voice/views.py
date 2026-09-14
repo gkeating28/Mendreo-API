@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from ..utils.Permissions import IsConsumerPermission
 from ..utils.Views import SmartAPIView
 from .elevenlabs_client import ElevenLabsConfigError, ElevenLabsRequestError
-from .services import mint_voice_token, synthesize_agent_message
+from .services import mint_voice_token, synthesize_agent_message, synthesize_voice_preview
 
 
 class VoiceToken(SmartAPIView):
@@ -65,10 +65,43 @@ class VoiceTts(SmartAPIView):
                 status=exc.status_code or status.HTTP_502_BAD_GATEWAY,
             )
 
-        response = HttpResponse(audio, content_type=content_type)
-        response["Cache-Control"] = "no-store"
-        response["Content-Disposition"] = 'inline; filename="message.mp3"'
-        return response
+        return _audio_response(audio, content_type, filename="message.mp3")
 
     def has_permission(self, request, method):
         return method == "POST"
+
+
+class VoicePreview(SmartAPIView):
+    """Short Toni sample for a voice option. Does not save UserSettings."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        voice_id = request.data.get("voice_id") or None
+        if voice_id is not None:
+            voice_id = str(voice_id).strip() or None
+
+        try:
+            audio, content_type = synthesize_voice_preview(consumer, voice_id)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ElevenLabsConfigError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ElevenLabsRequestError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=exc.status_code or status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return _audio_response(audio, content_type, filename="preview.mp3")
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+def _audio_response(audio: bytes, content_type: str, filename: str) -> HttpResponse:
+    response = HttpResponse(audio, content_type=content_type)
+    response["Cache-Control"] = "no-store"
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response

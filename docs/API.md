@@ -23,7 +23,7 @@ Base URL: your dev URL (Replit `.replit.dev`) in development, or your `.replit.a
 | POST | `/user/logout` | Invalidate session/token |
 | POST | `/user/refresh-token` | Exchange refresh token for new access token |
 | GET | `/user/info` | Current authenticated user's profile |
-| GET, PATCH | `/user/settings` | Current user's preferences (timezone, notification flags, chat text size + speed) |
+| GET, PATCH | `/user/settings` | Current user's preferences (timezone, notification flags, chat text size + speed, Toni's voice) |
 | POST | `/user/request-reset-password` | Email a password-reset code |
 | POST | `/user/reset-password` | Reset password using the code |
 | POST | `/user/request-verify-email` | Email an account-verification code |
@@ -84,8 +84,13 @@ JWT consumer auth. The ElevenLabs API key stays on the server.
 |---|---|---|
 | POST | `/voice/token` | Mint a Conversational AI session (Talk). Body `{ session_id? }`. General chat only. |
 | POST | `/voice/tts` | Read-aloud for one existing Toni message via standard TTS (not Talk). Body `{ message_id }`. Returns `audio/mpeg`. |
+| POST | `/voice/preview` | Short Toni sample for a voice option. Body `{ voice_id? }` (`male_irish` / `female_irish`). Omitting `voice_id` uses the saved setting. Does not write settings. Returns `audio/mpeg`. |
 
-`POST /voice/tts` synthesizes `message.text` for an agent message the caller already owns. User messages, other users' messages, and empty text are rejected. Exercise sessions are allowed (unlike Talk). Stop/pause is client-side. Default voice is Sarah (`EXAVITQu4vr4xnSDxMaL`); override with `ELEVENLABS_TTS_VOICE_ID`. Settings voice-picker comes later.
+`POST /voice/tts` synthesizes `message.text` for an agent message the caller already owns, using the caller's `UserSettings.voice_id` (`male_irish` / `female_irish`, default `female_irish`). User messages, other users' messages, and empty text are rejected. Exercise sessions are allowed (unlike Talk). Stop/pause is client-side.
+
+`POST /voice/preview` synthesizes a fixed sample line with the requested (or saved) mapped voice. Invalid `voice_id` is rejected. The user's saved `voice_id` is not changed.
+
+`POST /voice/token` includes `voice_id` (settings key) and `elevenlabs_voice_id` (library ID). The Talk client should pass `elevenlabs_voice_id` as `overrides.tts.voiceId` when starting the session. Settings and voice responses never include underlying library names.
 
 ---
 

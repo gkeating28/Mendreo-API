@@ -28,6 +28,7 @@ class UserSettingsApiTests(BaseTest):
                 "notification_daily_reminder_time": None,
                 "chat_text_size": "medium",
                 "chat_speed": "normal",
+                "voice_id": "female_irish",
             },
         )
 
@@ -69,6 +70,7 @@ class UserSettingsApiTests(BaseTest):
         self.assertIsNone(response.json["notification_daily_reminder_time"])
         self.assertEqual(response.json["chat_text_size"], "medium")
         self.assertEqual(response.json["chat_speed"], "normal")
+        self.assertEqual(response.json["voice_id"], "female_irish")
 
     def test_patch_chat_text_size_and_speed(self):
         response = self._patch_settings(
@@ -113,6 +115,27 @@ class UserSettingsApiTests(BaseTest):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
         self.assertIsNone(response.json["notification_daily_reminder_time"])
+
+    def test_patch_voice_id(self):
+        response = self._patch_settings(
+            {"voice_id": "male_irish"},
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["voice_id"], "male_irish")
+        self.assertEqual(response.json["timezone"], "UTC")
+        self.assertNotIn("elevenlabs_voice_id", response.json)
+
+        stored = UserSettings.objects.get(user=self.consumer_one.user)
+        self.assertEqual(stored.voice_id, "male_irish")
+
+    def test_invalid_voice_id_rejected(self):
+        response = self._patch_settings(
+            {"voice_id": "female_american"},
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("voice_id", response.json)
 
     def test_invalid_timezone_rejected(self):
         response = self._patch_settings(
