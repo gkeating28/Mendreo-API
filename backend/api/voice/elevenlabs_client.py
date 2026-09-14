@@ -108,16 +108,77 @@ API_KEY_ID_MESSAGE = (
 )
 
 
-def _require_config():
+# Sarah — soft, conversational. Settings voice-picker will override later.
+DEFAULT_TTS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
+DEFAULT_TTS_MODEL_ID = "eleven_flash_v2_5"
+TTS_OUTPUT_FORMAT = "mp3_44100_128"
+
+
+def _require_api_key() -> str:
     api_key = _clean_secret(settings.ELEVENLABS_API_KEY)
+    if not api_key:
+        raise ElevenLabsConfigError("ElevenLabs is not configured (ELEVENLABS_API_KEY).")
+    if not api_key.startswith("sk_"):
+        raise ElevenLabsConfigError(API_KEY_ID_MESSAGE)
+    return api_key
+
+
+def _require_config():
+    api_key = _require_api_key()
     agent_id = _clean_secret(settings.ELEVENLABS_AGENT_ID)
-    if not api_key or not agent_id:
+    if not agent_id:
         raise ElevenLabsConfigError(
             "ElevenLabs is not configured (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID)."
         )
-    if not api_key.startswith("sk_"):
-        raise ElevenLabsConfigError(API_KEY_ID_MESSAGE)
     return api_key, agent_id
+
+
+def tts_voice_id() -> str:
+    return _clean_secret(getattr(settings, "ELEVENLABS_TTS_VOICE_ID", None)) or DEFAULT_TTS_VOICE_ID
+
+
+def tts_model_id() -> str:
+    return _clean_secret(getattr(settings, "ELEVENLABS_TTS_MODEL_ID", None)) or DEFAULT_TTS_MODEL_ID
+
+
+def synthesize_speech(text: str) -> tuple[bytes, str]:
+    """Standard ElevenLabs TTS (not Conversational AI). Returns (audio, content_type)."""
+    api_key = _require_api_key()
+    voice_id = tts_voice_id()
+    model_id = tts_model_id()
+    base = _clean_secret(settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
+
+    try:
+        response = requests.post(
+            f"{base}/v1/text-to-speech/{voice_id}",
+            params={"output_format": TTS_OUTPUT_FORMAT},
+            headers={
+                "xi-api-key": api_key,
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+            },
+            json={"text": text, "model_id": model_id},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        logger.warning("ElevenLabs TTS request error: %s", exc)
+        raise ElevenLabsRequestError("Could not generate speech.", status_code=502) from exc
+
+    if not response.ok:
+        logger.warning(
+            "ElevenLabs TTS failed status=%s body=%s",
+            response.status_code,
+            response.text[:300],
+        )
+        raise ElevenLabsRequestError(
+            "Could not generate speech. " + _elevenlabs_error_summary(response),
+            status_code=502,
+        )
+
+    content_type = (response.headers.get("Content-Type") or "audio/mpeg").split(";")[0].strip()
+    if not content_type.startswith("audio/"):
+        content_type = "audio/mpeg"
+    return response.content, content_type
 
 
 def _elevenlabs_error_summary(response) -> str:

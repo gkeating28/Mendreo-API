@@ -76,6 +76,19 @@ Session detail includes `phase` (`pre_exercise` / `exercise` / `completed` / `ge
 
 ---
 
+## Voice — `/voice`
+
+JWT consumer auth. The ElevenLabs API key stays on the server.
+
+| Method | Path | Function |
+|---|---|---|
+| POST | `/voice/token` | Mint a Conversational AI session (Talk). Body `{ session_id? }`. General chat only. |
+| POST | `/voice/tts` | Read-aloud for one existing Toni message via standard TTS (not Talk). Body `{ message_id }`. Returns `audio/mpeg`. |
+
+`POST /voice/tts` synthesizes `message.text` for an agent message the caller already owns. User messages, other users' messages, and empty text are rejected. Exercise sessions are allowed (unlike Talk). Stop/pause is client-side. Default voice is Sarah (`EXAVITQu4vr4xnSDxMaL`); override with `ELEVENLABS_TTS_VOICE_ID`. Settings voice-picker comes later.
+
+---
+
 ## Exercises
 
 | Method | Path | Function |

@@ -27,12 +27,15 @@ from ..utils.ExerciseOffer import (
     unresolved_offer_message,
 )
 from ..utils.MessageFlow import apply_agent_response
-from .elevenlabs_client import mint_conversation_credentials
+from .elevenlabs_client import mint_conversation_credentials, synthesize_speech
 from .models import VoiceGrant, hash_grant_token
 
 logger = logging.getLogger(__name__)
 
 GENERAL_CHAT_ONLY = "Voice is only available for general chat."
+TTS_USER_MESSAGE = "Only Toni's messages can be read aloud."
+TTS_EMPTY_TEXT = "This message has no speakable text."
+TTS_MAX_CHARS = 5000
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # Official Custom LLM buffer words (docs: "Let me think about that... ").
 # "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
@@ -146,6 +149,37 @@ def resolve_general_session(consumer, session_id: str | None) -> Session:
     session = Session.get_or_create(consumer)
     require_general_session(session)
     return session
+
+
+def speakable_message_text(text: str | None) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned or not _HAS_SPEECH_RE.search(cleaned):
+        return ""
+    if len(cleaned) > TTS_MAX_CHARS:
+        return cleaned[:TTS_MAX_CHARS]
+    return cleaned
+
+
+def synthesize_agent_message(consumer, message_id: str | None) -> tuple[bytes, str]:
+    """TTS for one agent message the consumer already owns. Not live Talk."""
+    if not message_id:
+        raise ValidationError({"message_id": "This field is required."})
+
+    message = (
+        Message.objects.select_related("session", "sender")
+        .filter(id=message_id, session__consumer=consumer)
+        .first()
+    )
+    if message is None:
+        raise ValidationError({"message_id": "Message not found."})
+    if message.sender.agent_id is None:
+        raise ValidationError({"detail": TTS_USER_MESSAGE})
+
+    text = speakable_message_text(message.text)
+    if not text:
+        raise ValidationError({"detail": TTS_EMPTY_TEXT})
+
+    return synthesize_speech(text)
 
 
 def mint_voice_token(consumer, session_id: str | None = None) -> dict:

@@ -10,14 +10,17 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from ...message.models import Message
+from ...participant.models import Participant
 from ...tests.TestCase import TestCase
 from ...utils.Agent import GeneralResponse
+from ...voice.elevenlabs_client import DEFAULT_TTS_MODEL_ID, DEFAULT_TTS_VOICE_ID
 from ...voice.models import VoiceGrant, hash_grant_token
 from ..utils.manager import Auth, General
 
 LLM_SECRET = "test-elevenlabs-llm-secret"
 WEBHOOK_SECRET = "test-elevenlabs-webhook-secret"
 VOICE_TOKEN_PATH = "/voice/token"
+VOICE_TTS_PATH = "/voice/tts"
 CHAT_COMPLETIONS_PATH = "/internal/elevenlabs/v1/chat/completions"
 WEBHOOK_PATH = "/internal/elevenlabs/webhook"
 
@@ -254,6 +257,144 @@ class VoiceTokenTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(VoiceGrant.objects.filter(session=self.session).count(), 0)
+
+
+@override_settings(
+    ELEVENLABS_API_KEY="sk_test",
+    ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+)
+class VoiceTtsTests(TestCase):
+    def setUp(self):
+        self.consumer = Auth.create_consumer()
+        self.other = Auth.create_consumer()
+        self.access_token = Auth.get_access_token(self.consumer.user)
+        self.session = General.create_session(consumer=self.consumer)
+        self.agent_participant = Participant.objects.filter(
+            session=self.session, consumer__isnull=True, agent=self.consumer.agent
+        ).first()
+        self.user_participant = Participant.objects.filter(
+            session=self.session, consumer=self.consumer, agent__isnull=True
+        ).first()
+        self.agent_message = Message.objects.create(
+            session=self.session,
+            sender=self.agent_participant,
+            text="Take a slow breath with me.",
+        )
+        self.user_message = Message.objects.create(
+            session=self.session,
+            sender=self.user_participant,
+            text="I am feeling anxious.",
+        )
+
+    def _post_tts(self, data, access_token=None):
+        return self.client.post(
+            VOICE_TTS_PATH,
+            data=json.dumps(data),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=access_token if access_token is not None else self.access_token,
+        )
+
+    def test_requires_jwt(self):
+        response = self._post_tts({"message_id": self.agent_message.id}, access_token="")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_requires_message_id(self):
+        response = self._post_tts({})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["message_id"], "This field is required.")
+
+    def test_rejects_unknown_message(self):
+        response = self._post_tts({"message_id": "msg_does_not_exist"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["message_id"], "Message not found.")
+
+    def test_rejects_other_consumers_message(self):
+        other_session = General.create_session(consumer=self.other)
+        other_agent = Participant.objects.filter(
+            session=other_session, consumer__isnull=True, agent=self.other.agent
+        ).first()
+        other_message = Message.objects.create(
+            session=other_session,
+            sender=other_agent,
+            text="This belongs to someone else.",
+        )
+        response = self._post_tts({"message_id": other_message.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["message_id"], "Message not found.")
+
+    def test_rejects_user_message(self):
+        response = self._post_tts({"message_id": self.user_message.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["detail"], "Only Toni's messages can be read aloud.")
+
+    def test_rejects_empty_agent_text(self):
+        empty = Message.objects.create(
+            session=self.session,
+            sender=self.agent_participant,
+            text="   ",
+        )
+        response = self._post_tts({"message_id": empty.id})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["detail"], "This message has no speakable text.")
+
+    @override_settings(ELEVENLABS_API_KEY="")
+    def test_unconfigured_key_returns_503(self):
+        response = self._post_tts({"message_id": self.agent_message.id})
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn("ELEVENLABS_API_KEY", response.json()["detail"])
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_returns_mpeg_and_does_not_need_agent_id(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3fake-mp3",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+
+        with override_settings(ELEVENLABS_AGENT_ID=""):
+            response = self._post_tts({"message_id": self.agent_message.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response["Content-Type"].startswith("audio/mpeg"))
+        self.assertEqual(response.content, b"ID3fake-mp3")
+        post.assert_called_once()
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], f"https://api.elevenlabs.io/v1/text-to-speech/{DEFAULT_TTS_VOICE_ID}")
+        self.assertEqual(kwargs["params"]["output_format"], "mp3_44100_128")
+        self.assertEqual(kwargs["headers"]["xi-api-key"], "sk_test")
+        self.assertEqual(
+            kwargs["json"],
+            {"text": "Take a slow breath with me.", "model_id": DEFAULT_TTS_MODEL_ID},
+        )
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_allows_exercise_session_messages(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3fake-mp3",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        exercise = General.create_exercise()
+        self.session.exercise = exercise
+        self.session.save(update_fields=["exercise"])
+
+        response = self._post_tts({"message_id": self.agent_message.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.content, b"ID3fake-mp3")
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_forwards_elevenlabs_failure(self, post):
+        failed = mock.Mock(ok=False, status_code=401, text='{"detail":{"message":"invalid api key"}}')
+        failed.json.return_value = {"detail": {"message": "invalid api key"}}
+        post.return_value = failed
+
+        response = self._post_tts({"message_id": self.agent_message.id})
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("invalid api key", response.json()["detail"])
 
 
 @override_settings(ELEVENLABS_LLM_SECRET=LLM_SECRET, ELEVENLABS_LLM_FILLER="Let me think about that... ")

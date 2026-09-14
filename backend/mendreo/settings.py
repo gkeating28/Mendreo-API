@@ -300,6 +300,10 @@ ELEVENLABS_GRANT_TTL_HOURS = int(os.environ.get('ELEVENLABS_GRANT_TTL_HOURS', '4
 # "Let me think about that... " plus flush padding. Not used as a lock/heartbeat.
 ELEVENLABS_LLM_FILLER = os.environ.get('ELEVENLABS_LLM_FILLER', '')
 ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE', 'https://api.elevenlabs.io')
+# Read-aloud TTS (standard /v1/text-to-speech). Distinct from Conversational AI.
+# Default voice is Sarah; Settings voice-picker will override this later.
+ELEVENLABS_TTS_VOICE_ID = os.environ.get('ELEVENLABS_TTS_VOICE_ID', '')
+ELEVENLABS_TTS_MODEL_ID = os.environ.get('ELEVENLABS_TTS_MODEL_ID', '')
 
 # App cache: Redis when BROKER_URL is redis(s), else per-process locmem.
 # Used for Setting prompts and published exercise catalogs.

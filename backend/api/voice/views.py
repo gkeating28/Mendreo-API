@@ -1,3 +1,4 @@
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -5,7 +6,7 @@ from rest_framework.response import Response
 from ..utils.Permissions import IsConsumerPermission
 from ..utils.Views import SmartAPIView
 from .elevenlabs_client import ElevenLabsConfigError, ElevenLabsRequestError
-from .services import mint_voice_token
+from .services import mint_voice_token, synthesize_agent_message
 
 
 class VoiceToken(SmartAPIView):
@@ -32,6 +33,42 @@ class VoiceToken(SmartAPIView):
             )
 
         return Response(payload, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class VoiceTts(SmartAPIView):
+    """Read-aloud for one existing agent message via ElevenLabs TTS.
+
+    Distinct from Conversational AI (`POST /voice/token`). The API key never
+    leaves the server. Playback stop is client-side (abort + pause).
+    """
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        message_id = request.data.get("message_id") or None
+        if message_id is not None:
+            message_id = str(message_id).strip() or None
+
+        try:
+            audio, content_type = synthesize_agent_message(consumer, message_id)
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ElevenLabsConfigError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except ElevenLabsRequestError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=exc.status_code or status.HTTP_502_BAD_GATEWAY,
+            )
+
+        response = HttpResponse(audio, content_type=content_type)
+        response["Cache-Control"] = "no-store"
+        response["Content-Disposition"] = 'inline; filename="message.mp3"'
+        return response
 
     def has_permission(self, request, method):
         return method == "POST"
