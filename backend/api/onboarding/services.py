@@ -451,12 +451,16 @@ def restart_onboarding(consumer):
     consumer.last_onboarding_flow_completed_at = None
     consumer.last_onboarding_flow_variant = None
     consumer.onboarding_followup_consumed_at = None
+    consumer.onboarding_followup_session_id = None
+    consumer.onboarding_followup_consent = None
     consumer.save(
         update_fields=[
             "onboarded",
             "last_onboarding_flow_completed_at",
             "last_onboarding_flow_variant",
             "onboarding_followup_consumed_at",
+            "onboarding_followup_session_id",
+            "onboarding_followup_consent",
             "updated_at",
         ]
     )

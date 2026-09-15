@@ -58,15 +58,9 @@ def request_agent_response(user_message: Message, session) -> Message:
 
 
 def request_session_greeting(session) -> Message | None:
-    """Generate the opening greeting locally, via worker, or enqueue."""
+    """Generate the exercise opener. General chat does not auto-greet."""
     if not session.exercise_id:
-        from ..knowledge.followup import is_onboarding_followup_session
-        from ..knowledge.models import KnowledgeEntry
-
-        if not is_onboarding_followup_session(session):
-            return None
-        if not KnowledgeEntry.pending_followups_for(session.consumer):
-            return None
+        return None
 
     if getattr(settings, "AI_ASYNC_MESSAGES", False):
         enqueue_session_greeting(session)
@@ -115,11 +109,7 @@ def _run_session_greeting(session):
                 "Can you greet me and explain the exercise please?"
             )
     else:
-        from ..knowledge.followup import greeting_user_prompt_for_session
-
-        text = greeting_user_prompt_for_session(session)
-        if not text:
-            return None
+        return None
 
     message = Message(
         session=session,

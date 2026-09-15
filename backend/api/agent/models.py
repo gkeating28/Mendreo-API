@@ -55,12 +55,14 @@ class Agent(SmartModel):
 
     @staticmethod
     def get_response(session, user_message: Message):
+        from ..knowledge.followup import FollowupReply, handle_onboarding_followup_reply
         from ..utils import Constants, Agent as AgentUtils
 
         consumer = session.consumer
 
         asset = None
         exercise = None
+        followup = FollowupReply()
 
         if user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP:
             if session.in_pre_exercise_phase():
@@ -134,16 +136,14 @@ class Agent(SmartModel):
                 )
             usage = {}
         else:
-            from ..knowledge.followup import handle_onboarding_followup_reply
-
             followup = handle_onboarding_followup_reply(session, user_message)
             if followup.canned_text:
                 response = AgentUtils.GeneralResponse(
                     text=followup.canned_text,
-                    reasoning="onboarding_followup_direct_reask",
-                    suggested_responses=None,
+                    reasoning=followup.reasoning or "onboarding_followup",
+                    suggested_responses=followup.suggested_responses,
                 )
-                usage = {"_onboarding_followup_reask": True}
+                usage = {"_onboarding_followup": True}
             else:
                 response, usage, asset, exercise = AgentUtils.get_response(
                     consumer_message=user_message, session=session
@@ -153,6 +153,8 @@ class Agent(SmartModel):
         from ..utils.StepProgress import last_agent_text_for_session, resolve_step_progress
 
         suggested_responses, text = format_agent_offer(response, exercise, session)
+        if followup.suggested_responses is not None:
+            suggested_responses = list(followup.suggested_responses)
 
         step_no = response.step_no if hasattr(response, "step_no") else None
         completion_result = response.completion_result if hasattr(response, "completion_result") else None
@@ -195,5 +197,10 @@ class Agent(SmartModel):
             completion_result=completion_result,
             suggested_responses=suggested_responses,
         )
+
+        if followup.decline_after_agent:
+            from ..knowledge.followup import decline_onboarding_followup
+
+            decline_onboarding_followup(session)
 
         return agent_message

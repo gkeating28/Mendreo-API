@@ -26,9 +26,11 @@ class Consumer(SmartModel):
     last_onboarding_flow_completed_at = models.DateTimeField(null=True, blank=True)
     last_onboarding_flow_variant = models.CharField(max_length=32, null=True, blank=True)
 
-    # Set when the first post-onboarding general chat is created. Follow-up
+    # Set on the first post-onboarding general-chat user message. Follow-up
     # injection never runs again after this, even if flagged answers remain.
     onboarding_followup_consumed_at = models.DateTimeField(null=True, blank=True)
+    onboarding_followup_session_id = models.CharField(max_length=40, null=True, blank=True)
+    onboarding_followup_consent = models.CharField(max_length=16, null=True, blank=True)
 
     def __str__(self):
         """Return a human readable representation of the model instance."""
