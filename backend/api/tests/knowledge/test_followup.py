@@ -9,16 +9,16 @@ from ..utils.manager import Auth
 from ...knowledge.followup import (
     FollowupReply,
     activate_next_followup,
-    flag_onboarding_answer_for_followup,
+    ensure_onboarding_followups_classified,
     format_onboarding_followup_block,
     handle_onboarding_followup_reply,
     is_answer_vague,
     is_onboarding_followup_session,
     looks_thin_opener,
-    looks_vague,
     maybe_start_onboarding_followup,
     should_classify_onboarding_answer,
     should_inject_onboarding_followup,
+    skip_vagueness_classification,
 )
 from ...knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
 from ...knowledge.services import write_knowledge_entry
@@ -77,49 +77,21 @@ class VaguenessClassifierTests(TestCase):
             self.assertFalse(is_answer_vague("How is sleep?", "fine"))
         self.assertFalse(is_answer_vague("How is sleep?", "   "))
 
-    def test_looks_vague_matches_platitudes_only(self):
-        self.assertTrue(looks_vague("stuff"))
-        self.assertTrue(looks_vague("  Fine. "))
-        self.assertTrue(looks_vague("I'm okay"))
-        self.assertTrue(looks_vague("idk"))
-        self.assertTrue(looks_vague("life"))
-        self.assertTrue(looks_vague("Life."))
-        self.assertFalse(looks_vague("Full-time"))
-        self.assertFalse(looks_vague("I work 3 days and freelance the rest"))
-        self.assertFalse(looks_vague(""))
-
-    def test_life_is_flagged_for_followup(self):
-        self.assertTrue(
-            flag_onboarding_answer_for_followup(
-                "What is worrying you most right now?",
-                "life",
-            )
-        )
-
     def test_looks_thin_opener_greetings(self):
         self.assertTrue(looks_thin_opener("Hello"))
         self.assertTrue(looks_thin_opener("hey Toni"))
         self.assertTrue(looks_thin_opener("idk"))
         self.assertTrue(looks_thin_opener("im ok"))
+        self.assertFalse(looks_thin_opener("life"))
         self.assertFalse(looks_thin_opener("I lie awake replaying a fight with my sister"))
         self.assertFalse(looks_thin_opener("Full-time"))
 
-    def test_chip_tap_is_not_flagged(self):
+    def test_chip_tap_skips_vagueness_llm(self):
         chips = ["Full-time", "Part-time", "Contract", "Other"]
-        self.assertFalse(
-            flag_onboarding_answer_for_followup(
-                "What's your day-to-day setup?",
-                "Full-time",
-                suggested_responses=chips,
-            )
-        )
-        self.assertTrue(
-            flag_onboarding_answer_for_followup(
-                "What's your day-to-day setup?",
-                "fine",
-                suggested_responses=chips,
-            )
-        )
+        self.assertTrue(skip_vagueness_classification("Full-time", chips))
+        self.assertFalse(skip_vagueness_classification("fine", chips))
+        self.assertTrue(skip_vagueness_classification("", chips))
+        self.assertTrue(skip_vagueness_classification("   "))
 
 
 class OnboardingVaguenessTests(TestCase):
@@ -142,7 +114,7 @@ class OnboardingVaguenessTests(TestCase):
             active=True,
         )
 
-    def test_flags_vague_free_text(self):
+    def test_complete_does_not_block_on_gemini(self):
         with mock.patch("api.utils.AI.AI.ask") as ask:
             response = self._post(
                 "/onboarding/answers",
@@ -152,32 +124,7 @@ class OnboardingVaguenessTests(TestCase):
                     "answers": [
                         {
                             "knowledge_question_id": self.q_worry.id,
-                            "value": "stuff",
-                        }
-                    ],
-                },
-                self.token,
-            )
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
-        ask.assert_not_called()
-        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
-        self.assertTrue(entry.needs_followup)
-        self.assertEqual(entry.followup_prompt, "What is worrying you most right now?")
-        self.assertEqual(response.json["entries"][0]["needs_followup"], True)
-
-    def test_complete_does_not_call_gemini_for_specific_or_chips(self):
-        self.q_worry.suggested_responses = ["Full-time", "Part-time", "Contract"]
-        self.q_worry.save(update_fields=["suggested_responses"])
-        with mock.patch("api.utils.AI.AI.ask") as ask:
-            response = self._post(
-                "/onboarding/answers",
-                {
-                    "variant": "initial",
-                    "complete": True,
-                    "answers": [
-                        {
-                            "knowledge_question_id": self.q_worry.id,
-                            "value": "Full-time",
+                            "value": "life",
                         }
                     ],
                 },
@@ -187,22 +134,93 @@ class OnboardingVaguenessTests(TestCase):
         ask.assert_not_called()
         entry = KnowledgeEntry.current_for(self.consumer, self.worry)
         self.assertFalse(entry.needs_followup)
-        self.assertEqual(entry.followup_prompt, "")
+        self.assertEqual(response.json["entries"][0]["needs_followup"], False)
+        self.consumer.refresh_from_db()
+        self.assertIsNone(self.consumer.onboarding_followup_classified_at)
+
+    def test_ensure_classifies_vague_free_text_with_gemini(self):
+        self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": self.q_worry.id,
+                        "value": "life",
+                    }
+                ],
+            },
+            self.token,
+        )
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={"is_vague": True, "reasoning": "one-word"},
+        ):
+            ensure_onboarding_followups_classified(self.consumer)
+        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
+        self.assertTrue(entry.needs_followup)
+        self.assertEqual(entry.followup_prompt, "What is worrying you most right now?")
+        self.consumer.refresh_from_db()
+        self.assertIsNotNone(self.consumer.onboarding_followup_classified_at)
+
+    def test_ensure_does_not_flag_specific_or_chips(self):
+        self.q_worry.suggested_responses = ["Full-time", "Part-time", "Contract"]
+        self.q_worry.save(update_fields=["suggested_responses"])
+        self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": self.q_worry.id,
+                        "value": "Full-time",
+                    }
+                ],
+            },
+            self.token,
+        )
+        with mock.patch("api.utils.AI.AI.ask") as ask:
+            ensure_onboarding_followups_classified(self.consumer)
+        ask.assert_not_called()
+        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
+        self.assertFalse(entry.needs_followup)
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=False)
+    def test_complete_enqueues_classification_when_celery_is_async(self):
+        with mock.patch(
+            "api.tasks.classify_onboarding_followups.delay_on_commit"
+        ) as queued:
+            response = self._post(
+                "/onboarding/answers",
+                {
+                    "variant": "initial",
+                    "complete": True,
+                    "answers": [
+                        {
+                            "knowledge_question_id": self.q_worry.id,
+                            "value": "life",
+                        }
+                    ],
+                },
+                self.token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        queued.assert_called_once_with(self.consumer.user_id)
 
     def test_placeholder_complete_does_not_classify(self):
-        with mock.patch(
-            "api.knowledge.followup.flag_onboarding_answer_for_followup"
-        ) as skipped:
+        with mock.patch("api.utils.AI.AI.ask") as ask:
             complete = self._post("/onboarding/complete", {}, self.token)
         self.assertEqual(complete.status_code, status.HTTP_200_OK, complete.json)
-        skipped.assert_not_called()
+        ask.assert_not_called()
         placeholder = KnowledgeEntry.current_for(self.consumer, self.worry)
         self.assertFalse(placeholder.needs_followup)
+        self.consumer.refresh_from_db()
+        self.assertIsNotNone(self.consumer.onboarding_followup_classified_at)
 
     def test_step_submit_does_not_classify(self):
-        with mock.patch(
-            "api.knowledge.followup.flag_onboarding_answer_for_followup"
-        ) as skipped:
+        with mock.patch("api.utils.AI.AI.ask") as ask:
             response = self._post(
                 "/onboarding/answers",
                 {
@@ -218,9 +236,72 @@ class OnboardingVaguenessTests(TestCase):
                 self.token,
             )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
-        skipped.assert_not_called()
+        ask.assert_not_called()
         entry = KnowledgeEntry.current_for(self.consumer, self.worry)
         self.assertFalse(entry.needs_followup)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_first_chat_classifies_if_task_has_not_finished(self):
+        self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": self.q_worry.id,
+                        "value": "life",
+                    }
+                ],
+            },
+            self.token,
+        )
+        today = self._get("/sessions/today", access_token=self.token)
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={"is_vague": True, "reasoning": "one-word"},
+        ):
+            with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                response = self._post(
+                    "/messages",
+                    {"text": "im ok", "session": today.json["id"]},
+                    access_token=self.token,
+                )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        get_agent_response.assert_not_called()
+        self.assertEqual(
+            response.json["suggested_responses"],
+            list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        )
+        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
+        self.assertTrue(entry.needs_followup)
+
+    def test_celery_task_classifies_consumer(self):
+        self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": self.q_worry.id,
+                        "value": "life",
+                    }
+                ],
+            },
+            self.token,
+        )
+        from ...tasks import classify_onboarding_followups
+
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={"is_vague": True, "reasoning": "one-word"},
+        ):
+            classify_onboarding_followups(self.consumer.user_id)
+        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
+        self.assertTrue(entry.needs_followup)
+        self.consumer.refresh_from_db()
+        self.assertIsNotNone(self.consumer.onboarding_followup_classified_at)
 
 
 @override_settings(AI_ASYNC_MESSAGES=False)
@@ -230,7 +311,10 @@ class FirstChatFollowupTests(TestCase):
         self.consumer = Auth.create_consumer()
         self.token = Auth.get_access_token(self.consumer.user)
         self.consumer.onboarded = True
-        self.consumer.save(update_fields=["onboarded"])
+        self.consumer.onboarding_followup_classified_at = timezone.now()
+        self.consumer.save(
+            update_fields=["onboarded", "onboarding_followup_classified_at"]
+        )
         self.field = KnowledgeField.objects.create(
             key="main_worry",
             label="Main worry",
@@ -240,6 +324,7 @@ class FirstChatFollowupTests(TestCase):
             prompt="What is worrying you most?",
             target_field=self.field,
             response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+            flows=[Constants.KNOWLEDGE_FLOW_INITIAL],
             active=True,
         )
         self.entry = write_knowledge_entry(

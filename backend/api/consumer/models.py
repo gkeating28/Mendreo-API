@@ -31,6 +31,7 @@ class Consumer(SmartModel):
     onboarding_followup_consumed_at = models.DateTimeField(null=True, blank=True)
     onboarding_followup_session_id = models.CharField(max_length=40, null=True, blank=True)
     onboarding_followup_consent = models.CharField(max_length=16, null=True, blank=True)
+    onboarding_followup_classified_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         """Return a human readable representation of the model instance."""

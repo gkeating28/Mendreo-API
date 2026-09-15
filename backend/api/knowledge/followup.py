@@ -43,71 +43,8 @@ def should_classify_onboarding_answer(*, variant: str, response_type: str, class
     )
 
 
-# Obvious non-answers. Used at onboarding complete so we never block that
-# request on Gemini (the last step used to wait on one LLM call per free-text
-# answer, inside the DB transaction).
-_VAGUE_ANSWER_PHRASES = frozenset(
-    {
-        "fine",
-        "ok",
-        "okay",
-        "alright",
-        "all right",
-        "good",
-        "great",
-        "idk",
-        "i dont know",
-        "dont know",
-        "not sure",
-        "unsure",
-        "no idea",
-        "nothing",
-        "nothing much",
-        "not much",
-        "nothing really",
-        "n a",
-        "na",
-        "none",
-        "nil",
-        "meh",
-        "whatever",
-        "same",
-        "the usual",
-        "usual",
-        "normal",
-        "stuff",
-        "things",
-        "it is what it is",
-        "all good",
-        "im fine",
-        "im ok",
-        "im okay",
-        # One-word non-answers Gemini used to catch at complete. Complete is
-        # heuristic-only now so these have to live here.
-        "life",
-        "work",
-        "stress",
-        "everything",
-        "always",
-        "busy",
-        "tired",
-        "money",
-        "school",
-        "people",
-        "myself",
-        "dunno",
-        "blah",
-        "yeah",
-        "yes",
-        "no",
-        "nah",
-        "sure",
-        "cool",
-        "k",
-        "kk",
-    }
-)
-
+# First-turn routing only (permission vs stay-on-topic). Not used to flag
+# onboarding answers — Gemini judges those.
 _THIN_OPENERS = frozenset(
     {
         "hello",
@@ -131,6 +68,24 @@ _THIN_OPENERS = frozenset(
         "how are you",
         "hows it going",
         "how is it going",
+        "fine",
+        "ok",
+        "okay",
+        "alright",
+        "all right",
+        "good",
+        "great",
+        "idk",
+        "i dont know",
+        "dont know",
+        "not sure",
+        "im fine",
+        "im ok",
+        "im okay",
+        "all good",
+        "nothing",
+        "not much",
+        "nothing much",
     }
 )
 
@@ -171,40 +126,24 @@ _DECLINE_ALIASES = frozenset(
 )
 
 
-def looks_vague(answer: str) -> bool:
-    """True for short generic non-answers. Fail-open (False) when unsure."""
-    normalized = _normalize_answer(answer)
-    return bool(normalized) and normalized in _VAGUE_ANSWER_PHRASES
-
-
 def looks_thin_opener(answer: str) -> bool:
     """True for greetings and platitudes that are not a real first-turn topic."""
     normalized = _normalize_answer(answer)
     if not normalized:
         return True
-    if normalized in _THIN_OPENERS:
-        return True
-    return looks_vague(answer)
+    return normalized in _THIN_OPENERS
 
 
-def flag_onboarding_answer_for_followup(
-    question_prompt: str,
-    answer: str,
-    *,
-    suggested_responses: list[str] | None = None,
+def skip_vagueness_classification(
+    answer: str, suggested_responses: list[str] | None = None
 ) -> bool:
-    """
-    Whether to re-ask this initial free-text answer in the first chat.
-
-    Instant: chip taps and obvious platitudes only. Gemini stays on the
-    in-chat follow-up path so completing onboarding is not blocked.
-    """
+    """True when Gemini should not judge this onboarding answer."""
     text = (answer or "").strip()
     if not text:
-        return False
+        return True
     if suggested_responses and text in suggested_responses:
-        return False
-    return looks_vague(text)
+        return True
+    return False
 
 
 def is_answer_vague(question_prompt: str, answer: str) -> bool:
@@ -290,6 +229,90 @@ def _save_followup_state(entry, **fields) -> None:
         setattr(entry, key, value)
     update_fields = list(fields.keys()) + ["updated_at"]
     entry.save(update_fields=update_fields)
+
+
+def _current_entries_for(consumer):
+    from .models import KnowledgeEntry
+
+    rows = (
+        KnowledgeEntry.objects.filter(consumer=consumer)
+        .select_related("field", "knowledge_question")
+        .order_by("-created_at")
+    )
+    seen = set()
+    current = []
+    for row in rows:
+        if row.field_id in seen:
+            continue
+        seen.add(row.field_id)
+        current.append(row)
+    return current
+
+
+def _followup_prompt_for(entry, consumer) -> str:
+    question = getattr(entry, "knowledge_question", None)
+    if question is None:
+        return (entry.followup_prompt or "").strip()
+    from ..exercise.pre_exercise import resolve_template
+    from ..onboarding.services import build_token_context
+
+    return resolve_template(question.prompt, build_token_context(consumer))
+
+
+def ensure_onboarding_followups_classified(consumer) -> None:
+    """Run Gemini vagueness classification if complete has not finished it yet."""
+    from ..consumer.models import Consumer
+
+    if consumer is None:
+        return
+    fresh = Consumer.objects.filter(pk=consumer.pk).first()
+    if fresh is None or not fresh.onboarded:
+        return
+    if fresh.onboarding_followup_classified_at:
+        consumer.onboarding_followup_classified_at = fresh.onboarding_followup_classified_at
+        return
+
+    flagged_any = False
+    for entry in _current_entries_for(fresh):
+        if entry.needs_followup:
+            continue
+        if entry.source != Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION:
+            continue
+        question = entry.knowledge_question
+        if question is None:
+            continue
+        if Constants.KNOWLEDGE_FLOW_INITIAL not in (question.flows or []):
+            continue
+        if not should_classify_onboarding_answer(
+            variant=Constants.KNOWLEDGE_FLOW_INITIAL,
+            response_type=question.response_type,
+            classify=True,
+        ):
+            continue
+        if skip_vagueness_classification(entry.value, question.suggested_responses):
+            continue
+        prompt = _followup_prompt_for(entry, fresh)
+        if is_answer_vague(prompt, entry.value):
+            _save_followup_state(entry, needs_followup=True, followup_prompt=prompt)
+            flagged_any = True
+
+    _save_consumer(fresh, onboarding_followup_classified_at=timezone.now())
+    consumer.onboarding_followup_classified_at = fresh.onboarding_followup_classified_at
+    if flagged_any:
+        from .services import invalidate_consumer_prompt_cache
+
+        invalidate_consumer_prompt_cache(fresh)
+
+
+def schedule_onboarding_followup_classification(consumer) -> None:
+    """Queue Gemini classification after complete. No-op when Celery is eager."""
+    from django.conf import settings
+
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        return
+    from ..tasks import classify_onboarding_followups
+
+    classify_onboarding_followups.delay_on_commit(consumer.user_id)
 
 
 def activate_next_followup(consumer, session=None):
@@ -571,15 +594,18 @@ def handle_onboarding_followup_reply(session, user_message) -> FollowupReply:
 
     from .models import KnowledgeEntry
 
-    pending = KnowledgeEntry.pending_followups_for(consumer)
     user_text = (getattr(user_message, "text", None) or "").strip()
     consent = getattr(consumer, "onboarding_followup_consent", None)
 
     if not getattr(consumer, "onboarding_followup_consumed_at", None):
+        ensure_onboarding_followups_classified(consumer)
+        pending = KnowledgeEntry.pending_followups_for(consumer)
         return _handle_first_user_message(session, consumer, user_text, pending)
 
     if getattr(consumer, "onboarding_followup_session_id", None) != session.id:
         return FollowupReply()
+
+    pending = KnowledgeEntry.pending_followups_for(consumer)
 
     if consent == Constants.ONBOARDING_FOLLOWUP_CONSENT_DECLINED:
         return FollowupReply()

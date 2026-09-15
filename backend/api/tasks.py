@@ -256,3 +256,24 @@ def generate_user_observation(consumer_id):
         getattr(observation, "id", None),
     )
     return getattr(observation, "id", None)
+
+
+@shared_task(
+    name="classify_onboarding_followups",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def classify_onboarding_followups(consumer_id):
+    """Gemini-flag vague initial onboarding answers after complete returns."""
+    from .consumer.models import Consumer
+    from .knowledge.followup import ensure_onboarding_followups_classified
+
+    logger.info("Start > classify_onboarding_followups %s", consumer_id)
+    consumer = Consumer.objects.filter(pk=consumer_id).first()
+    if not consumer:
+        logger.warning("classify_onboarding_followups: consumer %s not found", consumer_id)
+        return
+    ensure_onboarding_followups_classified(consumer)
+    logger.info("End > classify_onboarding_followups %s", consumer_id)

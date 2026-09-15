@@ -232,9 +232,9 @@ def submit_flow_answers(
 
     Initial may accept incomplete step syncs (complete=False) for client persistence.
     Return/Refresh require complete=True (discardable — no server draft).
-    Vague-answer flagging is deferred until complete=True so step saves stay
-    fast, and uses a local heuristic (not Gemini) so the last question / complete
-    request is not blocked on one LLM round-trip per free-text answer.
+    Vague-answer flagging runs after this request: a Celery task (or, when
+    Celery is eager, the first general-chat turn) asks Gemini so complete
+    is not blocked on one LLM call per free-text answer.
     """
     variant = resolve_variant(consumer, variant)
     flow_questions = questions_for_variant(variant)
@@ -255,11 +255,6 @@ def submit_flow_answers(
 
     written = []
     answered_ids = set()
-    token_context = build_token_context(consumer)
-    from ..knowledge.followup import (
-        flag_onboarding_answer_for_followup,
-        should_classify_onboarding_answer,
-    )
 
     for index, raw in enumerate(answers):
         question_id = raw.get("knowledge_question_id") or raw.get("question_id")
@@ -275,19 +270,6 @@ def submit_flow_answers(
 
         needs_followup = False
         followup_prompt = ""
-        if should_classify_onboarding_answer(
-            variant=variant,
-            response_type=question.response_type,
-            classify=classify_vagueness and complete,
-        ):
-            followup_prompt = resolve_template(question.prompt, token_context)
-            needs_followup = flag_onboarding_answer_for_followup(
-                followup_prompt,
-                normalized,
-                suggested_responses=question.suggested_responses,
-            )
-            if not needs_followup:
-                followup_prompt = ""
 
         entry = write_knowledge_entry(
             consumer=consumer,
@@ -326,7 +308,16 @@ def submit_flow_answers(
         if variant == Constants.KNOWLEDGE_FLOW_INITIAL and not consumer.onboarded:
             consumer.onboarded = True
             update_fields.append("onboarded")
+        if variant == Constants.KNOWLEDGE_FLOW_INITIAL:
+            consumer.onboarding_followup_classified_at = (
+                None if classify_vagueness else now
+            )
+            update_fields.append("onboarding_followup_classified_at")
         consumer.save(update_fields=update_fields)
+        if variant == Constants.KNOWLEDGE_FLOW_INITIAL and classify_vagueness:
+            from ..knowledge.followup import schedule_onboarding_followup_classification
+
+            schedule_onboarding_followup_classification(consumer)
 
     from ..knowledge.services import invalidate_consumer_prompt_cache
 
@@ -402,6 +393,9 @@ def complete_onboarding_with_placeholders(consumer):
         if variant == Constants.KNOWLEDGE_FLOW_INITIAL and not consumer.onboarded:
             consumer.onboarded = True
             update_fields.append("onboarded")
+        if variant == Constants.KNOWLEDGE_FLOW_INITIAL:
+            consumer.onboarding_followup_classified_at = now
+            update_fields.append("onboarding_followup_classified_at")
         consumer.save(update_fields=update_fields)
         from ..knowledge.services import invalidate_consumer_prompt_cache
 
@@ -453,6 +447,7 @@ def restart_onboarding(consumer):
     consumer.onboarding_followup_consumed_at = None
     consumer.onboarding_followup_session_id = None
     consumer.onboarding_followup_consent = None
+    consumer.onboarding_followup_classified_at = None
     consumer.save(
         update_fields=[
             "onboarded",
@@ -461,6 +456,7 @@ def restart_onboarding(consumer):
             "onboarding_followup_consumed_at",
             "onboarding_followup_session_id",
             "onboarding_followup_consent",
+            "onboarding_followup_classified_at",
             "updated_at",
         ]
     )

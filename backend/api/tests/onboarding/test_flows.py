@@ -283,6 +283,7 @@ class OnboardingFlowTests(BaseTest):
         self.assertIsNone(self.consumer_one.onboarding_followup_consumed_at)
         self.assertIsNone(self.consumer_one.onboarding_followup_session_id)
         self.assertIsNone(self.consumer_one.onboarding_followup_consent)
+        self.assertIsNone(self.consumer_one.onboarding_followup_classified_at)
         self.assertEqual(
             KnowledgeEntry.objects.filter(consumer=self.consumer_one).count(), 0
         )
