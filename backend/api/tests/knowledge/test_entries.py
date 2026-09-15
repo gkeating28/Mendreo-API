@@ -42,6 +42,9 @@ class KnowledgeEntryTests(BaseTest):
         self.assertEqual(response.json["source"], Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN)
         self.assertEqual(response.json["value"], "cycling")
         self.assertTrue(response.json["id"].startswith("kne_"))
+        self.assertFalse(response.json["needs_followup"])
+        self.assertEqual(response.json["followup_attempts"], 0)
+        self.assertEqual(response.json["followup_prompt"], "")
 
     def test_sensitive_value_masked_without_pii(self):
         KnowledgeEntry.objects.create(

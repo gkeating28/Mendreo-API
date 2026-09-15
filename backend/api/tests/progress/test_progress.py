@@ -442,6 +442,22 @@ class ProgressApiTests(BaseTest):
         self.assertIsNone(response.json["observation"])
         self.assertFalse(response.json["observations_enabled"])
 
+    def test_observation_dismiss(self):
+        observation = UserObservation.objects.create(
+            consumer=self.consumer_one,
+            text="We noticed work comes up often for you.",
+            topic_tag="work",
+            generated_at=timezone.now(),
+        )
+        response = TestCase._patch(
+            f"/progress/observations/{observation.id}",
+            {"dismissed_at": timezone.now().isoformat()},
+            access_token=self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        observation.refresh_from_db()
+        self.assertIsNotNone(observation.dismissed_at)
+
     def test_streaks(self):
         self._add_mood(5, days_ago=0)
         self._add_mood(6, days_ago=1)

@@ -397,6 +397,10 @@ KNOWLEDGE_RESPONSE_TYPES = [
 
 KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 
+# First-chat re-ask of vague initial free-text onboarding answers.
+KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS = 2
+KNOWLEDGE_FOLLOWUP_DIRECT_REASK = "Tell me a bit more about that."
+
 SETTING_KEY_REFRESH_ONBOARDING_CADENCE_DAYS = "refresh_onboarding_cadence_days"
 DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS = 30
 

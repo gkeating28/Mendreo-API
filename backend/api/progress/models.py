@@ -25,6 +25,7 @@ class UserObservation(SmartModel):
     text = models.TextField()
     topic_tag = models.CharField(max_length=255, blank=True, default="")
     generated_at = models.DateTimeField()
+    dismissed_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         indexes = [

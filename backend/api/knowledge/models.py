@@ -144,11 +144,20 @@ class KnowledgeEntry(SmartModel):
         on_delete=models.SET_NULL,
     )
 
+    # First-chat re-ask: vague initial free-text onboarding answers.
+    needs_followup = models.BooleanField(default=False)
+    followup_attempts = models.PositiveSmallIntegerField(default=0)
+    followup_prompt = models.TextField(blank=True, default="")
+
     class Meta:
         indexes = [
             models.Index(fields=["consumer", "field", "-created_at"]),
             models.Index(fields=["consumer", "-created_at"]),
             models.Index(fields=["source"]),
+            models.Index(
+                fields=["consumer", "needs_followup"],
+                name="knowledge_entry_followup_idx",
+            ),
         ]
 
     def __str__(self):
@@ -164,3 +173,18 @@ class KnowledgeEntry(SmartModel):
             .order_by("-created_at")
             .first()
         )
+
+    @staticmethod
+    def pending_followups_for(consumer):
+        """Oldest-first current entries still waiting for a first-chat re-ask."""
+        flagged = list(
+            KnowledgeEntry.objects.filter(consumer=consumer, needs_followup=True)
+            .select_related("field", "knowledge_question")
+            .order_by("created_at")
+        )
+        pending = []
+        for entry in flagged:
+            current = KnowledgeEntry.current_for(consumer, entry.field)
+            if current is not None and current.id == entry.id:
+                pending.append(entry)
+        return pending

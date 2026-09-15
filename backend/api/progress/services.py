@@ -380,9 +380,11 @@ def get_patterns_progress(consumer, start: date, end: date) -> dict:
         latest = UserObservation.latest_for(consumer)
         if latest:
             observation = {
+                "id": latest.id,
                 "text": latest.text,
                 "topic_tag": latest.topic_tag,
                 "generated_at": latest.generated_at.isoformat(),
+                "dismissed_at": latest.dismissed_at.isoformat() if latest.dismissed_at else None,
                 "chat_seed": f"I'd like to talk about this: {latest.text}",
             }
 

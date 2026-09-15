@@ -19,6 +19,8 @@
         {notes}
     </CLIENT_SUMMARY>
 
+    {onboarding_followup_block}
+
     <GOALS>
 
         {goals}

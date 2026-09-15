@@ -124,9 +124,11 @@ class OnboardingFlowTests(BaseTest):
         mood = KnowledgeEntry.current_for(self.consumer_one, self.mood)
         self.assertEqual(mood.value, "7")
         self.assertEqual(mood.source, Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION)
-        written = {row["field_key"]: row["value"] for row in response.json["entries"]}
-        self.assertEqual(written["mood"], "7")
-        self.assertEqual(written["sleep_quality"], "Okay")
+        written = {row["field_key"]: row for row in response.json["entries"]}
+        self.assertEqual(written["mood"]["value"], "7")
+        self.assertEqual(written["sleep_quality"]["value"], "Okay")
+        self.assertFalse(written["sleep_quality"]["needs_followup"])
+        self.assertEqual(written["sleep_quality"]["followup_attempts"], 0)
 
         profile = self._get_path("/onboarding/knowledge", self.consumer_one_access_token)
         self.assertEqual(profile.status_code, status.HTTP_200_OK, profile.json)
@@ -264,6 +266,8 @@ class OnboardingFlowTests(BaseTest):
         self._post("/onboarding/complete", {}, self.consumer_one_access_token)
         self.consumer_one.refresh_from_db()
         self.assertTrue(self.consumer_one.onboarded)
+        self.consumer_one.onboarding_followup_consumed_at = timezone.now()
+        self.consumer_one.save(update_fields=["onboarding_followup_consumed_at"])
 
         response = self._post(
             "/onboarding/restart", {}, self.consumer_one_access_token
@@ -276,6 +280,7 @@ class OnboardingFlowTests(BaseTest):
         self.consumer_one.refresh_from_db()
         self.assertFalse(self.consumer_one.onboarded)
         self.assertIsNone(self.consumer_one.last_onboarding_flow_completed_at)
+        self.assertIsNone(self.consumer_one.onboarding_followup_consumed_at)
         self.assertEqual(
             KnowledgeEntry.objects.filter(consumer=self.consumer_one).count(), 0
         )

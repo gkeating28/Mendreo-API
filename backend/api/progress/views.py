@@ -13,8 +13,11 @@ from .services import (
     parse_date_range,
     submit_check_in,
 )
+from .models import UserObservation
 from ..utils.Permissions import IsConsumerPermission
 from ..utils.Views import SmartAPIView
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 
 class _ProgressBase(SmartAPIView):
@@ -93,3 +96,27 @@ class CheckIns(_ProgressBase):
                 status=status.HTTP_409_CONFLICT,
             )
         return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class Observation(_ProgressBase):
+    def has_permission(self, request, method):
+        return method == "PATCH"
+
+    def patch(self, request, id):
+        consumer = self.get_consumer_from_request()
+        observation = UserObservation.objects.filter(consumer=consumer, id=id).first()
+        if not observation:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        raw = request.data.get("dismissed_at")
+        dismissed_at = parse_datetime(raw) if isinstance(raw, str) and raw else timezone.now()
+        if dismissed_at is None:
+            dismissed_at = timezone.now()
+        observation.dismissed_at = dismissed_at
+        observation.save(update_fields=["dismissed_at", "updated_at"])
+        return Response(
+            {
+                "id": observation.id,
+                "dismissed_at": observation.dismissed_at.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )

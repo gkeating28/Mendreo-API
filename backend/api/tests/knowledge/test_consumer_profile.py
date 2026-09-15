@@ -37,6 +37,8 @@ class ConsumerKnowledgeProfileTests(TestCase):
             field=self.sleep,
             value="on and off",
             source=Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
+            needs_followup=True,
+            followup_prompt="How have you been sleeping?",
         )
         write_knowledge_entry(
             consumer=self.consumer,
@@ -60,6 +62,9 @@ class ConsumerKnowledgeProfileTests(TestCase):
         self.assertEqual(sleep_row["value"], "on and off")
         self.assertEqual(sleep_row["source"], Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING)
         self.assertTrue(sleep_row["has_history"])
+        self.assertTrue(sleep_row["needs_followup"])
+        self.assertEqual(sleep_row["followup_attempts"], 0)
+        self.assertEqual(sleep_row["followup_prompt"], "How have you been sleeping?")
 
         meds_row = next(r for r in categories["Health"] if r["field"]["key"] == "medication")
         self.assertEqual(meds_row["value"], "sertraline")
@@ -96,10 +101,12 @@ class ConsumerKnowledgeProfileTests(TestCase):
 
         current = KnowledgeEntry.current_for(self.consumer, self.sleep)
         self.assertEqual(current.value, "much better")
+        self.assertFalse(current.needs_followup)
         self.assertEqual(
             KnowledgeEntry.objects.filter(consumer=self.consumer, field=self.sleep).count(),
             2,
         )
+        self.assertEqual(list(KnowledgeEntry.pending_followups_for(self.consumer)), [])
 
     def test_activity_feed_filter_by_source(self):
         response = self._get(
@@ -111,6 +118,23 @@ class ConsumerKnowledgeProfileTests(TestCase):
         self.assertEqual(len(response.json), 1)
         self.assertEqual(response.json[0]["source"], Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION)
         self.assertEqual(response.json[0]["value"], "sertraline")
+        self.assertFalse(response.json[0]["needs_followup"])
+        self.assertEqual(response.json[0]["followup_attempts"], 0)
+
+    def test_pending_followups_and_write_kwargs(self):
+        pending = list(KnowledgeEntry.pending_followups_for(self.consumer))
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].field_id, self.sleep.id)
+        self.assertEqual(pending[0].followup_prompt, "How have you been sleeping?")
+
+        with self.assertRaises(ValueError):
+            write_knowledge_entry(
+                consumer=self.consumer,
+                field=self.sleep,
+                value="still vague",
+                source=Constants.KNOWLEDGE_ENTRY_SOURCE_AI,
+                followup_attempts=3,
+            )
 
     def test_field_history_and_restricted_history(self):
         write_knowledge_entry(

@@ -618,6 +618,11 @@ def _prepare_prompt(session: Session) -> str:
             }
     else:
         exercise_extra["exercises"] = _published_exercises_prompt_block()
+        from ..knowledge.followup import format_onboarding_followup_block
+
+        exercise_extra["onboarding_followup_block"] = format_onboarding_followup_block(
+            session
+        )
 
     prompt = template.format(
         notes=notes,

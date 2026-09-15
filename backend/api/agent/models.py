@@ -134,7 +134,20 @@ class Agent(SmartModel):
                 )
             usage = {}
         else:
-            response, usage, asset, exercise = AgentUtils.get_response(consumer_message=user_message, session=session)
+            from ..knowledge.followup import handle_onboarding_followup_reply
+
+            followup = handle_onboarding_followup_reply(session, user_message)
+            if followup.canned_text:
+                response = AgentUtils.GeneralResponse(
+                    text=followup.canned_text,
+                    reasoning="onboarding_followup_direct_reask",
+                    suggested_responses=None,
+                )
+                usage = {"_onboarding_followup_reask": True}
+            else:
+                response, usage, asset, exercise = AgentUtils.get_response(
+                    consumer_message=user_message, session=session
+                )
 
         from ..utils.ExerciseOffer import format_agent_offer
         from ..utils.StepProgress import last_agent_text_for_session, resolve_step_progress

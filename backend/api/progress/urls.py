@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import CheckIns, Mood, Exercises, Patterns, Streaks
+from .views import CheckIns, Mood, Exercises, Observation, Patterns, Streaks
 
 urlpatterns = [
     path("/mood", Mood.as_view()),
@@ -8,4 +8,5 @@ urlpatterns = [
     path("/patterns", Patterns.as_view()),
     path("/streaks", Streaks.as_view()),
     path("/check-ins", CheckIns.as_view()),
+    path("/observations/<str:id>", Observation.as_view()),
 ]

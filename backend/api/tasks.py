@@ -168,7 +168,7 @@ def process_agent_response(user_message_id):
     time_limit=180,
 )
 def process_session_greeting(session_id):
-    """Generate the exercise opener without blocking session start."""
+    """Generate the exercise opener or onboarding follow-up greeting without blocking session start."""
     from .session.models import Session
     from .utils.AIWorkerClient import _run_session_greeting
 

@@ -83,6 +83,9 @@ def write_knowledge_entry(
     session=None,
     attribute=None,
     created_by=None,
+    needs_followup: bool = False,
+    followup_attempts: int = 0,
+    followup_prompt: str = "",
     invalidate_prompt_cache: bool = True,
 ):
     """
@@ -101,6 +104,13 @@ def write_knowledge_entry(
     if confidence < 0 or confidence > 1:
         raise ValueError("confidence must be between 0 and 1")
 
+    if followup_attempts is None:
+        followup_attempts = 0
+    if followup_attempts < 0 or followup_attempts > Constants.KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS:
+        raise ValueError(
+            f"followup_attempts must be between 0 and {Constants.KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS}"
+        )
+
     entry = KnowledgeEntry.objects.create(
         consumer=consumer,
         field=field,
@@ -111,6 +121,9 @@ def write_knowledge_entry(
         session=session,
         attribute=attribute,
         created_by=created_by,
+        needs_followup=bool(needs_followup),
+        followup_attempts=followup_attempts,
+        followup_prompt=followup_prompt or "",
     )
 
     if invalidate_prompt_cache:
@@ -173,11 +186,18 @@ def get_knowledge_profile(consumer, *, obscure_pii: bool = False, active_fields_
         entry_id = None
         restricted = False
 
+        needs_followup = False
+        followup_attempts = 0
+        followup_prompt = ""
+
         if entry:
             entry_id = entry.id
             source = entry.source
             confidence = entry.confidence
             updated_at = entry.created_at
+            needs_followup = bool(entry.needs_followup)
+            followup_attempts = entry.followup_attempts
+            followup_prompt = entry.followup_prompt or ""
             if field.sensitive and obscure_pii:
                 value = Constants.KNOWLEDGE_RESTRICTED_PLACEHOLDER
                 restricted = True
@@ -200,6 +220,9 @@ def get_knowledge_profile(consumer, *, obscure_pii: bool = False, active_fields_
                 "source": source,
                 "confidence": confidence,
                 "updated_at": updated_at,
+                "needs_followup": needs_followup,
+                "followup_attempts": followup_attempts,
+                "followup_prompt": followup_prompt,
                 "restricted": restricted,
                 "has_history": entry is not None,
             }

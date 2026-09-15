@@ -224,7 +224,9 @@ def validate_answer_value(question: KnowledgeQuestion, value) -> str:
 
 
 @transaction.atomic
-def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete: bool):
+def submit_flow_answers(
+    consumer, *, variant: str, answers: list[dict], complete: bool, classify_vagueness: bool = True
+):
     """
     Write Knowledge Entries (source=question) for flow answers.
 
@@ -250,6 +252,8 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
 
     written = []
     answered_ids = set()
+    token_context = build_token_context(consumer)
+    from ..knowledge.followup import is_answer_vague, should_classify_onboarding_answer
 
     for index, raw in enumerate(answers):
         question_id = raw.get("knowledge_question_id") or raw.get("question_id")
@@ -263,6 +267,18 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
         except serializers.ValidationError as exc:
             raise serializers.ValidationError({f"answers[{index}]": exc.detail})
 
+        needs_followup = False
+        followup_prompt = ""
+        if should_classify_onboarding_answer(
+            variant=variant,
+            response_type=question.response_type,
+            classify=classify_vagueness,
+        ):
+            followup_prompt = resolve_template(question.prompt, token_context)
+            needs_followup = is_answer_vague(followup_prompt, normalized)
+            if not needs_followup:
+                followup_prompt = ""
+
         entry = write_knowledge_entry(
             consumer=consumer,
             field=question.target_field,
@@ -270,6 +286,8 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
             source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
             knowledge_question=question,
             confidence=1.0,
+            needs_followup=needs_followup,
+            followup_prompt=followup_prompt,
             invalidate_prompt_cache=False,
         )
         written.append(entry)
@@ -318,6 +336,9 @@ def submit_flow_answers(consumer, *, variant: str, answers: list[dict], complete
                 "knowledge_question_id": entry.knowledge_question_id,
                 "value": entry.value,
                 "source": entry.source,
+                "needs_followup": entry.needs_followup,
+                "followup_attempts": entry.followup_attempts,
+                "followup_prompt": entry.followup_prompt,
                 "created_at": entry.created_at,
             }
             for entry in written
@@ -393,7 +414,11 @@ def complete_onboarding_with_placeholders(consumer):
         for question in questions
     ]
     return submit_flow_answers(
-        consumer, variant=variant, answers=answers, complete=True
+        consumer,
+        variant=variant,
+        answers=answers,
+        complete=True,
+        classify_vagueness=False,
     )
 
 
@@ -415,11 +440,13 @@ def restart_onboarding(consumer):
     consumer.onboarded = False
     consumer.last_onboarding_flow_completed_at = None
     consumer.last_onboarding_flow_variant = None
+    consumer.onboarding_followup_consumed_at = None
     consumer.save(
         update_fields=[
             "onboarded",
             "last_onboarding_flow_completed_at",
             "last_onboarding_flow_variant",
+            "onboarding_followup_consumed_at",
             "updated_at",
         ]
     )

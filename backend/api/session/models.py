@@ -161,6 +161,9 @@ class Session(SmartModel):
         if exercise:
             from ..utils.AIWorkerClient import request_session_greeting
             request_session_greeting(session)
+        else:
+            from ..knowledge.followup import maybe_start_onboarding_followup
+            maybe_start_onboarding_followup(session)
 
         return session
 
@@ -176,6 +179,8 @@ class Session(SmartModel):
             completed=None,
         )
         Participant.create_participants(session=session)
+        from ..knowledge.followup import maybe_start_onboarding_followup
+        maybe_start_onboarding_followup(session)
         return session
 
     @staticmethod
