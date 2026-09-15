@@ -82,6 +82,29 @@ _VAGUE_ANSWER_PHRASES = frozenset(
         "im fine",
         "im ok",
         "im okay",
+        # One-word non-answers Gemini used to catch at complete. Complete is
+        # heuristic-only now so these have to live here.
+        "life",
+        "work",
+        "stress",
+        "everything",
+        "always",
+        "busy",
+        "tired",
+        "money",
+        "school",
+        "people",
+        "myself",
+        "dunno",
+        "blah",
+        "yeah",
+        "yes",
+        "no",
+        "nah",
+        "sure",
+        "cool",
+        "k",
+        "kk",
     }
 )
 

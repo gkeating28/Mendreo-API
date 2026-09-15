@@ -82,14 +82,25 @@ class VaguenessClassifierTests(TestCase):
         self.assertTrue(looks_vague("  Fine. "))
         self.assertTrue(looks_vague("I'm okay"))
         self.assertTrue(looks_vague("idk"))
+        self.assertTrue(looks_vague("life"))
+        self.assertTrue(looks_vague("Life."))
         self.assertFalse(looks_vague("Full-time"))
         self.assertFalse(looks_vague("I work 3 days and freelance the rest"))
         self.assertFalse(looks_vague(""))
+
+    def test_life_is_flagged_for_followup(self):
+        self.assertTrue(
+            flag_onboarding_answer_for_followup(
+                "What is worrying you most right now?",
+                "life",
+            )
+        )
 
     def test_looks_thin_opener_greetings(self):
         self.assertTrue(looks_thin_opener("Hello"))
         self.assertTrue(looks_thin_opener("hey Toni"))
         self.assertTrue(looks_thin_opener("idk"))
+        self.assertTrue(looks_thin_opener("im ok"))
         self.assertFalse(looks_thin_opener("I lie awake replaying a fight with my sister"))
         self.assertFalse(looks_thin_opener("Full-time"))
 
@@ -332,6 +343,63 @@ class FirstChatFollowupTests(TestCase):
         )
         self.entry.refresh_from_db()
         self.assertEqual(self.entry.followup_attempts, 0)
+
+    def test_reused_today_session_still_asks_permission(self):
+        first = self._get("/sessions/today", access_token=self.token)
+        reused = self._get("/sessions/today", access_token=self.token)
+        self.assertEqual(first.json["id"], reused.json["id"])
+        session_id = reused.json["id"]
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            response = self._post(
+                "/messages",
+                {"text": "im ok", "session": session_id},
+                access_token=self.token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        get_agent_response.assert_not_called()
+        self.assertEqual(
+            response.json["suggested_responses"],
+            list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        )
+        self.consumer.refresh_from_db()
+        self.assertEqual(
+            self.consumer.onboarding_followup_consent,
+            Constants.ONBOARDING_FOLLOWUP_CONSENT_PENDING,
+        )
+
+    def test_no_pending_flag_skips_permission_and_claims(self):
+        self.entry.needs_followup = False
+        self.entry.save(update_fields=["needs_followup"])
+        today = self._get("/sessions/today", access_token=self.token)
+        session_id = today.json["id"]
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = (
+                GeneralResponse(
+                    text="Is there anything specific on your mind?",
+                    reasoning="check-in",
+                    suggested_responses=[],
+                ),
+                {},
+                None,
+                None,
+            )
+            response = self._post(
+                "/messages",
+                {"text": "im ok", "session": session_id},
+                access_token=self.token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        get_agent_response.assert_called_once()
+        self.assertEqual(
+            response.json["text"], "Is there anything specific on your mind?"
+        )
+        self.assertNotEqual(
+            response.json.get("suggested_responses") or [],
+            list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        )
+        self.consumer.refresh_from_db()
+        self.assertIsNotNone(self.consumer.onboarding_followup_consumed_at)
+        self.assertIsNone(self.consumer.onboarding_followup_consent)
 
     def test_real_topic_skips_permission_and_closes_window(self):
         today = self._get("/sessions/today", access_token=self.token)
