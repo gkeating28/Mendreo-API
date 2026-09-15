@@ -40,6 +40,81 @@ def should_classify_onboarding_answer(*, variant: str, response_type: str, class
     )
 
 
+# Obvious non-answers. Used at onboarding complete so we never block that
+# request on Gemini (the last step used to wait on one LLM call per free-text
+# answer, inside the DB transaction).
+_VAGUE_ANSWER_PHRASES = frozenset(
+    {
+        "fine",
+        "ok",
+        "okay",
+        "alright",
+        "all right",
+        "good",
+        "great",
+        "idk",
+        "i dont know",
+        "dont know",
+        "not sure",
+        "unsure",
+        "no idea",
+        "nothing",
+        "nothing much",
+        "not much",
+        "nothing really",
+        "n a",
+        "na",
+        "none",
+        "nil",
+        "meh",
+        "whatever",
+        "same",
+        "the usual",
+        "usual",
+        "normal",
+        "stuff",
+        "things",
+        "it is what it is",
+        "all good",
+        "im fine",
+        "im ok",
+        "im okay",
+    }
+)
+
+
+def _normalize_answer(answer: str) -> str:
+    cleaned = (answer or "").strip().lower().replace("'", "")
+    cleaned = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in cleaned)
+    return " ".join(cleaned.split())
+
+
+def looks_vague(answer: str) -> bool:
+    """True for short generic non-answers. Fail-open (False) when unsure."""
+    normalized = _normalize_answer(answer)
+    return bool(normalized) and normalized in _VAGUE_ANSWER_PHRASES
+
+
+def flag_onboarding_answer_for_followup(
+    question_prompt: str,
+    answer: str,
+    *,
+    suggested_responses: list[str] | None = None,
+) -> bool:
+    """
+    Whether to re-ask this initial free-text answer in the first chat.
+
+    Instant: chip taps and obvious platitudes only. Gemini stays on the
+    in-chat follow-up path so completing onboarding is not blocked.
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False
+    if suggested_responses and text in suggested_responses:
+        return False
+    return looks_vague(text)
+
+
 def is_answer_vague(question_prompt: str, answer: str) -> bool:
     """
     True when Gemini classifies the answer as vague/generic.

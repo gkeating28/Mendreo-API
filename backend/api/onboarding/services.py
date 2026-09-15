@@ -232,6 +232,9 @@ def submit_flow_answers(
 
     Initial may accept incomplete step syncs (complete=False) for client persistence.
     Return/Refresh require complete=True (discardable — no server draft).
+    Vague-answer flagging is deferred until complete=True so step saves stay
+    fast, and uses a local heuristic (not Gemini) so the last question / complete
+    request is not blocked on one LLM round-trip per free-text answer.
     """
     variant = resolve_variant(consumer, variant)
     flow_questions = questions_for_variant(variant)
@@ -253,7 +256,10 @@ def submit_flow_answers(
     written = []
     answered_ids = set()
     token_context = build_token_context(consumer)
-    from ..knowledge.followup import is_answer_vague, should_classify_onboarding_answer
+    from ..knowledge.followup import (
+        flag_onboarding_answer_for_followup,
+        should_classify_onboarding_answer,
+    )
 
     for index, raw in enumerate(answers):
         question_id = raw.get("knowledge_question_id") or raw.get("question_id")
@@ -272,10 +278,14 @@ def submit_flow_answers(
         if should_classify_onboarding_answer(
             variant=variant,
             response_type=question.response_type,
-            classify=classify_vagueness,
+            classify=classify_vagueness and complete,
         ):
             followup_prompt = resolve_template(question.prompt, token_context)
-            needs_followup = is_answer_vague(followup_prompt, normalized)
+            needs_followup = flag_onboarding_answer_for_followup(
+                followup_prompt,
+                normalized,
+                suggested_responses=question.suggested_responses,
+            )
             if not needs_followup:
                 followup_prompt = ""
 
