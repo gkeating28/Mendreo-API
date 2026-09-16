@@ -117,6 +117,14 @@ VOICE_LIBRARY_IDS = {
     "british_female": "aj0fZfXTBc7E3By4X8L2",
     "british_male": "av1BMOR1GPgThz9p4fLo",
 }
+VOICE_LIBRARY_LABELS = {
+    "male_irish": "Male Irish",
+    "female_irish": "Female Irish",
+    "american_male": "Male American",
+    "american_female": "Female American",
+    "british_female": "Female British",
+    "british_male": "Male British",
+}
 DEFAULT_TTS_MODEL_ID = "eleven_flash_v2_5"
 TTS_OUTPUT_FORMAT = "mp3_44100_128"
 
@@ -150,11 +158,51 @@ def _tts_voice_override_enabled(platform_settings) -> bool:
     return tts.get("voice_id") is True
 
 
-def ensure_tts_voice_override(api_key: str, agent_id: str) -> None:
-    """Allow per-session TTS voice overrides on the Conversational agent.
+def _library_voices_attached(conversation_config) -> bool:
+    if not isinstance(conversation_config, dict):
+        return False
+    tts = conversation_config.get("tts")
+    if not isinstance(tts, dict):
+        return False
+    voices = tts.get("supported_voices")
+    if not isinstance(voices, list):
+        return False
+    have = {
+        entry.get("voice_id")
+        for entry in voices
+        if isinstance(entry, dict) and entry.get("voice_id")
+    }
+    return all(voice_id in have for voice_id in VOICE_LIBRARY_IDS.values())
 
-    Talk live uses one dashboard agent. Without this Security flag, the SDK
-    cannot switch to the user's saved library voice and keeps the placeholder.
+
+def _merge_supported_voices(existing) -> list[dict]:
+    merged = []
+    seen = set()
+    if isinstance(existing, list):
+        for entry in existing:
+            if not isinstance(entry, dict):
+                continue
+            voice_id = entry.get("voice_id")
+            label = entry.get("label")
+            if not voice_id or not label or voice_id in seen:
+                continue
+            seen.add(voice_id)
+            merged.append(entry)
+    for key, voice_id in VOICE_LIBRARY_IDS.items():
+        if voice_id in seen:
+            continue
+        seen.add(voice_id)
+        merged.append({"label": VOICE_LIBRARY_LABELS[key], "voice_id": voice_id})
+    return merged
+
+
+def ensure_tts_voice_override(api_key: str, agent_id: str) -> None:
+    """Point the Conversational agent at the six uploaded library voices.
+
+    Talk live uses one dashboard agent. Its default TTS voice is ElevenLabs'
+    stock male American, not a user upload. Preview already uses
+    /v1/text-to-speech/{id}. ConvAI needs the Security voice_id override plus
+    those IDs listed on the agent, then the client can switch per session.
     """
     global _tts_voice_override_ready
     if _tts_voice_override_ready:
@@ -164,18 +212,22 @@ def ensure_tts_voice_override(api_key: str, agent_id: str) -> None:
     headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
     agent_url = f"{base}/v1/convai/agents/{agent_id}"
     platform_settings = {}
+    conversation_config = {}
 
     try:
         got = requests.get(agent_url, headers={"xi-api-key": api_key}, timeout=15)
-    except requests.RequestException as exc:
-        logger.warning("ElevenLabs agent GET failed: %s", exc)
+    except requests.RequestException as extra:
+        logger.warning("ElevenLabs agent GET failed: %s", extra)
         return
 
     if got.ok:
         body = got.json() or {}
         if isinstance(body, dict):
             platform_settings = body.get("platform_settings") or {}
-        if _tts_voice_override_enabled(platform_settings):
+            conversation_config = body.get("conversation_config") or {}
+        if _tts_voice_override_enabled(platform_settings) and _library_voices_attached(
+            conversation_config
+        ):
             _tts_voice_override_ready = True
             return
     else:
@@ -187,20 +239,25 @@ def ensure_tts_voice_override(api_key: str, agent_id: str) -> None:
 
     if not isinstance(platform_settings, dict):
         platform_settings = {}
-    overrides = platform_settings.get("overrides")
-    if not isinstance(overrides, dict):
-        overrides = {}
-    conv = overrides.get("conversation_config_override")
-    if not isinstance(conv, dict):
-        conv = {}
-    tts = conv.get("tts")
-    if not isinstance(tts, dict):
-        tts = {}
+    if not isinstance(conversation_config, dict):
+        conversation_config = {}
 
-    tts = {**tts, "voice_id": True}
-    conv = {**conv, "tts": tts}
-    overrides = {**overrides, "conversation_config_override": conv}
-    payload = {"platform_settings": {**platform_settings, "overrides": overrides}}
+    # Minimal PATCH — echoing the full GET body often 400s on read-only fields,
+    # which left Talk on the stock agent voice with only a server warning.
+    payload = {}
+    if not _tts_voice_override_enabled(platform_settings):
+        payload["platform_settings"] = {
+            "overrides": {"conversation_config_override": {"tts": {"voice_id": True}}}
+        }
+    if not _library_voices_attached(conversation_config):
+        tts = conversation_config.get("tts") if isinstance(conversation_config, dict) else None
+        existing = tts.get("supported_voices") if isinstance(tts, dict) else None
+        payload["conversation_config"] = {
+            "tts": {"supported_voices": _merge_supported_voices(existing)}
+        }
+    if not payload:
+        _tts_voice_override_ready = True
+        return
 
     try:
         patched = requests.patch(agent_url, headers=headers, json=payload, timeout=15)

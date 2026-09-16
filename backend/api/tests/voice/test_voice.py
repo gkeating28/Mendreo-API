@@ -57,6 +57,15 @@ class VoiceMappingTests(SimpleTestCase):
         self.assertEqual(VOICE_PREVIEW_TEXT, "Hi, I'm Toni. How are you feeling today?")
 
 
+def _library_supported_voices():
+    from api.voice.elevenlabs_client import VOICE_LIBRARY_IDS, VOICE_LIBRARY_LABELS
+
+    return [
+        {"label": VOICE_LIBRARY_LABELS[key], "voice_id": voice_id}
+        for key, voice_id in VOICE_LIBRARY_IDS.items()
+    ]
+
+
 class EnsureTtsVoiceOverrideTests(SimpleTestCase):
     def setUp(self):
         from api.voice.elevenlabs_client import reset_tts_voice_override_cache
@@ -78,7 +87,8 @@ class EnsureTtsVoiceOverrideTests(SimpleTestCase):
             json=lambda: {
                 "platform_settings": {
                     "overrides": {"conversation_config_override": {"tts": {"voice_id": True}}}
-                }
+                },
+                "conversation_config": {"tts": {"supported_voices": _library_supported_voices()}},
             },
             text="",
         )
@@ -96,18 +106,49 @@ class EnsureTtsVoiceOverrideTests(SimpleTestCase):
     @mock.patch("api.voice.elevenlabs_client.requests.patch")
     @mock.patch("api.voice.elevenlabs_client.requests.get")
     def test_enables_voice_id_override(self, get, patch):
-        from api.voice.elevenlabs_client import ensure_tts_voice_override
+        from api.voice.elevenlabs_client import VOICE_LIBRARY_IDS, ensure_tts_voice_override
 
         get.return_value = mock.Mock(ok=True, json=lambda: {"platform_settings": {}}, text="")
         patch.return_value = mock.Mock(ok=True, status_code=200, text="")
         ensure_tts_voice_override("sk_test", "agent_abc")
         patch.assert_called_once()
         payload = patch.call_args.kwargs["json"]
-        self.assertTrue(
-            payload["platform_settings"]["overrides"]["conversation_config_override"]["tts"][
-                "voice_id"
-            ]
+        self.assertEqual(
+            payload["platform_settings"],
+            {"overrides": {"conversation_config_override": {"tts": {"voice_id": True}}}},
         )
+        attached = {
+            entry["voice_id"] for entry in payload["conversation_config"]["tts"]["supported_voices"]
+        }
+        self.assertEqual(attached, set(VOICE_LIBRARY_IDS.values()))
+
+    @override_settings(
+        ELEVENLABS_API_KEY="sk_test",
+        ELEVENLABS_AGENT_ID="agent_abc",
+        ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+    )
+    @mock.patch("api.voice.elevenlabs_client.requests.patch")
+    @mock.patch("api.voice.elevenlabs_client.requests.get")
+    def test_attaches_library_voices_when_override_already_on(self, get, patch):
+        from api.voice.elevenlabs_client import VOICE_LIBRARY_IDS, ensure_tts_voice_override
+
+        get.return_value = mock.Mock(
+            ok=True,
+            json=lambda: {
+                "platform_settings": {
+                    "overrides": {"conversation_config_override": {"tts": {"voice_id": True}}}
+                }
+            },
+            text="",
+        )
+        patch.return_value = mock.Mock(ok=True, status_code=200, text="")
+        ensure_tts_voice_override("sk_test", "agent_abc")
+        payload = patch.call_args.kwargs["json"]
+        self.assertNotIn("platform_settings", payload)
+        attached = {
+            entry["voice_id"] for entry in payload["conversation_config"]["tts"]["supported_voices"]
+        }
+        self.assertEqual(attached, set(VOICE_LIBRARY_IDS.values()))
 
 
 def _sign_webhook(body: bytes, secret: str, ts: int | None = None) -> str:
