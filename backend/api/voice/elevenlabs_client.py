@@ -127,6 +127,98 @@ def resolve_elevenlabs_voice(voice_id: str | None) -> tuple[str, str]:
     return key, VOICE_LIBRARY_IDS[key]
 
 
+_tts_voice_override_ready = False
+
+
+def reset_tts_voice_override_cache() -> None:
+    global _tts_voice_override_ready
+    _tts_voice_override_ready = False
+
+
+def _tts_voice_override_enabled(platform_settings) -> bool:
+    if not isinstance(platform_settings, dict):
+        return False
+    overrides = platform_settings.get("overrides")
+    if not isinstance(overrides, dict):
+        return False
+    conv = overrides.get("conversation_config_override")
+    if not isinstance(conv, dict):
+        return False
+    tts = conv.get("tts")
+    if not isinstance(tts, dict):
+        return False
+    return tts.get("voice_id") is True
+
+
+def ensure_tts_voice_override(api_key: str, agent_id: str) -> None:
+    """Allow per-session TTS voice overrides on the Conversational agent.
+
+    Talk live uses one dashboard agent. Without this Security flag, the SDK
+    cannot switch to the user's saved library voice and keeps the placeholder.
+    """
+    global _tts_voice_override_ready
+    if _tts_voice_override_ready:
+        return
+
+    base = _clean_secret(settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
+    headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
+    agent_url = f"{base}/v1/convai/agents/{agent_id}"
+    platform_settings = {}
+
+    try:
+        got = requests.get(agent_url, headers={"xi-api-key": api_key}, timeout=15)
+    except requests.RequestException as exc:
+        logger.warning("ElevenLabs agent GET failed: %s", exc)
+        return
+
+    if got.ok:
+        body = got.json() or {}
+        if isinstance(body, dict):
+            platform_settings = body.get("platform_settings") or {}
+        if _tts_voice_override_enabled(platform_settings):
+            _tts_voice_override_ready = True
+            return
+    else:
+        logger.warning(
+            "ElevenLabs agent GET failed status=%s body=%s",
+            got.status_code,
+            (got.text or "")[:300],
+        )
+
+    if not isinstance(platform_settings, dict):
+        platform_settings = {}
+    overrides = platform_settings.get("overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    conv = overrides.get("conversation_config_override")
+    if not isinstance(conv, dict):
+        conv = {}
+    tts = conv.get("tts")
+    if not isinstance(tts, dict):
+        tts = {}
+
+    tts = {**tts, "voice_id": True}
+    conv = {**conv, "tts": tts}
+    overrides = {**overrides, "conversation_config_override": conv}
+    payload = {"platform_settings": {**platform_settings, "overrides": overrides}}
+
+    try:
+        patched = requests.patch(agent_url, headers=headers, json=payload, timeout=15)
+    except requests.RequestException as extra:
+        logger.warning("ElevenLabs agent PATCH failed: %s", extra)
+        return
+
+    if patched.ok:
+        _tts_voice_override_ready = True
+        return
+
+    logger.warning(
+        "ElevenLabs agent PATCH failed status=%s body=%s",
+        patched.status_code,
+        (patched.text or "")[:300],
+    )
+
+
 def _require_api_key() -> str:
     api_key = _clean_secret(settings.ELEVENLABS_API_KEY)
     if not api_key:
@@ -229,6 +321,7 @@ def mint_conversation_credentials() -> dict:
     uses whichever connection type it supports.
     """
     api_key, agent_id = _require_config()
+    ensure_tts_voice_override(api_key, agent_id)
     base = _clean_secret(settings.ELEVENLABS_API_BASE or "https://api.elevenlabs.io").rstrip("/")
     headers = {"xi-api-key": api_key}
 

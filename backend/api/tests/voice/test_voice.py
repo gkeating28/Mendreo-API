@@ -57,6 +57,59 @@ class VoiceMappingTests(SimpleTestCase):
         self.assertEqual(VOICE_PREVIEW_TEXT, "Hi, I'm Toni. How are you feeling today?")
 
 
+class EnsureTtsVoiceOverrideTests(SimpleTestCase):
+    def setUp(self):
+        from api.voice.elevenlabs_client import reset_tts_voice_override_cache
+
+        reset_tts_voice_override_cache()
+
+    @override_settings(
+        ELEVENLABS_API_KEY="sk_test",
+        ELEVENLABS_AGENT_ID="agent_abc",
+        ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+    )
+    @mock.patch("api.voice.elevenlabs_client.requests.patch")
+    @mock.patch("api.voice.elevenlabs_client.requests.get")
+    def test_skips_patch_when_already_enabled(self, get, patch):
+        from api.voice.elevenlabs_client import ensure_tts_voice_override
+
+        get.return_value = mock.Mock(
+            ok=True,
+            json=lambda: {
+                "platform_settings": {
+                    "overrides": {"conversation_config_override": {"tts": {"voice_id": True}}}
+                }
+            },
+            text="",
+        )
+        ensure_tts_voice_override("sk_test", "agent_abc")
+        get.assert_called_once()
+        patch.assert_not_called()
+        ensure_tts_voice_override("sk_test", "agent_abc")
+        self.assertEqual(get.call_count, 1)
+
+    @override_settings(
+        ELEVENLABS_API_KEY="sk_test",
+        ELEVENLABS_AGENT_ID="agent_abc",
+        ELEVENLABS_API_BASE="https://api.elevenlabs.io",
+    )
+    @mock.patch("api.voice.elevenlabs_client.requests.patch")
+    @mock.patch("api.voice.elevenlabs_client.requests.get")
+    def test_enables_voice_id_override(self, get, patch):
+        from api.voice.elevenlabs_client import ensure_tts_voice_override
+
+        get.return_value = mock.Mock(ok=True, json=lambda: {"platform_settings": {}}, text="")
+        patch.return_value = mock.Mock(ok=True, status_code=200, text="")
+        ensure_tts_voice_override("sk_test", "agent_abc")
+        patch.assert_called_once()
+        payload = patch.call_args.kwargs["json"]
+        self.assertTrue(
+            payload["platform_settings"]["overrides"]["conversation_config_override"]["tts"][
+                "voice_id"
+            ]
+        )
+
+
 def _sign_webhook(body: bytes, secret: str, ts: int | None = None) -> str:
     timestamp = str(ts if ts is not None else int(time.time()))
     payload = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else body
@@ -192,8 +245,9 @@ class MintConversationCredentialsTests(TestCase):
         ELEVENLABS_AGENT_ID='"agent_abc"',
         ELEVENLABS_API_BASE="https://api.elevenlabs.io",
     )
+    @mock.patch("api.voice.elevenlabs_client.ensure_tts_voice_override")
     @mock.patch("api.voice.elevenlabs_client.requests.get")
-    def test_strips_quotes_and_forwards_elevenlabs_detail(self, get):
+    def test_strips_quotes_and_forwards_elevenlabs_detail(self, get, _ensure):
         from api.voice.elevenlabs_client import (
             ElevenLabsRequestError,
             mint_conversation_credentials,
@@ -223,8 +277,9 @@ class MintConversationCredentialsTests(TestCase):
             self.assertEqual(call.kwargs["headers"]["xi-api-key"], "sk_test")
 
     @override_settings(ELEVENLABS_API_KEY="key_not_a_secret", ELEVENLABS_AGENT_ID="agent_abc")
+    @mock.patch("api.voice.elevenlabs_client.ensure_tts_voice_override")
     @mock.patch("api.voice.elevenlabs_client.requests.get")
-    def test_rejects_api_key_id_without_calling_elevenlabs(self, get):
+    def test_rejects_api_key_id_without_calling_elevenlabs(self, get, ensure):
         from api.voice.elevenlabs_client import (
             ElevenLabsConfigError,
             mint_conversation_credentials,
@@ -235,6 +290,7 @@ class MintConversationCredentialsTests(TestCase):
 
         self.assertIn("sk_…", str(ctx.exception))
         get.assert_not_called()
+        ensure.assert_not_called()
 
 
 class VoiceTokenTests(TestCase):
