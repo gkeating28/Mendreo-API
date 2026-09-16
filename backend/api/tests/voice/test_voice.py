@@ -35,15 +35,17 @@ WEBHOOK_PATH = "/internal/elevenlabs/webhook"
 
 class VoiceMappingTests(SimpleTestCase):
     def test_resolves_saved_keys_and_falls_back(self):
-
-        self.assertEqual(
-            resolve_elevenlabs_voice("male_irish"),
-            ("male_irish", VOICE_LIBRARY_IDS["male_irish"]),
-        )
-        self.assertEqual(
-            resolve_elevenlabs_voice("female_irish"),
-            ("female_irish", VOICE_LIBRARY_IDS["female_irish"]),
-        )
+        expected = {
+            "male_irish": "RlSVB64yXMZJjq67jbB1",
+            "female_irish": "3b8fXc91YHS1i2DYAlBQ",
+            "american_male": "TWutjvRaJqAX89preB4e",
+            "american_female": "gJx1vCzNCD1EQHT212Ls",
+            "british_female": "aj0fZfXTBc7E3By4X8L2",
+            "british_male": "av1BMOR1GPgThz9p4fLo",
+        }
+        self.assertEqual(VOICE_LIBRARY_IDS, expected)
+        for key, library_id in expected.items():
+            self.assertEqual(resolve_elevenlabs_voice(key), (key, library_id))
         self.assertEqual(
             resolve_elevenlabs_voice(None),
             (DEFAULT_VOICE_ID, VOICE_LIBRARY_IDS["female_irish"]),
@@ -552,6 +554,32 @@ class VoicePreviewTests(TestCase):
         self.assertEqual(kwargs["json"]["text"], VOICE_PREVIEW_TEXT)
         stored = UserSettings.objects.get(user=self.consumer.user)
         self.assertEqual(stored.voice_id, "female_irish")
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_previews_new_voices_without_saving(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3preview",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        for voice_id in (
+            "american_male",
+            "american_female",
+            "british_female",
+            "british_male",
+        ):
+            post.reset_mock()
+            response = self._post_preview({"voice_id": voice_id})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            args, _kwargs = post.call_args
+            self.assertEqual(
+                args[0],
+                f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS[voice_id]}",
+            )
+            stored = UserSettings.objects.get(user=self.consumer.user)
+            self.assertEqual(stored.voice_id, "female_irish")
 
     @mock.patch("api.voice.elevenlabs_client.requests.post")
     def test_forwards_elevenlabs_failure(self, post):

@@ -91,8 +91,12 @@ class UserSettings(SmartModel):
         SLOW = "slow"
 
     class VoiceId(models.TextChoices):
-        MALE_IRISH = "male_irish", "Male"
-        FEMALE_IRISH = "female_irish", "Female"
+        MALE_IRISH = "male_irish", "Male - Irish"
+        FEMALE_IRISH = "female_irish", "Female - Irish"
+        AMERICAN_MALE = "american_male", "Male - American"
+        AMERICAN_FEMALE = "american_female", "Female - American"
+        BRITISH_FEMALE = "british_female", "Female - British"
+        BRITISH_MALE = "british_male", "Male - British"
 
     chat_text_size = models.CharField(
         max_length=16,

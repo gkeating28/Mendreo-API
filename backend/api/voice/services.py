@@ -195,7 +195,10 @@ def synthesize_voice_preview(consumer, voice_id: str | None = None) -> tuple[byt
     if requested:
         if requested not in UserSettings.VoiceId.values:
             raise ValidationError(
-                {"voice_id": "Must be one of: male_irish, female_irish"},
+                {
+                    "voice_id": "Must be one of: "
+                    + ", ".join(UserSettings.VoiceId.values),
+                },
             )
         _, elevenlabs_voice_id = resolve_elevenlabs_voice(requested)
     else:

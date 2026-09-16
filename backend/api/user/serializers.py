@@ -275,7 +275,7 @@ class UserSettingsEditSerializer(EditModelSerializer):
         if value not in UserSettings.VoiceId.values:
             self.raise_validation_error(
                 "voice_id",
-                "Must be one of: male_irish, female_irish",
+                "Must be one of: " + ", ".join(UserSettings.VoiceId.values),
             )
         return value
 

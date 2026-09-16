@@ -112,6 +112,10 @@ DEFAULT_VOICE_ID = "female_irish"
 VOICE_LIBRARY_IDS = {
     "male_irish": "RlSVB64yXMZJjq67jbB1",
     "female_irish": "3b8fXc91YHS1i2DYAlBQ",
+    "american_male": "TWutjvRaJqAX89preB4e",
+    "american_female": "gJx1vCzNCD1EQHT212Ls",
+    "british_female": "aj0fZfXTBc7E3By4X8L2",
+    "british_male": "av1BMOR1GPgThz9p4fLo",
 }
 DEFAULT_TTS_MODEL_ID = "eleven_flash_v2_5"
 TTS_OUTPUT_FORMAT = "mp3_44100_128"

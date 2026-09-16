@@ -129,6 +129,22 @@ class UserSettingsApiTests(BaseTest):
         stored = UserSettings.objects.get(user=self.consumer_one.user)
         self.assertEqual(stored.voice_id, "male_irish")
 
+    def test_patch_new_voice_ids(self):
+        for voice_id in (
+            "american_male",
+            "american_female",
+            "british_female",
+            "british_male",
+        ):
+            response = self._patch_settings(
+                {"voice_id": voice_id},
+                self.consumer_one_access_token,
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+            self.assertEqual(response.json["voice_id"], voice_id)
+            stored = UserSettings.objects.get(user=self.consumer_one.user)
+            self.assertEqual(stored.voice_id, voice_id)
+
     def test_invalid_voice_id_rejected(self):
         response = self._patch_settings(
             {"voice_id": "female_american"},
