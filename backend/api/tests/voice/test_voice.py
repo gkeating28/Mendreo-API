@@ -572,6 +572,60 @@ class VoiceTtsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertIn("invalid api key", response.json()["detail"])
 
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_synthesizes_free_text_with_requested_voice(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3demo-mp3",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        spoken = "Thanks for saying hello, Sean! Welcome to the demo chat."
+
+        response = self._post_tts({"text": spoken, "voice_id": "female_irish"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.content, b"ID3demo-mp3")
+        args, kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['female_irish']}",
+        )
+        self.assertEqual(kwargs["json"]["text"], spoken)
+
+    @mock.patch("api.voice.elevenlabs_client.requests.post")
+    def test_free_text_uses_saved_voice_when_unspecified(self, post):
+        post.return_value = mock.Mock(
+            ok=True,
+            status_code=200,
+            content=b"ID3demo-mp3",
+            headers={"Content-Type": "audio/mpeg"},
+            text="",
+        )
+        prefs = UserSettings.for_user(self.consumer.user)
+        prefs.voice_id = UserSettings.VoiceId.BRITISH_MALE
+        prefs.save(update_fields=["voice_id"])
+
+        response = self._post_tts({"text": "Welcome to the demo chat."})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        args, _kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_LIBRARY_IDS['british_male']}",
+        )
+
+    def test_rejects_empty_free_text(self):
+        response = self._post_tts({"text": "   "})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["message_id"], "This field is required.")
+
+    def test_rejects_unknown_free_text_voice(self):
+        response = self._post_tts({"text": "Hello there.", "voice_id": "not_a_voice"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Must be one of", response.json()["voice_id"])
+
 
 @override_settings(
     ELEVENLABS_API_KEY="sk_test",

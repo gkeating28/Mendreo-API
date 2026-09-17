@@ -6,7 +6,12 @@ from rest_framework.response import Response
 from ..utils.Permissions import IsConsumerPermission
 from ..utils.Views import SmartAPIView
 from .elevenlabs_client import ElevenLabsConfigError, ElevenLabsRequestError
-from .services import mint_voice_token, synthesize_agent_message, synthesize_voice_preview
+from .services import (
+    mint_voice_token,
+    synthesize_agent_message,
+    synthesize_spoken_text,
+    synthesize_voice_preview,
+)
 
 
 class VoiceToken(SmartAPIView):
@@ -52,9 +57,19 @@ class VoiceTts(SmartAPIView):
         message_id = request.data.get("message_id") or None
         if message_id is not None:
             message_id = str(message_id).strip() or None
+        raw_text = request.data.get("text")
+        text = raw_text.strip() if isinstance(raw_text, str) else None
+        voice_id = request.data.get("voice_id") or None
+        if voice_id is not None:
+            voice_id = str(voice_id).strip() or None
 
         try:
-            audio, content_type = synthesize_agent_message(consumer, message_id)
+            if message_id:
+                audio, content_type = synthesize_agent_message(consumer, message_id)
+            elif text:
+                audio, content_type = synthesize_spoken_text(consumer, text, voice_id)
+            else:
+                raise ValidationError({"message_id": "This field is required."})
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
         except ElevenLabsConfigError as exc:

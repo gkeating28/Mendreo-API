@@ -166,6 +166,34 @@ def speakable_message_text(text: str | None) -> str:
     return cleaned
 
 
+def _resolve_tts_voice(consumer, voice_id: str | None = None) -> str:
+    requested = (voice_id or "").strip() or None
+    if requested:
+        if requested not in UserSettings.VoiceId.values:
+            raise ValidationError(
+                {
+                    "voice_id": "Must be one of: "
+                    + ", ".join(UserSettings.VoiceId.values),
+                },
+            )
+        _, elevenlabs_voice_id = resolve_elevenlabs_voice(requested)
+        return elevenlabs_voice_id
+    _, elevenlabs_voice_id = _consumer_voice(consumer)
+    return elevenlabs_voice_id
+
+
+def synthesize_spoken_text(
+    consumer,
+    text: str | None,
+    voice_id: str | None = None,
+) -> tuple[bytes, str]:
+    """TTS for unsaved copy (practice demo). Same ElevenLabs library as message play."""
+    spoken = speakable_message_text(text if isinstance(text, str) else "")
+    if not spoken:
+        raise ValidationError({"detail": TTS_EMPTY_TEXT})
+    return synthesize_speech(spoken, _resolve_tts_voice(consumer, voice_id))
+
+
 def synthesize_agent_message(consumer, message_id: str | None) -> tuple[bytes, str]:
     """TTS for one agent message the consumer already owns. Not live Talk."""
     if not message_id:
@@ -185,25 +213,12 @@ def synthesize_agent_message(consumer, message_id: str | None) -> tuple[bytes, s
     if not text:
         raise ValidationError({"detail": TTS_EMPTY_TEXT})
 
-    _, elevenlabs_voice_id = _consumer_voice(consumer)
-    return synthesize_speech(text, elevenlabs_voice_id)
+    return synthesize_speech(text, _resolve_tts_voice(consumer))
 
 
 def synthesize_voice_preview(consumer, voice_id: str | None = None) -> tuple[bytes, str]:
     """Sample line for a voice option. Does not write UserSettings."""
-    requested = (voice_id or "").strip() or None
-    if requested:
-        if requested not in UserSettings.VoiceId.values:
-            raise ValidationError(
-                {
-                    "voice_id": "Must be one of: "
-                    + ", ".join(UserSettings.VoiceId.values),
-                },
-            )
-        _, elevenlabs_voice_id = resolve_elevenlabs_voice(requested)
-    else:
-        _, elevenlabs_voice_id = _consumer_voice(consumer)
-    return synthesize_speech(VOICE_PREVIEW_TEXT, elevenlabs_voice_id)
+    return synthesize_speech(VOICE_PREVIEW_TEXT, _resolve_tts_voice(consumer, voice_id))
 
 
 def mint_voice_token(consumer, session_id: str | None = None) -> dict:
