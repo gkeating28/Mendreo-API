@@ -3,6 +3,7 @@ from django.db.models import F
 
 from ..exercise.models import Exercise
 from ..message.models import Message
+from .StepProgress import session_step_total
 
 
 def apply_agent_response(user_message: Message, agent_message: Message) -> Message:
@@ -74,9 +75,15 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                             ["completed", "completion_result", "completion_label"]
                         )
 
-                    if session.current_step_no < session.total_steps_no:
+                    total = session_step_total(session)
+                    if total and session.total_steps_no != total:
+                        session.total_steps_no = total
+                    if session.current_step_no < total:
                         session.current_step_no += 1
                     else:
+                        # Last catalogue step is done: advance onto the summary
+                        # page (current_step_no = total + 1) instead of closing.
+                        session.current_step_no = (session.current_step_no or total) + 1
                         session.mark_completed()
                         Exercise.all_objects.filter(id=session.exercise_id).update(
                             completions_no=F("completions_no") + 1
@@ -108,6 +115,7 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                 "agent_messages_no",
                 "consumer_messages_no",
                 "current_step_no",
+                "total_steps_no",
                 "completed",
                 "completed_at",
                 "updated_at",

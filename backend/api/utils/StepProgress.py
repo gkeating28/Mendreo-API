@@ -14,6 +14,8 @@ _GATE = re.compile(
     r"|(?:progress|continue) to (?:the )?(?:next|final|last) step"
     r"|ready to progress"
     r"|ready to move on"
+    r"|ready to (?:see|review|look at) (?:your |the )?summary"
+    r"|ready to finish"
     r")",
     re.IGNORECASE,
 )
@@ -76,6 +78,15 @@ def last_agent_text_for_session(session) -> str:
     return text or ""
 
 
+def session_step_total(session) -> int:
+    """Live catalogue count, so a stale ``steps_no`` cannot end the run early."""
+    live = 0
+    exercise = getattr(session, "exercise", None)
+    if exercise is not None:
+        live = exercise.steps.count()
+    return live or session.total_steps_no or 0
+
+
 def resolve_step_progress(
     *,
     current_step_no: int,
@@ -94,7 +105,6 @@ def resolve_step_progress(
     in the step instructions).
     """
     current = max(1, current_step_no or 1)
-    total = max(0, total_steps_no or 0)
 
     if is_skip:
         return current, True
@@ -104,15 +114,16 @@ def resolve_step_progress(
         user_text
     )
 
-    # User confirmed a dedicated next-step ask. Close this step even if the
-    # model forgot is_step_complete and started narrating the next step.
-    if gated and (not total or current < total):
+    # User confirmed a dedicated next-step / summary ask. Close this step even
+    # if the model forgot is_step_complete. Includes the last catalogue step,
+    # which advances onto the summary page rather than wrapping up in-chat.
+    if gated:
         complete = True
 
     if complete and is_advance_gate_text(agent_text):
         complete = False
 
-    if complete and total and current < total and not gated:
+    if complete and not gated:
         complete = False
 
     return current, complete

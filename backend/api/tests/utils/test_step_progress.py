@@ -12,6 +12,7 @@ class AdvanceGateTests(SimpleTestCase):
         self.assertTrue(is_advance_gate_text("Are you ready to progress to the next step?"))
         self.assertTrue(is_advance_gate_text("Are you ready to move on?"))
         self.assertTrue(is_advance_gate_text("Shall we move on to the next step?"))
+        self.assertTrue(is_advance_gate_text("Are you ready to see your summary?"))
         self.assertTrue(
             is_advance_gate_text(
                 "How do you think all or nothing thinking might have affected your thought? "
@@ -98,15 +99,28 @@ class ResolveStepProgressTests(SimpleTestCase):
         self.assertEqual(step, 1)
         self.assertTrue(complete)
 
-    def test_last_step_does_not_need_a_gate(self):
+    def test_last_step_does_not_complete_without_a_gate(self):
         _, complete = resolve_step_progress(
-            current_step_no=3,
-            total_steps_no=3,
-            tagged_step_no=3,
+            current_step_no=4,
+            total_steps_no=4,
+            tagged_step_no=4,
             is_step_complete=True,
-            agent_text="Here's a summary of what we covered.",
-            user_text="I could live with it",
-            last_agent_text="If it were true, could you live with it?",
+            agent_text="Goodnight, sleep well.",
+            user_text="I parked it in a notes app",
+            last_agent_text="Where will you put this worry?",
+        )
+        self.assertFalse(complete)
+
+    def test_last_step_completes_after_summary_gate(self):
+        self.assertTrue(is_advance_gate_text("Are you ready to see your summary?"))
+        _, complete = resolve_step_progress(
+            current_step_no=4,
+            total_steps_no=4,
+            tagged_step_no=4,
+            is_step_complete=True,
+            agent_text="Here's what we covered.",
+            user_text="Yes",
+            last_agent_text="Are you ready to see your summary?",
         )
         self.assertTrue(complete)
 

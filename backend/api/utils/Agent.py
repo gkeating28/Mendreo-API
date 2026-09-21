@@ -71,11 +71,12 @@ class ExerciseResponse(GeneralResponse):
     is_step_complete: bool = Field(
         ...,
         description=(
-            "Required. True only after this step's work is done AND (if this is not the last "
-            "step) the user has confirmed a dedicated 'ready to progress to the next step?' "
-            "ask. Never true in the same turn as that ask. Never true just because you "
-            "incremented step_no. 'Move on' / 'ready to proceed' inside the step instructions "
-            "means continue THIS step."
+            "Required. True only after this step's work is done AND the user has confirmed a "
+            "dedicated readiness ask ('ready to progress to the next step?' or, on the last "
+            "catalogue step, 'ready to see your summary?'). Never true in the same turn as "
+            "that ask. Never true just because you incremented step_no. Never true as a "
+            "goodbye or time-of-day sign-off. 'Move on' / 'ready to proceed' inside the step "
+            "instructions means continue THIS step."
         )
     )
     step_no: int = Field(
@@ -571,14 +572,18 @@ def _prepare_prompt(session: Session) -> str:
 
     cached = session.cached_prompt
     if cached:
-        # Older general-chat prompts told Toni to "click the exercise".
-        # Rebuild so today's session asks Yes / No instead.
-        if session.exercise_id or "click the exercise" not in cached:
+        # Older prompts left {today_date} uninterpolated (nested format), or
+        # told Toni to "click the exercise". Rebuild those.
+        stale_placeholders = "{today_date}" in cached or "{current_time}" in cached
+        stale_click = not session.exercise_id and "click the exercise" in cached
+        if not stale_placeholders and not stale_click:
             return cached
         session.cached_prompt = None
 
     consumer = session.consumer
-    today_date_str = DateUtils.today().strftime(PROMPT_DATE_FORMAT)
+    now_local = DateUtils.local_now()
+    today_date_str = now_local.strftime(PROMPT_DATE_FORMAT)
+    current_time_str = now_local.strftime("%H:%M")
     notes = _format_summary(consumer)
 
     template = _prompt_template(session)
@@ -588,6 +593,7 @@ def _prepare_prompt(session: Session) -> str:
 
     if exercise:
         exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
+        live_steps_no = exercise.steps.count() or exercise.steps_no
 
         if session.in_pre_exercise_phase():
             from ..exercise.pre_exercise import format_pre_exercise_prompt_block
@@ -597,7 +603,7 @@ def _prepare_prompt(session: Session) -> str:
                 "exercise_steps": (
                     "Pre-exercise check-in is active. Do not run exercise steps yet."
                 ),
-                "exercise_steps_no": exercise.steps_no,
+                "exercise_steps_no": live_steps_no,
                 "exercise_name": exercise.title,
                 "exercise_description": exercise.description,
                 "exercise_summary_notes": exercise_summary.detailed,
@@ -610,7 +616,7 @@ def _prepare_prompt(session: Session) -> str:
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,
-                "exercise_steps_no": exercise.steps_no,
+                "exercise_steps_no": live_steps_no,
                 "exercise_name": exercise.title,
                 "exercise_description": exercise.description,
                 "exercise_summary_notes": exercise_summary.detailed,
@@ -624,13 +630,21 @@ def _prepare_prompt(session: Session) -> str:
             session
         )
 
+    user_name = consumer.user.first_name or "there"
+    programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
+        today_date=today_date_str,
+        current_time=current_time_str,
+        local_timezone=str(DateUtils.PROGRESS_TZ),
+        user_name=user_name,
+    )
+
     prompt = template.format(
         notes=notes,
         today_date=today_date_str,
         goals=Setting.get_general_prompt(),
-        user_name=consumer.user.first_name,
+        user_name=user_name,
         therapeutic_instructions=Setting.get_therapeutic_prompt(),
-        programming_instructions=Constants.PROMPT_PROGRAMMING_INSTRUCTIONS,
+        programming_instructions=programming_instructions,
         **exercise_extra,
     )
 
@@ -661,6 +675,17 @@ def _get_formatted_exercise_steps_text(exercise):
                 "Only set is_step_complete after they confirm (yes/ok). "
                 "'Move on' or 'ready to proceed' in this step's instructions means continue "
                 "THIS step — it is not permission to complete it."
+            )
+        else:
+            completion_criteria += (
+                "\n\nAfter this step's work is finished, send a SEPARATE message whose ONLY "
+                "question is whether they are ready to see their summary "
+                '(e.g. "Are you ready to see your summary?"). '
+                "Do not set is_step_complete in that message. "
+                "Only set is_step_complete after they confirm (yes/ok). "
+                "Do not wrap up with goodbye or a time-of-day sign-off "
+                "(good morning / good afternoon / good evening / goodnight). "
+                "The app shows the summary page after they confirm."
             )
         steps += Constants.PROMPT_STEP.format(
             step_title=step.title,

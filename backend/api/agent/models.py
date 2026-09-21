@@ -150,7 +150,11 @@ class Agent(SmartModel):
                 )
 
         from ..utils.ExerciseOffer import format_agent_offer
-        from ..utils.StepProgress import last_agent_text_for_session, resolve_step_progress
+        from ..utils.StepProgress import (
+            last_agent_text_for_session,
+            resolve_step_progress,
+            session_step_total,
+        )
 
         suggested_responses, text = format_agent_offer(response, exercise, session)
         if followup.suggested_responses is not None:
@@ -166,7 +170,7 @@ class Agent(SmartModel):
         if session.exercise_id:
             step_no, is_step_complete = resolve_step_progress(
                 current_step_no=session.current_step_no or 1,
-                total_steps_no=session.total_steps_no or 0,
+                total_steps_no=session_step_total(session),
                 tagged_step_no=step_no,
                 is_step_complete=bool(is_step_complete),
                 agent_text=text or "",

@@ -131,7 +131,8 @@ class ExerciseTest(TestCase):
 
         self._send_message(
             text="Yes",
-            expected_session_step_no=3,
+            expected_session_step_no=4,
+            expected_step_no=3,
             has_completion_result=True
         )
 
@@ -165,7 +166,7 @@ class ExerciseTest(TestCase):
 
         step_three_complete_message = self._send_message(
             text=Constants.MESSAGE_TEXT_SKIP_STEP,
-            expected_session_step_no=3,
+            expected_session_step_no=4,
             expected_step_no=3,
             has_completion_result=True
         )

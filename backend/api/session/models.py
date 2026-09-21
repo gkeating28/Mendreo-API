@@ -128,7 +128,7 @@ class Session(SmartModel):
 
         if exercise:
             completed = False
-            total_steps_no = exercise.steps_no
+            total_steps_no = exercise.steps.count() or exercise.steps_no
             run_pre_exercise = should_run_pre_exercise_checkin(consumer, exercise)
             # Cadence: every repeat (incl. same-day second runs after a completed session).
             # Resume of an incomplete paused run is handled above via get_or_create.

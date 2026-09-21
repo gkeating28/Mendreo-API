@@ -175,6 +175,14 @@ def progress_calendar_date(dt=None):
     return dt.astimezone(PROGRESS_TZ).date()
 
 
+def local_now():
+    """Aware datetime in Ireland (product local time, not Django TIME_ZONE)."""
+    dt = timezone.now()
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.utc)
+    return dt.astimezone(PROGRESS_TZ)
+
+
 def progress_day_bounds(start, end):
     """Inclusive start/end dates as Ireland-local [start 00:00, end+1 00:00)."""
     range_start = datetime.datetime.combine(start, datetime.time.min, tzinfo=PROGRESS_TZ)
