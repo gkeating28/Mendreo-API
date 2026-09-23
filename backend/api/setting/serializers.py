@@ -33,6 +33,11 @@ class SettingCreateSerializer(serializers.Serializer):
         min_value=1,
         default=Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH,
     )
+    knowledge_min_confidence = serializers.FloatField(
+        required=False,
+        min_value=0,
+        max_value=1,
+    )
 
     def create(self, validated_data):
 
@@ -89,6 +94,11 @@ class SettingCreateSerializer(serializers.Serializer):
         )
         obs_max.save()
 
+        if "knowledge_min_confidence" in validated_data:
+            confidence = Setting.get_or_create_knowledge_min_confidence()
+            confidence.value = str(validated_data["knowledge_min_confidence"])
+            confidence.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "general_prompt": validated_data.get("general_prompt"),
@@ -98,4 +108,5 @@ class SettingCreateSerializer(serializers.Serializer):
             "observations_instruction": obs_instruction.value,
             "observations_tone_guide": obs_tone.value,
             "observations_max_length": int(obs_max.value),
+            "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
         }

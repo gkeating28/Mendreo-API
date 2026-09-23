@@ -166,3 +166,23 @@ class TestPreExercisePrompt(SmartAPIView):
             )
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class ExerciseTokens(SmartAPIView):
+    """Token names the check-in and step resolver can fill for this exercise."""
+
+    permission_classes = [IsAdminPermission]
+    model = Exercise
+
+    def get(self, request, id):
+        if not self.has_permission(request, "GET"):
+            return self.get_permission_denied_response(request, "GET")
+
+        try:
+            exercise = Exercise.objects.prefetch_related("steps", "questions").get(id=id)
+        except Exercise.DoesNotExist:
+            return self.not_found()
+
+        from ..utils.prompt_blocks import token_catalogue
+
+        return Response({"tokens": token_catalogue(exercise)}, status=status.HTTP_200_OK)

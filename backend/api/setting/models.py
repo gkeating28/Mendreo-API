@@ -42,6 +42,7 @@ class Setting(SmartModel):
         Setting.get_or_create_observations_instruction()
         Setting.get_or_create_observations_tone_guide()
         Setting.get_or_create_observations_max_length()
+        Setting.get_or_create_knowledge_min_confidence()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -161,6 +162,26 @@ class Setting(SmartModel):
             defaults={"value": str(Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH)},
         )
         return setting
+
+    @staticmethod
+    def get_or_create_knowledge_min_confidence():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE,
+            defaults={"value": str(Constants.KNOWLEDGE_MIN_CONFIDENCE)},
+        )
+        return setting
+
+    @staticmethod
+    def get_knowledge_min_confidence() -> float:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE,
+            Setting.get_or_create_knowledge_min_confidence,
+        )
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = Constants.KNOWLEDGE_MIN_CONFIDENCE
+        return min(1.0, max(0.0, value))
 
     @staticmethod
     def get_observations_max_length() -> int:

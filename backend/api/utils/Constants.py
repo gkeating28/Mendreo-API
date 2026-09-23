@@ -196,8 +196,21 @@ KNOWLEDGE_REVIEW_STATUSES = [
 
 PROMPT_KEY_THERAPEUTIC = "therapeutic"
 PROMPT_KEY_GOALS = "goals"
+PROMPT_KEY_TRIAGE = "triage"
 PROMPT_KEY_OBSERVATIONS_INSTRUCTION = "observations_instruction"
 PROMPT_KEY_OBSERVATIONS_TONE_GUIDE = "observations_tone_guide"
+
+PROMPT_KEYS = [
+    PROMPT_KEY_THERAPEUTIC,
+    PROMPT_KEY_GOALS,
+    PROMPT_KEY_TRIAGE,
+    PROMPT_KEY_OBSERVATIONS_INSTRUCTION,
+    PROMPT_KEY_OBSERVATIONS_TONE_GUIDE,
+]
+
+KNOWLEDGE_MIN_CONFIDENCE = 0.6
+SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE = "knowledge_min_confidence"
+KNOWLEDGE_VALUE_CAP = 300
 
 EVAL_CASE_KIND_TRIAGE = "triage"
 EVAL_CASE_KIND_EXERCISE = "exercise"
@@ -286,7 +299,7 @@ PROMPT_THERAPEUTIC_INSTRUCTIONS = """
 
 PROMPT_PROGRAMMING_INSTRUCTIONS = """
         You are a virtual AI Therapist trained on the Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition), supporting your client through therapeutic conversations.
-        Today is {today_date}. The current local time is {current_time} ({local_timezone}).
+        The current date and local time are in the <DATE> block at the end of this prompt.
 
         Time-of-day greetings and sign-offs must match that clock. Never say goodnight, good evening, or other night/evening closings in the morning or afternoon. If you are wrapping up, do not use a time-of-day farewell.
         
@@ -369,6 +382,18 @@ PROMPT_STEP = """<STEP>
                     {step_completion_prompt}
                 </COMPLETION_PROMPT>
             </STEP>"""
+
+PROMPT_TRIAGE = """
+            Triage the Experience: Based on the client's response, understand the nature of their anxious experience to direct them to the correct exercise from the <EXERCISES> section when appropriate.
+
+            - Your goal is to categorize the client's state to select the right exercise from the <EXERCISES> tag.
+
+            - If the client does not clearly state they want to do an exercise try and determine one based on their messages and each exercise's use_when text.
+
+            - Once you have retrieved an exercise using the 'get_exercise' tool, briefly name it and ask if they would like to start. Suggested Yes / No replies will be shown for you — do not walk them through the exercise in this chat, and do not tell them to click anything.
+
+            - If the user asks you to perform the exercise directly you must politely refuse and keep the conversation in this chat until they start from the exercise card.
+"""
 
 PROMPT_GENERAL_GOALS = f"""
         1. Follow-Ups First: Always prioritize follow-ups. If you have flagged a user for reflection or if there's previously made a plan, address this first.

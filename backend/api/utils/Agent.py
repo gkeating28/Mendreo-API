@@ -18,8 +18,6 @@ from .AI import AI, SessionAiResponse, SummaryAiResponse
 from .AiProviderFactory import build_pydantic_model, run_with_failover
 
 from ..asset.models import Asset
-from ..setting.models import Setting
-
 from ..consumer.models import Consumer
 from ..message.models import Message
 from ..exercise_summary.models import Exercise, ExerciseSummary
@@ -408,43 +406,11 @@ def _register_tools(agent: Agent[Dependencies, BaseModel]) -> None:
         }
 
 
-def _format_knowledge(consumer: Consumer) -> str:
-    """Structured User Knowledge Engine summary for session prompts."""
-    from ..knowledge.services import get_current_knowledge_summary
-
-    return get_current_knowledge_summary(consumer, include_sensitive=True)
-
-
 def _format_summary(consumer: Consumer) -> str:
-    from ..summary.models import Summary
-    """
-    Returns the summarized past conversation history for the consumer,
-    using the 'Summary' model's stored detailed notes and observations,
-    plus the current structured knowledge profile.
-    """
-    knowledge = _format_knowledge(consumer)
+    """Client summary notes only. Knowledge is a separate prompt block."""
+    from .prompt_blocks import render_client_summary
 
-    no_previous_conversations = "No previous conversations exist with this user."
-    try:
-        summary = Summary.objects.get(consumer=consumer)
-    except Summary.DoesNotExist:
-        return f"{no_previous_conversations}\n\n{knowledge}"
-
-    if not summary.detailed:
-        return f"{no_previous_conversations}\n\n{knowledge}"
-
-    detailed_notes = summary.detailed
-    observations = summary.observations or ""
-
-    result = "Detailed notes:\n"
-    result += detailed_notes.strip() + "\n\n"
-
-    result += "Observations:\n"
-    result += observations.strip() + "\n\n"
-
-    result += knowledge + "\n\n"
-
-    return result
+    return render_client_summary(consumer)
 
 
 def _append_messages_to_log(user, messages, date, session, session_no):
@@ -572,19 +538,33 @@ def _prepare_prompt(session: Session) -> str:
 
     cached = session.cached_prompt
     if cached:
-        # Older prompts left {today_date} uninterpolated (nested format), or
-        # told Toni to "click the exercise". Rebuild those.
+        # Older prompts left {today_date} uninterpolated (nested format),
+        # told Toni to "click the exercise", or predate the block order.
         stale_placeholders = "{today_date}" in cached or "{current_time}" in cached
         stale_click = not session.exercise_id and "click the exercise" in cached
-        if not stale_placeholders and not stale_click:
+        stale_shape = "<SESSION_CONTEXT>" not in cached
+        if not stale_placeholders and not stale_click and not stale_shape:
             return cached
         session.cached_prompt = None
+
+    from .prompt_blocks import (
+        build_token_context,
+        prompt_bodies_for_session,
+        render_client_summary,
+        render_exercise_catalogue,
+        render_form_answers,
+        render_knowledge,
+        render_session_context,
+        resolve_tokens,
+    )
 
     consumer = session.consumer
     now_local = DateUtils.local_now()
     today_date_str = now_local.strftime(PROMPT_DATE_FORMAT)
     current_time_str = now_local.strftime("%H:%M")
-    notes = _format_summary(consumer)
+    notes = render_client_summary(consumer)
+    bodies = prompt_bodies_for_session(session)
+    token_context = build_token_context(consumer, session.exercise, session)
 
     template = _prompt_template(session)
 
@@ -594,6 +574,8 @@ def _prepare_prompt(session: Session) -> str:
     if exercise:
         exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
         live_steps_no = exercise.steps.count() or exercise.steps_no
+        reference = resolve_tokens(exercise.reference_material or "", token_context)
+        description = resolve_tokens(exercise.description or "", token_context)
 
         if session.in_pre_exercise_phase():
             from ..exercise.pre_exercise import format_pre_exercise_prompt_block
@@ -605,51 +587,70 @@ def _prepare_prompt(session: Session) -> str:
                 ),
                 "exercise_steps_no": live_steps_no,
                 "exercise_name": exercise.title,
-                "exercise_description": exercise.description,
-                "exercise_summary_notes": exercise_summary.detailed,
+                "exercise_description": description,
+                "exercise_reference": reference,
+                "exercise_summary_notes": exercise_summary.detailed or "",
+                "form_answers": render_form_answers(session),
                 "pre_exercise_block": format_pre_exercise_prompt_block(
-                    exercise, consumer
+                    exercise, consumer, session=session
                 ),
             }
         else:
-            exercise_steps = _get_formatted_exercise_steps_text(exercise)
+            exercise_steps = _get_formatted_exercise_steps_text(
+                exercise, token_context
+            )
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,
                 "exercise_steps_no": live_steps_no,
                 "exercise_name": exercise.title,
-                "exercise_description": exercise.description,
-                "exercise_summary_notes": exercise_summary.detailed,
+                "exercise_description": description,
+                "exercise_reference": reference,
+                "exercise_summary_notes": exercise_summary.detailed or "",
+                "form_answers": render_form_answers(session),
                 "pre_exercise_block": "",
             }
+        exercise_extra["session_context"] = render_session_context(consumer, session)
+        exercise_extra["knowledge"] = render_knowledge(
+            consumer, "check_in" if session.in_pre_exercise_phase() else "exercise", exercise
+        )
     else:
-        exercise_extra["exercises"] = _published_exercises_prompt_block()
         from ..knowledge.followup import format_onboarding_followup_block
 
-        exercise_extra["onboarding_followup_block"] = format_onboarding_followup_block(
-            session
-        )
+        exercise_extra = {
+            "exercises": render_exercise_catalogue(),
+            "onboarding_followup_block": format_onboarding_followup_block(session),
+            "goals": bodies.get(Constants.PROMPT_KEY_GOALS, ""),
+            "triage": bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
+            "session_context": render_session_context(consumer, session),
+            "knowledge": render_knowledge(consumer, "general"),
+        }
 
     user_name = consumer.user.first_name or "there"
     programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
-        today_date=today_date_str,
-        current_time=current_time_str,
-        local_timezone=str(DateUtils.PROGRESS_TZ),
         user_name=user_name,
     )
 
     prompt = template.format(
         notes=notes,
         today_date=today_date_str,
-        goals=Setting.get_general_prompt(),
+        current_time=current_time_str,
+        local_timezone=str(DateUtils.PROGRESS_TZ),
         user_name=user_name,
-        therapeutic_instructions=Setting.get_therapeutic_prompt(),
+        therapeutic_instructions=bodies.get(Constants.PROMPT_KEY_THERAPEUTIC, ""),
         programming_instructions=programming_instructions,
         **exercise_extra,
     )
 
     session.cached_prompt = prompt
-    session.save(update_fields=["cached_prompt"])
+    session.save(
+        update_fields=[
+            "cached_prompt",
+            "cached_prompt_meta",
+            "prompt_version",
+            "updated_at",
+        ]
+    )
 
     return prompt
 
@@ -661,11 +662,17 @@ def _prompt_template(session) -> str:
         return f.read()
 
 
-def _get_formatted_exercise_steps_text(exercise):
+def _get_formatted_exercise_steps_text(exercise, token_context=None):
+    from .prompt_blocks import resolve_tokens
+
+    context = token_context or {}
     steps_no = exercise.steps.count()
     steps = ""
     for i, step in enumerate(exercise.steps.order_by("order")):
-        completion_criteria = step.completion_criteria
+        completion_criteria = step.done_when if step.done_when else step.completion_criteria
+        completion_criteria = resolve_tokens(completion_criteria, context)
+        description = resolve_tokens(step.description, context)
+        instructions = resolve_tokens(step.instructions, context)
         if i < steps_no - 1:
             completion_criteria += (
                 "\n\nAfter this step's work is finished, send a SEPARATE message whose ONLY "
@@ -689,43 +696,23 @@ def _get_formatted_exercise_steps_text(exercise):
             )
         steps += Constants.PROMPT_STEP.format(
             step_title=step.title,
-            step_description=step.description,
-            step_instructions=step.instructions,
+            step_description=description,
+            step_instructions=instructions,
             step_completion_criteria=completion_criteria,
-            step_completion_prompt=step.completion_prompt
+            step_completion_prompt=step.completion_prompt or "",
         )
     return steps
 
 
-_PUBLISHED_EXERCISES_CACHE_KEY = "prompt:published_exercises_v1"
-_PUBLISHED_EXERCISES_CACHE_TTL = 300
-
-
 def _published_exercises_prompt_block() -> str:
     """Cached catalog of published exercises for the general-chat system prompt."""
-    from django.core.cache import cache
+    from .prompt_blocks import render_exercise_catalogue
 
-    cached = cache.get(_PUBLISHED_EXERCISES_CACHE_KEY)
-    if cached is not None:
-        return cached
-
-    exercises = ""
-    for exercise in Exercise.objects.filter(status=Constants.EXERCISE_STATUS_PUBLISHED).only(
-        "id", "title", "subtitle", "description"
-    ):
-        exercises += f"""
-                <EXERCISE>
-                    <ID>{exercise.id}</ID>
-                    <TITLE>{exercise.title}</TITLE>
-                    <SUBTITLE>{exercise.subtitle}</SUBTITLE>
-                    <DESCRIPTION>{exercise.description}</TITLE>
-                </EXERCISE>"""
-
-    cache.set(_PUBLISHED_EXERCISES_CACHE_KEY, exercises, _PUBLISHED_EXERCISES_CACHE_TTL)
-    return exercises
+    return render_exercise_catalogue()
 
 
 def invalidate_published_exercises_cache():
-    from django.core.cache import cache
-    cache.delete(_PUBLISHED_EXERCISES_CACHE_KEY)
+    from .prompt_blocks import invalidate_published_exercises_cache as _invalidate
+
+    _invalidate()
 

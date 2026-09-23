@@ -179,8 +179,9 @@ class ConsumerKnowledgeProfileTests(TestCase):
         self.assertIn("sertraline", summary)
 
         formatted = _format_summary(self.consumer)
-        self.assertIn("Structured knowledge about this user", formatted)
-        self.assertIn("sleep_quality", formatted)
+        self.assertNotIn("Structured knowledge about this user", formatted)
+        self.assertNotIn("sleep_quality", formatted)
+        self.assertNotIn("sertraline", formatted)
 
     def test_write_invalidates_session_prompt_cache(self):
         session = Session.objects.create(

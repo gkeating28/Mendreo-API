@@ -10,7 +10,10 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-TOKEN_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
+# Shared resolver lives in prompt_blocks. Kept so existing imports of TOKEN_PATTERN still match.
+TOKEN_PATTERN = re.compile(
+    r"\{\{\s*([a-zA-Z0-9_.]+)\s*(?:\|([^{}]*))?\}\}"
+)
 
 DEFAULT_START_BUTTON_LABEL = "Start exercise"
 
@@ -38,72 +41,23 @@ def should_run_pre_exercise_checkin(consumer, exercise) -> bool:
     return has_completed_exercise_before(consumer, exercise)
 
 
-def _last_completed_session(consumer, exercise):
-    from ..session.models import Session
-
-    return (
-        Session.objects.filter(
-            consumer=consumer,
-            exercise=exercise,
-            completed=True,
-        )
-        .order_by("-created_at")
-        .first()
-    )
-
-
-def build_token_context(consumer, exercise) -> dict[str, str]:
+def build_token_context(consumer, exercise, session=None) -> dict[str, str]:
     """Flatten resolvable template tokens for pre-exercise instruction text."""
-    from ..knowledge.services import get_current_entries
+    from ..utils.prompt_blocks import build_token_context as _build
 
-    context: dict[str, str] = {
-        "user.first_name": getattr(consumer.user, "first_name", "") or "",
-        "user.last_name": getattr(consumer.user, "last_name", "") or "",
-        "exercise.title": getattr(exercise, "title", "") or "",
-        "exercise.subtitle": getattr(exercise, "subtitle", "") or "",
-        "exercise.id": getattr(exercise, "id", "") or "",
-    }
-
-    last = _last_completed_session(consumer, exercise)
-    if last:
-        context["last_session.subject"] = last.subject or ""
-        context["last_session.id"] = last.id
-        if last.created_at:
-            context["last_session.date"] = last.created_at.date().isoformat()
-            context["last_session.completed_at"] = (
-                last.pre_exercise_completed_at or last.updated_at or last.created_at
-            ).isoformat()
-        else:
-            context["last_session.date"] = ""
-            context["last_session.completed_at"] = ""
-    else:
-        context["last_session.subject"] = ""
-        context["last_session.id"] = ""
-        context["last_session.date"] = ""
-        context["last_session.completed_at"] = ""
-
-    for entry in get_current_entries(consumer, active_fields_only=True):
-        key = entry.field.key
-        context[f"knowledge.{key}"] = entry.value or ""
-
-    return context
+    return _build(consumer, exercise, session)
 
 
 def resolve_template(text: Optional[str], context: dict[str, str]) -> str:
-    """Replace ``{{token}}`` placeholders; unknown tokens become empty string."""
-    if not text:
-        return ""
+    """Replace ``{{token}}`` and ``{{token|fallback}}``. Unknown tokens become empty."""
+    from ..utils.prompt_blocks import resolve_tokens
 
-    def _replace(match):
-        token = match.group(1)
-        return context.get(token, "")
-
-    return TOKEN_PATTERN.sub(_replace, text)
+    return resolve_tokens(text, context)
 
 
-def resolve_pre_exercise_fields(exercise, consumer) -> dict:
+def resolve_pre_exercise_fields(exercise, consumer, session=None) -> dict:
     """Return resolved description / instruction / goal for a consumer."""
-    context = build_token_context(consumer, exercise)
+    context = build_token_context(consumer, exercise, session)
     return {
         "pre_exercise_enabled": bool(exercise.pre_exercise_enabled),
         "description": resolve_template(exercise.pre_exercise_description, context),
@@ -230,9 +184,9 @@ def generate_pre_exercise_summary(session) -> str:
         return "Pre-exercise check-in completed."
 
 
-def format_pre_exercise_prompt_block(exercise, consumer) -> str:
+def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
     """XML block injected into the system prompt during the check-in phase."""
-    resolved = resolve_pre_exercise_fields(exercise, consumer)
+    resolved = resolve_pre_exercise_fields(exercise, consumer, session=session)
     return f"""
     <PRE_EXERCISE_CHECK_IN>
         <!-- You are in the pre-exercise check-in phase. Do NOT start exercise steps yet. -->

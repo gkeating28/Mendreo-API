@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from .models import Setting
+from ..utils import Constants
 
 from .serializers import (
     SettingCreateSerializer,
@@ -31,6 +32,11 @@ class ListCreate(SmartAPIView):
 
             if setting.key in ("survey_enabled", "observations_enabled"):
                 data[setting.key] = setting.value.lower() == "true"
+            elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
+                try:
+                    data[setting.key] = float(setting.value)
+                except (TypeError, ValueError):
+                    data[setting.key] = Setting.get_knowledge_min_confidence()
             elif setting.key in (
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
@@ -49,6 +55,7 @@ class ListCreate(SmartAPIView):
             "observations_instruction": Setting.get_observations_instruction(),
             "observations_tone_guide": Setting.get_observations_tone_guide(),
             "observations_max_length": Setting.get_observations_max_length(),
+            "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

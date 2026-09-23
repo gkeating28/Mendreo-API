@@ -75,6 +75,9 @@
         <DESCRIPTION>
             {exercise_description}
         </DESCRIPTION>
+        <REFERENCE>
+            {exercise_reference}
+        </REFERENCE>
         {pre_exercise_block}
         <STEPS>
             {exercise_steps}
@@ -83,6 +86,18 @@
             {exercise_steps_no}
         </STEPS_NO>
     </EXERCISE>
+
+    <SESSION_CONTEXT>
+        {session_context}
+    </SESSION_CONTEXT>
+
+    <KNOWLEDGE>
+        {knowledge}
+    </KNOWLEDGE>
+
+    <FORM_ANSWERS>
+        {form_answers}
+    </FORM_ANSWERS>
 
     <CLIENT_SUMMARY>
         <!-- Notes based on previous conversations with your only client, {user_name} -->
@@ -93,5 +108,9 @@
         <!-- Notes based on previous exercises with your only client, {user_name} -->
         {exercise_summary_notes}
     </EXERCISE_SUMMARY>
+
+    <DATE>
+        Today is {today_date}. The current local time is {current_time} ({local_timezone}).
+    </DATE>
 
 </DATA>
