@@ -149,16 +149,44 @@ class Agent(SmartModel):
                     consumer_message=user_message, session=session
                 )
 
-        from ..utils.ExerciseOffer import format_agent_offer
+        from ..utils.ExerciseOffer import format_agent_offer, is_yes_no_offer
         from ..utils.StepProgress import (
             last_agent_text_for_session,
             resolve_step_progress,
             session_step_total,
         )
+        from ..utils.risk import apply_turn_risk
+        from ..utils.turn_hint import (
+            last_agent_message,
+            normalize_question_kind,
+            probe_count_for,
+            shape_chips,
+        )
 
         suggested_responses, text = format_agent_offer(response, exercise, session)
         if followup.suggested_responses is not None:
             suggested_responses = list(followup.suggested_responses)
+
+        question_kind = normalize_question_kind(getattr(response, "question_kind", None))
+        offer_chips = (
+            is_yes_no_offer(suggested_responses)
+            and not session.exercise_id
+            and exercise is not None
+        )
+        if not offer_chips:
+            suggested_responses = shape_chips(suggested_responses, question_kind)
+        suggested_responses_kind = (
+            Constants.SUGGESTED_RESPONSES_KIND_OFFER
+            if offer_chips
+            else Constants.SUGGESTED_RESPONSES_KIND_FREE
+        )
+        previous_agent = last_agent_message(session)
+        probe_count = probe_count_for(previous_agent, question_kind)
+        resources = apply_turn_risk(
+            session,
+            user_message.text or "",
+            getattr(response, "risk_level", None),
+        )
 
         step_no = response.step_no if hasattr(response, "step_no") else None
         completion_result = response.completion_result if hasattr(response, "completion_result") else None
@@ -200,6 +228,10 @@ class Agent(SmartModel):
             is_step_complete=is_step_complete,
             completion_result=completion_result,
             suggested_responses=suggested_responses,
+            suggested_responses_kind=suggested_responses_kind,
+            question_kind=question_kind,
+            probe_count=probe_count,
+            resources=resources,
         )
 
         if followup.decline_after_agent:

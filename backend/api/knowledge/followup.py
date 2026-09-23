@@ -276,7 +276,12 @@ def ensure_onboarding_followups_classified(consumer) -> None:
     for entry in _current_entries_for(fresh):
         if entry.needs_followup:
             continue
-        if entry.source != Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION:
+        if entry.review_status == Constants.KNOWLEDGE_REVIEW_PENDING:
+            continue
+        if entry.source not in (
+            Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+            Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
+        ):
             continue
         question = entry.knowledge_question
         if question is None:

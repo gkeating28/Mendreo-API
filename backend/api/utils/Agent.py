@@ -48,6 +48,18 @@ class GeneralResponse(BaseModel):
     text: str = Field(
       description="""Required. A text based response to your client's question. Speak to the client in second person. Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'.""",
     )
+    risk_level: str = Field(
+        default="none",
+        description="One of none, low, moderate, high. none when there is no safety concern.",
+    )
+    question_kind: str = Field(
+        default="none",
+        description=(
+            "open when your message ends with a question inviting the user to describe "
+            "something in their own words; closed when it invites a yes/no or a choice; "
+            "readiness when it is the readiness question; none when there is no question."
+        ),
+    )
     suggested_responses: Optional[List] = Field(
         description=(
             "Optional. Up to 3 tap-to-send replies in the client's own voice, each 1–4 words. "
@@ -280,10 +292,15 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         agent: Agent[Dependencies, BaseModel] = Agent(pydantic_model, **agent_kwargs)
         _register_tools(agent)
 
+        from .history import build_history
+        from .turn_hint import user_prompt_with_hint
+
         result = agent.run_sync(
-            user_prompt=consumer_message.text,
+            user_prompt=user_prompt_with_hint(session, consumer_message),
             deps=dependencies,
-            message_history=session.get_chat_history(),
+            message_history=build_history(
+                session, exclude_message_id=getattr(consumer_message, "id", None)
+            ),
             usage_limits=UsageLimits(tool_calls_limit=2)
         )
         return result

@@ -38,6 +38,22 @@ class ListCreate(SmartAPIView):
                 except (TypeError, ValueError):
                     data[setting.key] = Setting.get_knowledge_min_confidence()
             elif setting.key in (
+                Constants.SETTING_KEY_HISTORY_MAX_TURNS,
+                Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS,
+            ):
+                try:
+                    data[setting.key] = int(setting.value)
+                except (TypeError, ValueError):
+                    data[setting.key] = (
+                        Setting.get_history_max_turns()
+                        if setting.key == Constants.SETTING_KEY_HISTORY_MAX_TURNS
+                        else Setting.get_thin_answer_min_words()
+                    )
+            elif setting.key == Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT:
+                data[setting.key] = Setting.get_generic_answers_default()
+            elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
+                data[setting.key] = Setting.get_risk_keywords()
+            elif setting.key in (
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
             ):
@@ -56,6 +72,11 @@ class ListCreate(SmartAPIView):
             "observations_tone_guide": Setting.get_observations_tone_guide(),
             "observations_max_length": Setting.get_observations_max_length(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
+            "history_max_turns": Setting.get_history_max_turns(),
+            "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "generic_answers_default": Setting.get_generic_answers_default(),
+            "risk_keywords": Setting.get_risk_keywords(),
+            "trust_and_safety_email": Setting.get_trust_and_safety_email(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

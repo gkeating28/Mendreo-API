@@ -70,6 +70,7 @@ class Session(SmartModel):
         default=Constants.LIVE_RISK_LEVEL_NONE,
     )
     cached_prompt_meta = models.JSONField(null=True, blank=True)
+    history_summary = models.TextField(null=True, blank=True)
 
     class Meta:
         indexes = [

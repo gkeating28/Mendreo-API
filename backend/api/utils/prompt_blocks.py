@@ -457,6 +457,9 @@ def _fallback_body(key: str) -> str:
         return Setting.get_observations_instruction()
     if key == Constants.PROMPT_KEY_OBSERVATIONS_TONE_GUIDE:
         return Setting.get_observations_tone_guide()
+    if key == Constants.PROMPT_KEY_RESOURCES:
+        import json
+        return json.dumps(Constants.DEFAULT_RESOURCES)
     return ""
 
 
@@ -521,5 +524,7 @@ def prompt_bodies_for_session(session) -> dict[str, str]:
             therapeutic = row
 
     session.prompt_version = therapeutic
-    session.cached_prompt_meta = {"versions": versions}
+    meta = dict(session.cached_prompt_meta or {})
+    meta["versions"] = versions
+    session.cached_prompt_meta = meta
     return bodies

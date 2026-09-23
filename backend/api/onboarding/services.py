@@ -228,7 +228,7 @@ def submit_flow_answers(
     consumer, *, variant: str, answers: list[dict], complete: bool, classify_vagueness: bool = True
 ):
     """
-    Write Knowledge Entries (source=question) for flow answers.
+    Write Knowledge Entries (source=onboarding) for flow answers.
 
     Initial may accept incomplete step syncs (complete=False) for client persistence.
     Return/Refresh require complete=True (discardable — no server draft).
@@ -270,14 +270,22 @@ def submit_flow_answers(
 
         needs_followup = False
         followup_prompt = ""
+        from ..utils.turn_hint import entry_quality, generic_answers_for
+
+        confidence, review_status = entry_quality(
+            normalized,
+            response_type=question.response_type,
+            generic_answers=generic_answers_for(question),
+        )
 
         entry = write_knowledge_entry(
             consumer=consumer,
             field=question.target_field,
             value=normalized,
-            source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
             knowledge_question=question,
-            confidence=1.0,
+            confidence=confidence,
+            review_status=review_status,
             needs_followup=needs_followup,
             followup_prompt=followup_prompt,
             invalidate_prompt_cache=False,

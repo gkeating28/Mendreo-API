@@ -199,6 +199,7 @@ PROMPT_KEY_GOALS = "goals"
 PROMPT_KEY_TRIAGE = "triage"
 PROMPT_KEY_OBSERVATIONS_INSTRUCTION = "observations_instruction"
 PROMPT_KEY_OBSERVATIONS_TONE_GUIDE = "observations_tone_guide"
+PROMPT_KEY_RESOURCES = "resources"
 
 PROMPT_KEYS = [
     PROMPT_KEY_THERAPEUTIC,
@@ -206,11 +207,39 @@ PROMPT_KEYS = [
     PROMPT_KEY_TRIAGE,
     PROMPT_KEY_OBSERVATIONS_INSTRUCTION,
     PROMPT_KEY_OBSERVATIONS_TONE_GUIDE,
+    PROMPT_KEY_RESOURCES,
 ]
 
 KNOWLEDGE_MIN_CONFIDENCE = 0.6
 SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE = "knowledge_min_confidence"
 KNOWLEDGE_VALUE_CAP = 300
+
+HISTORY_MAX_TURNS = 40
+SETTING_KEY_HISTORY_MAX_TURNS = "history_max_turns"
+THIN_ANSWER_MIN_WORDS = 4
+SETTING_KEY_THIN_ANSWER_MIN_WORDS = "thin_answer_min_words"
+THIN_ANSWER_CONFIDENCE = 0.3
+SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
+SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
+SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
+
+DEFAULT_GENERIC_ANSWERS = ["fine", "ok", "not sure", "good", "bad"]
+DEFAULT_RISK_KEYWORDS = {
+    "high": ["suicide", "kill myself", "end my life", "want to die"],
+    "moderate": ["self-harm", "self harm", "hurt myself"],
+    "low": [],
+}
+DEFAULT_RESOURCES = {
+    "title": "Support is available",
+    "body": (
+        "If you are in immediate danger, contact the emergency services. "
+        "You can also speak to someone now."
+    ),
+    "links": [
+        {"label": "Samaritans", "url": "https://www.samaritans.org/"},
+        {"label": "Emergency services", "url": "https://www.112.ie/"},
+    ],
+}
 
 EVAL_CASE_KIND_TRIAGE = "triage"
 EVAL_CASE_KIND_EXERCISE = "exercise"
@@ -358,6 +387,9 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
           the user can send back, never a question and never a shortened restatement of what you just asked.
           If your text asks when they can work, chips are times ("Tonight", "This weekend"), not "When can you work?".
           If you cannot offer real answers, omit suggested_responses.
+
+        - When question_kind is open, chips are sentence starters the user completes, never complete answers.
+          Offer at most two, and end each with an ellipsis.
           
         - Events are recorded in special messages in the format:
           [EVENT ....]

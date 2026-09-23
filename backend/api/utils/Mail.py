@@ -61,6 +61,30 @@ def send_account_verification_code(user_id):
     _send_email(mail)
 
 
+def send_trust_and_safety_alert(session_id: str):
+    from ..setting.models import Setting
+    from ..session.models import Session
+
+    address = Setting.get_trust_and_safety_email()
+    if not address:
+        return
+
+    session = Session.objects.filter(id=session_id).select_related("consumer").first()
+    consumer_id = session.consumer_id if session else "unknown"
+    message = Mail(
+        from_email=(Api.EMAIL_FROM, Constants.APP_NAME),
+        to_emails=address,
+        subject="High-risk session needs review",
+        html_content=(
+            "A session was flagged high risk and needs a Trust and Safety review.<br><br>"
+            f"Session: {session_id}<br>"
+            f"Consumer: {consumer_id}<br><br>"
+            "The message text is not included in this email. Open the session in the admin console."
+        ),
+    )
+    _send_email(message)
+
+
 def send_developer_errors(body: str, subject: str = "System Error", mailable_exceptions: [MailableException] = None):
 
     if mailable_exceptions:

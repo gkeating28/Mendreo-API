@@ -123,7 +123,7 @@ class OnboardingFlowTests(BaseTest):
         )
         mood = KnowledgeEntry.current_for(self.consumer_one, self.mood)
         self.assertEqual(mood.value, "7")
-        self.assertEqual(mood.source, Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION)
+        self.assertEqual(mood.source, Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING)
         written = {row["field_key"]: row for row in response.json["entries"]}
         self.assertEqual(written["mood"]["value"], "7")
         self.assertEqual(written["sleep_quality"]["value"], "Okay")

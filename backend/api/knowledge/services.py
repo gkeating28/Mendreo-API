@@ -87,6 +87,7 @@ def write_knowledge_entry(
     followup_attempts: int = 0,
     followup_prompt: str = "",
     invalidate_prompt_cache: bool = True,
+    review_status: str | None = None,
 ):
     """
     Append a KnowledgeEntry for a consumer/field.
@@ -111,12 +112,16 @@ def write_knowledge_entry(
             f"followup_attempts must be between 0 and {Constants.KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS}"
         )
 
+    if review_status not in Constants.KNOWLEDGE_REVIEW_STATUSES:
+        review_status = Constants.KNOWLEDGE_REVIEW_ACCEPTED
+
     entry = KnowledgeEntry.objects.create(
         consumer=consumer,
         field=field,
         value=value,
         source=source,
         confidence=confidence,
+        review_status=review_status,
         knowledge_question=knowledge_question,
         session=session,
         attribute=attribute,

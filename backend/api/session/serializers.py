@@ -23,6 +23,9 @@ class SessionLastMessageSerializer(ListModelSerializer):
             "created_at",
             "sender",
             "suggested_responses",
+            "suggested_responses_kind",
+            "question_kind",
+            "resources",
             "is_step_complete",
             "step_no",
             "completion_label",
@@ -65,6 +68,7 @@ class SessionListSerializer(ListModelSerializer):
             "form_answers",
             "prompt_version",
             "live_risk_level",
+            "history_summary",
         ]
     
     @classmethod

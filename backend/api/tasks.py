@@ -137,6 +137,20 @@ def generate_post(id_, prompt):
 
 
 @shared_task(
+    name="notify_trust_and_safety",
+    ignore_result=True,
+    base=TransactionAwareTask,
+)
+def notify_trust_and_safety(session_id):
+    """Email the Trust and Safety address when a turn is high risk."""
+    from .utils import Mail
+
+    logger.info("Start > notify_trust_and_safety %s", session_id)
+    Mail.send_trust_and_safety_alert(session_id)
+    logger.info("End > notify_trust_and_safety %s", session_id)
+
+
+@shared_task(
     name="process_agent_response",
     ignore_result=True,
     base=TransactionAwareTask,

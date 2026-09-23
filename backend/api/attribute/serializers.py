@@ -50,6 +50,11 @@ class AttributeCreateSerializer(CreateModelSerializer):
         if not consumer.surveyed and question.survey:
             consumer.update_surveyed_status()
 
+        from ..utils.form_answers import record_form_answer, record_onboarding_knowledge
+
+        record_form_answer(attribute)
+        record_onboarding_knowledge(attribute)
+
         return
 
 

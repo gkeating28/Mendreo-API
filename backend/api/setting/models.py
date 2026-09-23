@@ -1,3 +1,5 @@
+import json
+
 from django.core.cache import cache
 from django.db import models
 
@@ -10,6 +12,16 @@ _SETTING_CACHE_TTL = 300
 
 def _setting_cache_key(key: str) -> str:
     return f"setting:value:{key}"
+
+
+def _json_list(raw, fallback: list) -> list:
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return list(fallback)
+    if not isinstance(parsed, list):
+        return list(fallback)
+    return parsed
 
 
 class Setting(SmartModel):
@@ -43,6 +55,11 @@ class Setting(SmartModel):
         Setting.get_or_create_observations_tone_guide()
         Setting.get_or_create_observations_max_length()
         Setting.get_or_create_knowledge_min_confidence()
+        Setting.get_or_create_history_max_turns()
+        Setting.get_or_create_thin_answer_min_words()
+        Setting.get_or_create_generic_answers_default()
+        Setting.get_or_create_risk_keywords()
+        Setting.get_or_create_trust_and_safety_email()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -182,6 +199,98 @@ class Setting(SmartModel):
         except (TypeError, ValueError):
             value = Constants.KNOWLEDGE_MIN_CONFIDENCE
         return min(1.0, max(0.0, value))
+
+    @staticmethod
+    def get_or_create_history_max_turns():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_HISTORY_MAX_TURNS,
+            defaults={"value": str(Constants.HISTORY_MAX_TURNS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_history_max_turns() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_HISTORY_MAX_TURNS,
+            Setting.get_or_create_history_max_turns,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.HISTORY_MAX_TURNS
+
+    @staticmethod
+    def get_or_create_thin_answer_min_words():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS,
+            defaults={"value": str(Constants.THIN_ANSWER_MIN_WORDS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_thin_answer_min_words() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS,
+            Setting.get_or_create_thin_answer_min_words,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.THIN_ANSWER_MIN_WORDS
+
+    @staticmethod
+    def get_or_create_generic_answers_default():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT,
+            defaults={"value": json.dumps(Constants.DEFAULT_GENERIC_ANSWERS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_generic_answers_default() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT,
+            Setting.get_or_create_generic_answers_default,
+        )
+        return _json_list(raw, Constants.DEFAULT_GENERIC_ANSWERS)
+
+    @staticmethod
+    def get_or_create_risk_keywords():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RISK_KEYWORDS,
+            defaults={"value": json.dumps(Constants.DEFAULT_RISK_KEYWORDS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_risk_keywords() -> dict:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RISK_KEYWORDS,
+            Setting.get_or_create_risk_keywords,
+        )
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return dict(Constants.DEFAULT_RISK_KEYWORDS)
+        if not isinstance(parsed, dict):
+            return dict(Constants.DEFAULT_RISK_KEYWORDS)
+        return parsed
+
+    @staticmethod
+    def get_or_create_trust_and_safety_email():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_TRUST_AND_SAFETY_EMAIL,
+            defaults={"value": ""},
+        )
+        return setting
+
+    @staticmethod
+    def get_trust_and_safety_email() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_TRUST_AND_SAFETY_EMAIL,
+            Setting.get_or_create_trust_and_safety_email,
+        )
+        return (raw or "").strip()
 
     @staticmethod
     def get_observations_max_length() -> int:

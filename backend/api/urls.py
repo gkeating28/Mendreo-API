@@ -25,6 +25,7 @@ urlpatterns = [
     path('survey', include('api.survey.urls')),
     
     path('sessions', include('api.session.urls')),
+    path('metrics', include('api.session.metrics_urls')),
     path('messages', include('api.message.urls')),
     path('summaries', include('api.summary.urls')),
 

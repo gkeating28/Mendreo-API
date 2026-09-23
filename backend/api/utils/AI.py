@@ -51,8 +51,9 @@ class AI:
         def _run(provider) -> dict:
             pydantic_model, model_settings = build_pydantic_model(provider, model)
             agent_kwargs = {"output_type": schema}
-            if model_settings is not None:
-                agent_kwargs["model_settings"] = model_settings
+            merged = dict(model_settings or {})
+            merged["temperature"] = temperature
+            agent_kwargs["model_settings"] = merged
 
             agent: Agent = Agent(pydantic_model, **agent_kwargs)
             result = agent.run_sync(user_prompt=prompt)

@@ -1,3 +1,5 @@
+import json
+
 from rest_framework import serializers
 
 from .models import Setting
@@ -38,6 +40,14 @@ class SettingCreateSerializer(serializers.Serializer):
         min_value=0,
         max_value=1,
     )
+    history_max_turns = serializers.IntegerField(required=False, min_value=1)
+    thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
+    generic_answers_default = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+    risk_keywords = serializers.JSONField(required=False)
+    trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
 
     def create(self, validated_data):
 
@@ -99,6 +109,31 @@ class SettingCreateSerializer(serializers.Serializer):
             confidence.value = str(validated_data["knowledge_min_confidence"])
             confidence.save()
 
+        if "history_max_turns" in validated_data:
+            turns = Setting.get_or_create_history_max_turns()
+            turns.value = str(validated_data["history_max_turns"])
+            turns.save()
+
+        if "thin_answer_min_words" in validated_data:
+            words = Setting.get_or_create_thin_answer_min_words()
+            words.value = str(validated_data["thin_answer_min_words"])
+            words.save()
+
+        if "generic_answers_default" in validated_data:
+            generic = Setting.get_or_create_generic_answers_default()
+            generic.value = json.dumps(validated_data["generic_answers_default"])
+            generic.save()
+
+        if "risk_keywords" in validated_data:
+            keywords = Setting.get_or_create_risk_keywords()
+            keywords.value = json.dumps(validated_data["risk_keywords"])
+            keywords.save()
+
+        if "trust_and_safety_email" in validated_data:
+            address = Setting.get_or_create_trust_and_safety_email()
+            address.value = validated_data["trust_and_safety_email"] or ""
+            address.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "general_prompt": validated_data.get("general_prompt"),
@@ -109,4 +144,9 @@ class SettingCreateSerializer(serializers.Serializer):
             "observations_tone_guide": obs_tone.value,
             "observations_max_length": int(obs_max.value),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
+            "history_max_turns": Setting.get_history_max_turns(),
+            "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "generic_answers_default": Setting.get_generic_answers_default(),
+            "risk_keywords": Setting.get_risk_keywords(),
+            "trust_and_safety_email": Setting.get_trust_and_safety_email(),
         }
