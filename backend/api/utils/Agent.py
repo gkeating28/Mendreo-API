@@ -708,17 +708,17 @@ def _prepare_prompt(session: Session) -> str:
             only_index = None
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
+                step_no = only_index + 1
                 description = (
-                    "Background only. Do not read this aloud and do not restart from it. "
-                    f"The exercise has already started. You are on step {only_index + 1} "
-                    f"of {live_steps_no}. Do not say that it is about to start, and do not "
-                    "repeat a question the user has already answered in this conversation, "
-                    "including anything in FORM_ANSWERS.\n\n"
+                    "Clinical background only. Do not read this to the user, "
+                    "and do not turn it into a welcome or a suitability check.\n\n"
                     + description
                 )
             exercise_steps = _get_formatted_exercise_steps_text(
                 exercise, token_context, only_index=only_index
             )
+            if _state_machine_enabled():
+                exercise_steps = _step_already_started(step_no, live_steps_no) + exercise_steps
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,
@@ -796,6 +796,19 @@ def _prompt_template(session) -> str:
     path = os.path.join(STATIC_FILES_DIR, filename)
     with open(path, 'r') as f:
         return f.read()
+
+
+def _step_already_started(step_no: int, steps_no: int) -> str:
+    if step_no <= 1:
+        return (
+            "The pre-exercise check-in is finished and this exercise has already been introduced. "
+            "You are on step 1. Your next message must be the first question in the step instructions below. "
+            "Do not write a welcome, a suitability check, a time estimate, or a line about getting started.\n\n"
+        )
+    return (
+        f"You are already on step {step_no} of {steps_no}. "
+        "Do not introduce the exercise. Follow only this step's instructions.\n\n"
+    )
 
 
 def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None):

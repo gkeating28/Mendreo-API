@@ -208,6 +208,25 @@ def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
     return ChipOutcome(user_message, build_session_state(session))
 
 
+def opening_turn(step_no: int) -> str:
+    """Hidden user turn that opens a step. It is not shown in the chat.
+
+    "Begin step N" makes the model write a welcome. This tells it the
+    exercise is already underway and to ask the step's first question.
+    """
+    if step_no <= 1:
+        return (
+            "The exercise has already been introduced during the check-in. "
+            "Ask the first question of step 1 now. "
+            "Do not welcome the user, explain the exercise, or ask if it is right for them."
+        )
+    return (
+        f"Continue straight into step {step_no}. "
+        "Ask only the first question that step's instructions require. "
+        "Do not introduce the exercise."
+    )
+
+
 def start_check_in(session, summary=None):
     """Move check-in to step 1 and open the step with a synthetic turn."""
     from ..exercise.pre_exercise import complete_pre_exercise_checkin
@@ -218,7 +237,7 @@ def start_check_in(session, summary=None):
     return complete_pre_exercise_checkin(
         session,
         summary=summary,
-        synthetic_text="Begin step 1.",
+        synthetic_text=opening_turn(1),
     )
 
 
@@ -388,7 +407,7 @@ def _confirm(
         )
         greeting = request_session_greeting(
             session,
-            synthetic_text=f"Begin step {step_no + 1}.",
+            synthetic_text=opening_turn(step_no + 1),
         )
 
     card = {"title": title, "label": label or ""}

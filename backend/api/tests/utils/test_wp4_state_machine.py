@@ -9,6 +9,7 @@ from ...participant.models import Participant
 from ...session.models import Session
 from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse, _state_machine_progression
+from ...utils.SessionStateMachine import opening_turn
 from ..exercise.test_pre_exercise import _pre_exercise_payload
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
@@ -141,9 +142,9 @@ class Wp4StateMachineTests(BaseTest):
             self.assertEqual(started.json["session_state"]["phase"], "step_active")
             self.assertEqual(started.json["session_state"]["current_step_no"], 1)
             self.assertEqual(started.json["session_state"]["pending_action"], "none")
-            self.assertEqual(started.json["messages"][0]["text"], "Begin step 1.")
+            self.assertEqual(started.json["messages"][0]["text"], opening_turn(1))
             self.assertFalse(started.json["messages"][0]["is_step_complete"])
-            self.assertEqual(started.json["last_message"]["text"], "Begin step 1.")
+            self.assertEqual(started.json["last_message"]["text"], opening_turn(1))
 
             ready = self._say(session, "I keep thinking I will fail.")
             self.assertEqual(chat.call_count, 1)
@@ -190,7 +191,7 @@ class Wp4StateMachineTests(BaseTest):
                 advanced.json["session_state"]["completion_card"]["title"],
                 "Well Done!",
             )
-            self.assertEqual(advanced.json["text"], "Begin step 2.")
+            self.assertEqual(advanced.json["text"], opening_turn(2))
             self.assertFalse(advanced.json["is_step_complete"])
             stamped = Message.objects.filter(
                 session=session, is_step_complete=True
@@ -210,7 +211,7 @@ class Wp4StateMachineTests(BaseTest):
             self.assertEqual(confirmed.json["session_state"]["current_step_no"], 3)
             self.assertEqual(confirmed.json["session_state"]["pending_action"], "none")
             self.assertIn("completion_card", confirmed.json["session_state"])
-            self.assertEqual(confirmed.json["messages"][-1]["text"], "Begin step 3.")
+            self.assertEqual(confirmed.json["messages"][-1]["text"], opening_turn(3))
 
             self._say(session, "A fairer thought is that I can prepare.")
             self.assertEqual(
@@ -238,7 +239,7 @@ class Wp4StateMachineTests(BaseTest):
             )
             self.assertIn("completion_card", finished.json["session_state"])
             self.assertFalse(
-                any(message["text"].startswith("Begin step") for message in finished.json["messages"])
+                any(message["text"] == opening_turn(4) for message in finished.json["messages"])
             )
 
         session.refresh_from_db()
