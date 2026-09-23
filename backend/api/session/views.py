@@ -245,7 +245,7 @@ class Finish(SmartAPIView):
 
 def _complete_check_in(session, summary):
     from ..exercise.pre_exercise import complete_pre_exercise_checkin
-    from ..utils.SessionStateMachine import build_session_state, start_check_in
+    from ..utils.SessionStateMachine import start_check_in
 
     try:
         if settings.AI_STATE_MACHINE_ENABLED:
@@ -257,20 +257,16 @@ def _complete_check_in(session, summary):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     session.refresh_from_db()
-    if not settings.AI_STATE_MACHINE_ENABLED:
-        session = SessionDetailSerializer.optimise(
-            Session.objects.filter(id=session.id)
-        ).first()
-        return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
-
-    messages = [greeting] if greeting is not None else []
-    return Response(
-        {
-            "session_state": build_session_state(session),
-            "messages": _message_payloads(messages),
-        },
-        status=status.HTTP_200_OK,
-    )
+    session = SessionDetailSerializer.optimise(
+        Session.objects.filter(id=session.id)
+    ).first()
+    payload = SessionDetailSerializer(session).data
+    # Keep the session document the current app reads (current_step_no, phase,
+    # pre_exercise, last_message). Add the flag-on fields beside it.
+    if settings.AI_STATE_MACHINE_ENABLED:
+        messages = [greeting] if greeting is not None else []
+        payload["messages"] = _message_payloads(messages)
+    return Response(payload, status=status.HTTP_200_OK)
 
 
 def _transition_response(session, outcome, user_text):

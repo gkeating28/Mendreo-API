@@ -191,11 +191,33 @@ def generate_pre_exercise_summary(session) -> str:
 
 def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
     """XML block injected into the system prompt during the check-in phase."""
+    from django.conf import settings as django_settings
+
     resolved = resolve_pre_exercise_fields(exercise, consumer, session=session)
+    if django_settings.AI_STATE_MACHINE_ENABLED:
+        # step_no / is_step_complete are not in the flag-on output schema.
+        # Telling the model to set them makes Gemini reject the turn.
+        rules = """
+            - Conduct a short conversational check-in only.
+            - Do not begin Step 1 or any exercise step content.
+            - Do not set step_goal_met or asks_readiness during the check-in.
+            - When the check-in goal is met, invite the user to tap the start button;
+              do not invent step progression yourself.
+        """
+        phase_note = "Do NOT start exercise steps yet. The app moves to Step 1 when the user taps Start."
+    else:
+        rules = """
+            - Conduct a short conversational check-in only.
+            - Do not begin Step 1 or any exercise step content.
+            - Always set step_no to 0 and is_step_complete to false.
+            - When the check-in goal is met, invite the user to tap the start button;
+              do not invent step progression yourself.
+        """
+        phase_note = "Keep step_no at 0 and is_step_complete false until the user taps Start."
     return f"""
     <PRE_EXERCISE_CHECK_IN>
         <!-- You are in the pre-exercise check-in phase. Do NOT start exercise steps yet. -->
-        <!-- Keep step_no at 0 and is_step_complete false until the user taps Start. -->
+        <!-- {phase_note} -->
         <DESCRIPTION>
             {resolved['description']}
         </DESCRIPTION>
@@ -212,11 +234,7 @@ def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
             {resolved['start_button_label']}
         </START_BUTTON_LABEL>
         <RULES>
-            - Conduct a short conversational check-in only.
-            - Do not begin Step 1 or any exercise step content.
-            - Always set step_no to 0 and is_step_complete to false.
-            - When the check-in goal is met, invite the user to tap the start button;
-              do not invent step progression yourself.
+            {rules}
         </RULES>
     </PRE_EXERCISE_CHECK_IN>
     """

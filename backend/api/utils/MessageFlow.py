@@ -14,6 +14,10 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
     ``update_fields`` to cut remote DB round-trips on the AI write path.
     """
     session = user_message.session
+    # Only the legacy step-advancement branch may persist these. A model call
+    # loaded before Start still has current_step_no 0; writing it back puts
+    # the session into check-in again.
+    persist_step_progress = False
 
     with transaction.atomic():
         if session.exercise_id:
@@ -91,6 +95,7 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                         )
 
                     total = session_step_total(session)
+                    persist_step_progress = True
                     if total and session.total_steps_no != total:
                         session.total_steps_no = total
                     if session.current_step_no < total:
@@ -118,23 +123,32 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                         update_fields=list(dict.fromkeys(session_step_update_fields))
                     )
 
-        session.last_message = agent_message
-        session.messages_no += 2
-        session.agent_messages_no += 1
-        session.consumer_messages_no += 1
-        session.save(
-            update_fields=[
-                "last_message",
-                "last_asset",
-                "messages_no",
-                "agent_messages_no",
-                "consumer_messages_no",
-                "current_step_no",
-                "total_steps_no",
-                "completed",
-                "completed_at",
-                "updated_at",
-            ]
+        stored_last_at = (
+            type(session).objects.filter(pk=session.pk)
+            .values_list("last_message__created_at", flat=True)
+            .first()
         )
+        update_fields = [
+            "last_asset",
+            "messages_no",
+            "agent_messages_no",
+            "consumer_messages_no",
+            "updated_at",
+        ]
+        # A check-in reply that finishes after Start must not replace the
+        # step 1 greeting or rewind the step number.
+        if stored_last_at is None or (
+            agent_message.created_at and agent_message.created_at >= stored_last_at
+        ):
+            session.last_message = agent_message
+            update_fields.append("last_message")
+        session.messages_no = F("messages_no") + 2
+        session.agent_messages_no = F("agent_messages_no") + 1
+        session.consumer_messages_no = F("consumer_messages_no") + 1
+        if persist_step_progress:
+            update_fields.extend(
+                ["current_step_no", "total_steps_no", "completed", "completed_at"]
+            )
+        session.save(update_fields=update_fields)
 
     return agent_message

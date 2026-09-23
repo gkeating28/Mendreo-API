@@ -90,6 +90,13 @@ def _to_model_messages(turns) -> list:
                 history.append(ModelRequest.user_text_prompt(text))
             else:
                 history.append(ModelResponse(parts=[TextPart(content=text)]))
+    # The exercise opener is a synthetic user turn that is not stored. Without
+    # it, history starts with the assistant and Gemini rejects the next call.
+    if history and isinstance(history[0], ModelResponse):
+        history.insert(
+            0,
+            ModelRequest.user_text_prompt("The client has just opened this conversation."),
+        )
     return history
 
 

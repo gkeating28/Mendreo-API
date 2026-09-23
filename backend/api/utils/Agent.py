@@ -612,13 +612,18 @@ def update_session(session_ai_prompt, session):
 def _prepare_prompt(session: Session) -> str:
 
     cached = session.cached_prompt
+    prompt_phase = _prompt_phase(session)
+    meta = dict(session.cached_prompt_meta or {})
     if cached:
         # Older prompts left {today_date} uninterpolated (nested format),
         # told Toni to "click the exercise", or predate the block order.
+        # A check-in prompt must not be reused once Start has moved to step 1.
         stale_placeholders = "{today_date}" in cached or "{current_time}" in cached
         stale_click = not session.exercise_id and "click the exercise" in cached
         stale_shape = "<SESSION_CONTEXT>" not in cached
-        if not stale_placeholders and not stale_click and not stale_shape:
+        stale_phase = meta.get("prompt_phase") != prompt_phase
+        stale_machine = meta.get("state_machine") != _state_machine_enabled()
+        if not any((stale_placeholders, stale_click, stale_shape, stale_phase, stale_machine)):
             return cached
         session.cached_prompt = None
 
@@ -719,6 +724,10 @@ def _prepare_prompt(session: Session) -> str:
     if exercise and _state_machine_enabled():
         prompt = _state_machine_progression(prompt)
 
+    meta = dict(session.cached_prompt_meta or {})
+    meta["prompt_phase"] = prompt_phase
+    meta["state_machine"] = _state_machine_enabled()
+    session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
         update_fields=[
@@ -730,6 +739,14 @@ def _prepare_prompt(session: Session) -> str:
     )
 
     return prompt
+
+
+def _prompt_phase(session) -> str:
+    if not session.exercise_id:
+        return "general"
+    if session.in_pre_exercise_phase():
+        return "check_in"
+    return "exercise"
 
 
 def _prompt_template(session) -> str:
