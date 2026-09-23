@@ -705,15 +705,20 @@ def _prepare_prompt(session: Session) -> str:
                 ),
             }
         else:
-            exercise_steps = _get_formatted_exercise_steps_text(
-                exercise, token_context
-            )
+            only_index = None
             if _state_machine_enabled():
-                exercise_steps = (
-                    "The pre-exercise check-in is finished. Do not repeat it, "
-                    "and do not ask the user if they are ready to start.\n\n"
-                    + exercise_steps
+                only_index = max(0, (session.current_step_no or 1) - 1)
+                description = (
+                    "Background only. Do not read this aloud and do not restart from it. "
+                    f"The exercise has already started. You are on step {only_index + 1} "
+                    f"of {live_steps_no}. Do not say that it is about to start, and do not "
+                    "repeat a question the user has already answered in this conversation, "
+                    "including anything in FORM_ANSWERS.\n\n"
+                    + description
                 )
+            exercise_steps = _get_formatted_exercise_steps_text(
+                exercise, token_context, only_index=only_index
+            )
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,
@@ -781,6 +786,8 @@ def _prompt_phase(session) -> str:
         return "general"
     if session.in_pre_exercise_phase():
         return "check_in"
+    if _state_machine_enabled():
+        return f"step:{session.current_step_no or 1}"
     return "exercise"
 
 
@@ -791,13 +798,15 @@ def _prompt_template(session) -> str:
         return f.read()
 
 
-def _get_formatted_exercise_steps_text(exercise, token_context=None):
+def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None):
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
     steps_no = exercise.steps.count()
     steps = ""
     for i, step in enumerate(exercise.steps.order_by("order")):
+        if only_index is not None and i != only_index:
+            continue
         completion_criteria = step.done_when if step.done_when else step.completion_criteria
         completion_criteria = resolve_tokens(completion_criteria, context)
         description = resolve_tokens(step.description, context)
