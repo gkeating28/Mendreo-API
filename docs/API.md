@@ -164,7 +164,7 @@ Chat session prompts include the current knowledge summary via `get_current_know
 
 Celery task `backfill_knowledge_from_onboarding` creates entries from onboarding `Attribute` answers matched by `KnowledgeField.key`.
 
-See also [`V2_BACKEND_IMPLEMENTATION_PLAN.md`](./V2_BACKEND_IMPLEMENTATION_PLAN.md).
+See also [`KNOWLEDGE_FIELDS_AND_QUESTIONS.md`](./KNOWLEDGE_FIELDS_AND_QUESTIONS.md) for a plain-language summary of fields, questions, triggers, and flows, and [`V2_BACKEND_IMPLEMENTATION_PLAN.md`](./V2_BACKEND_IMPLEMENTATION_PLAN.md).
 
 ---
 
