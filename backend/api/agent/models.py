@@ -64,6 +64,18 @@ class Agent(SmartModel):
         exercise = None
         followup = FollowupReply()
 
+        from django.conf import settings as django_settings
+
+        if (
+            user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP
+            and django_settings.AI_STATE_MACHINE_ENABLED
+            and session.exercise_id
+            and not session.in_pre_exercise_phase()
+        ):
+            from ..utils.SessionStateMachine import skip_step
+
+            return skip_step(session, user_message)
+
         if user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP:
             if session.in_pre_exercise_phase():
                 response = AgentUtils.ExerciseResponse(
@@ -168,6 +180,8 @@ class Agent(SmartModel):
             suggested_responses = list(followup.suggested_responses)
 
         question_kind = normalize_question_kind(getattr(response, "question_kind", None))
+        if django_settings.AI_STATE_MACHINE_ENABLED and getattr(response, "asks_readiness", False):
+            question_kind = Constants.QUESTION_KIND_READINESS
         offer_chips = (
             is_yes_no_offer(suggested_responses)
             and not session.exercise_id
@@ -195,7 +209,11 @@ class Agent(SmartModel):
         if step_no == 0 and session.exercise_id:
             step_no = 1
 
-        if session.exercise_id:
+        if session.exercise_id and django_settings.AI_STATE_MACHINE_ENABLED:
+            step_no = session.current_step_no or None
+            is_step_complete = False
+            completion_result = None
+        elif session.exercise_id:
             step_no, is_step_complete = resolve_step_progress(
                 current_step_no=session.current_step_no or 1,
                 total_steps_no=session_step_total(session),
@@ -206,8 +224,6 @@ class Agent(SmartModel):
                 last_agent_text=last_agent_text_for_session(session),
                 is_skip=user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP,
             )
-
-        if session.exercise_id:
             completion_result = AgentUtils.coerce_completion_result(
                 completion_result=completion_result,
                 is_step_complete=is_step_complete,
@@ -233,6 +249,11 @@ class Agent(SmartModel):
             probe_count=probe_count,
             resources=resources,
         )
+
+        if django_settings.AI_STATE_MACHINE_ENABLED and session.exercise_id:
+            from ..utils.SessionStateMachine import on_model_turn
+
+            on_model_turn(session, agent_message, response)
 
         if followup.decline_after_agent:
             from ..knowledge.followup import decline_onboarding_followup

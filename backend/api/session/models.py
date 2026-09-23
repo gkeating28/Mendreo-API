@@ -152,14 +152,21 @@ class Session(SmartModel):
             # Resume of an incomplete paused run is handled above via get_or_create.
             current_step_no = 0 if run_pre_exercise else 1
 
-        session = Session.objects.create(
+        create_kwargs = dict(
             consumer=consumer,
             risk_level=None,
             exercise=exercise,
             completed=completed,
             total_steps_no=total_steps_no,
-            current_step_no=current_step_no
+            current_step_no=current_step_no,
         )
+        from django.conf import settings as django_settings
+
+        if django_settings.AI_STATE_MACHINE_ENABLED:
+            from ..utils.SessionStateMachine import initial_state
+
+            create_kwargs["state"] = initial_state(exercise, run_pre_exercise)
+        session = Session.objects.create(**create_kwargs)
 
         if exercise:
             SessionStep.create(session, exercise)
@@ -263,6 +270,7 @@ class SessionStep(SmartModel):
     order = models.PositiveIntegerField()
 
     result_confidence = models.FloatField(null=True, blank=True)
+    goal_met_at = models.DateTimeField(null=True, blank=True)
 
     @staticmethod
     def create(session, exercise):

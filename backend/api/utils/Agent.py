@@ -77,6 +77,26 @@ class GeneralResponse(BaseModel):
     asset_id: Optional[str] = Field(default=None, description="Optional. An asset id")
 
 
+class ExerciseStateResponse(GeneralResponse):
+    """Exercise schema used when the state machine flag is on."""
+
+    step_goal_met: bool = Field(
+        default=False,
+        description=(
+            "True when this step's work is done: the concrete elements named in done_when "
+            "are present in the user's own words."
+        ),
+    )
+    asks_readiness: bool = Field(
+        default=False,
+        description=(
+            "True only when the step's work is done and this message is a single question "
+            "asking whether they are ready to continue. Never true in the same message as "
+            "other questions."
+        ),
+    )
+
+
 class ExerciseResponse(GeneralResponse):
     is_step_complete: bool = Field(
         ...,
@@ -266,7 +286,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     prompt = _prepare_prompt(session=session)
 
-    schema = ExerciseResponse if session.exercise else GeneralResponse
+    from django.conf import settings as django_settings
+
+    if session.exercise and django_settings.AI_STATE_MACHINE_ENABLED:
+        schema = ExerciseStateResponse
+    else:
+        schema = ExerciseResponse if session.exercise else GeneralResponse
 
     model_name = consumer.agent.model
 
@@ -290,7 +315,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             agent_kwargs["model_settings"] = model_settings
 
         agent: Agent[Dependencies, BaseModel] = Agent(pydantic_model, **agent_kwargs)
-        _register_tools(agent)
+        _register_tools(agent, session)
 
         from .history import build_history
         from .turn_hint import user_prompt_with_hint
@@ -324,7 +349,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             "text": "Sorry, I had an issue understanding your message, can you repeat it or rephrase it for me please?",
             "suggested_responses": [],
             "reasoning": str(e),
-            **({} if schema is GeneralResponse else {
+            **({} if "is_step_complete" not in schema.model_fields else {
                 "step_no": session.current_step_no,
                 "is_step_complete": False,
                 "completion_result": None
@@ -344,7 +369,66 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     return response_data, usage, dependencies.asset, dependencies.matched_exercise
 
 
-def _register_tools(agent: Agent[Dependencies, BaseModel]) -> None:
+_PROGRESSION_START = (
+    "        - Do not allow the user to do anything outside of this exercise."
+)
+_STATE_MACHINE_PROGRESSION = (
+    "        - Set asks_readiness only when the step's work is done, and make that "
+    "message a single question.\n"
+    "        - Do not complete the step yourself. The app shows the readiness chips.\n"
+)
+
+
+def _state_machine_enabled() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "AI_STATE_MACHINE_ENABLED", False))
+
+
+def _state_machine_progression(prompt: str) -> str:
+    start = prompt.find(_PROGRESSION_START)
+    end = prompt.find("    </PROGRAMMING_INSTRUCTIONS>")
+    if start == -1 or end == -1 or end < start:
+        return prompt
+    return prompt[:start] + _STATE_MACHINE_PROGRESSION + prompt[end:]
+
+
+def _register_tools(agent: Agent[Dependencies, BaseModel], session=None) -> None:
+    register_asset = True
+    if _state_machine_enabled():
+        register_asset = bool(session and session.exercise_id)
+
+    if register_asset:
+        _register_get_asset(agent)
+
+    @agent.tool
+    def get_exercise(ctx: RunContext[Dependencies], exercise_id: str) -> str | dict:
+        """Get an exercise to show to the user.
+
+        Args:
+            exercise_id: ID of  the exercise
+        """
+        exercise = Exercise.objects.filter(id=exercise_id, status=Constants.EXERCISE_STATUS_PUBLISHED).first()
+
+        if exercise:
+            ctx.deps.matched_exercise = exercise
+
+            return {
+                "status": "ok",
+                "exercise_id": exercise.id,
+                "exercise": {
+                    "id": exercise.id,
+                    "context": exercise.description
+                }
+            }
+
+        return {
+            "status": "not_found",
+            "message": "Sorry, I couldn't find an appropriate exercise"
+        }
+
+
+def _register_get_asset(agent: Agent[Dependencies, BaseModel]) -> None:
     @agent.tool
     def get_asset(ctx: RunContext[Dependencies], step_no: int) -> str | dict:
         """Get an image, video, podcast or article, aka 'asset' to show to the user.
@@ -394,32 +478,6 @@ def _register_tools(agent: Agent[Dependencies, BaseModel]) -> None:
         return {
             "status": "not_found",
             "message": "Sorry, I couldn't find an appropriate asset for this exercise"
-        }
-
-    @agent.tool
-    def get_exercise(ctx: RunContext[Dependencies], exercise_id: str) -> str | dict:
-        """Get an exercise to show to the user.
-
-        Args:
-            exercise_id: ID of  the exercise
-        """
-        exercise = Exercise.objects.filter(id=exercise_id, status=Constants.EXERCISE_STATUS_PUBLISHED).first()
-
-        if exercise:
-            ctx.deps.matched_exercise = exercise
-
-            return {
-                "status": "ok",
-                "exercise_id": exercise.id,
-                "exercise": {
-                    "id": exercise.id,
-                    "context": exercise.description
-                }
-            }
-
-        return {
-            "status": "not_found",
-            "message": "Sorry, I couldn't find an appropriate exercise"
         }
 
 
@@ -658,6 +716,8 @@ def _prepare_prompt(session: Session) -> str:
         programming_instructions=programming_instructions,
         **exercise_extra,
     )
+    if exercise and _state_machine_enabled():
+        prompt = _state_machine_progression(prompt)
 
     session.cached_prompt = prompt
     session.save(
@@ -690,7 +750,18 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None):
         completion_criteria = resolve_tokens(completion_criteria, context)
         description = resolve_tokens(step.description, context)
         instructions = resolve_tokens(step.instructions, context)
-        if i < steps_no - 1:
+        if _state_machine_enabled():
+            if i < steps_no - 1:
+                completion_criteria += (
+                    "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+                    "on a message whose only question is whether they are ready for the next step."
+                )
+            else:
+                completion_criteria += (
+                    "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+                    "on a message whose only question is whether they are ready to finish."
+                )
+        elif i < steps_no - 1:
             completion_criteria += (
                 "\n\nAfter this step's work is finished, send a SEPARATE message whose ONLY "
                 "question is whether they are ready for the next step "

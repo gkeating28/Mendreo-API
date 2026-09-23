@@ -24,9 +24,9 @@ def enqueue_agent_response(user_message: Message) -> None:
     process_agent_response.delay_on_commit(user_message.id)
 
 
-def enqueue_session_greeting(session) -> None:
+def enqueue_session_greeting(session, synthetic_text=None) -> None:
     from ..tasks import process_session_greeting
-    process_session_greeting.delay_on_commit(session.id)
+    process_session_greeting.delay_on_commit(session.id, synthetic_text)
 
 
 def request_agent_response(user_message: Message, session) -> Message:
@@ -57,23 +57,23 @@ def request_agent_response(user_message: Message, session) -> Message:
     return Message.objects.get(id=agent_message_id)
 
 
-def request_session_greeting(session) -> Message | None:
+def request_session_greeting(session, synthetic_text=None) -> Message | None:
     """Generate the exercise opener. General chat does not auto-greet."""
     if not session.exercise_id:
         return None
 
     if getattr(settings, "AI_ASYNC_MESSAGES", False):
-        enqueue_session_greeting(session)
+        enqueue_session_greeting(session, synthetic_text)
         return None
 
     if not _should_delegate_to_worker():
-        return _run_session_greeting(session)
+        return _run_session_greeting(session, synthetic_text)
 
     url = f"{settings.AI_WORKER_URL.rstrip('/')}/internal/ai/session-greeting"
     try:
         response = httpx.post(
             url,
-            json={"session_id": session.id},
+            json={"session_id": session.id, "synthetic_text": synthetic_text},
             headers=_worker_headers(),
             timeout=settings.AI_WORKER_TIMEOUT,
         )
@@ -87,7 +87,7 @@ def request_session_greeting(session) -> Message | None:
     return Message.objects.get(id=agent_message_id)
 
 
-def _run_session_greeting(session):
+def _run_session_greeting(session, synthetic_text=None):
     from ..participant.models import Participant
 
     consumer_participant = Participant.objects.filter(
@@ -98,7 +98,9 @@ def _run_session_greeting(session):
         return None
 
     if session.exercise_id:
-        if session.in_pre_exercise_phase():
+        if synthetic_text:
+            text = synthetic_text
+        elif session.in_pre_exercise_phase():
             text = (
                 "Hi, I'd like to practise this exercise again. "
                 "Please start with the pre-exercise check-in before we begin Step 1."

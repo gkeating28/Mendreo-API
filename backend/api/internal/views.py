@@ -45,7 +45,8 @@ class SessionGreeting(APIView):
     def post(self, request):
         require_internal_secret(request)
         session = get_object_or_404(Session, id=request.data.get("session_id"))
-        agent_message = _run_session_greeting(session)
+        synthetic_text = request.data.get("synthetic_text") or None
+        agent_message = _run_session_greeting(session, synthetic_text)
         if not agent_message:
             return Response({"detail": "No greeting generated."}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"agent_message_id": agent_message.id}, status=status.HTTP_200_OK)

@@ -181,7 +181,7 @@ def process_agent_response(user_message_id):
     soft_time_limit=150,
     time_limit=180,
 )
-def process_session_greeting(session_id):
+def process_session_greeting(session_id, synthetic_text=None):
     """Generate the exercise opener without blocking session start."""
     from .session.models import Session
     from .utils.AIWorkerClient import _run_session_greeting
@@ -191,7 +191,7 @@ def process_session_greeting(session_id):
     if not session:
         logger.warning("process_session_greeting: session %s not found", session_id)
         return
-    _run_session_greeting(session)
+    _run_session_greeting(session, synthetic_text)
     logger.info("End > process_session_greeting %s", session_id)
 
 

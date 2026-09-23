@@ -54,6 +54,7 @@ class SessionListSerializer(ListModelSerializer):
     exercise = serializers.SerializerMethodField()
     phase = serializers.SerializerMethodField()
     pre_exercise = serializers.SerializerMethodField()
+    session_state = serializers.SerializerMethodField()
     
     class Meta:
         model = Session
@@ -119,6 +120,23 @@ class SessionListSerializer(ListModelSerializer):
             "completed_at": session.pre_exercise_completed_at,
             "start_button_label": label,
         }
+
+    def get_session_state(self, session):
+        from django.conf import settings
+
+        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", False):
+            return None
+        from ..utils.SessionStateMachine import build_session_state
+
+        return build_session_state(session)
+
+    def to_representation(self, instance):
+        from django.conf import settings
+
+        data = super().to_representation(instance)
+        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", False):
+            data.pop("session_state", None)
+        return data
 
 
 class SessionStepListSerializer(ListModelSerializer):

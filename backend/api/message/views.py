@@ -44,9 +44,15 @@ class ListCreate(SmartPaginationAPIView):
         return data
 
     def override_response_data(self, request, data, instance):
+        data = dict(data)
         if getattr(request, "_ai_pending", False):
-            data = dict(data)
             data["ai_pending"] = True
+        if getattr(request, "_session_state", None) is not None:
+            data["session_state"] = request._session_state
+        elif settings.AI_STATE_MACHINE_ENABLED:
+            from ..utils.SessionStateMachine import build_session_state
+
+            data["session_state"] = build_session_state(instance.session)
         return data
 
     def post(self, request):
@@ -81,16 +87,38 @@ class ListCreate(SmartPaginationAPIView):
 
         from_suggested_response = _from_suggested_response(request.data)
 
-        offer_reply = maybe_handle_offer_response(instance, from_suggested_response)
-        if offer_reply is not None:
-            instance = offer_reply
-        elif settings.AI_ASYNC_MESSAGES:
-            enqueue_agent_response(instance)
-            request._ai_pending = True
-            # Return the user message immediately; clients poll GET /messages
-            # (or session.last_message) for the agent reply.
+        if settings.AI_STATE_MACHINE_ENABLED:
+            from ..utils.SessionStateMachine import (
+                consume_chip,
+                leave_awaiting_on_typed_text,
+            )
+
+            outcome = consume_chip(instance, from_suggested_response)
+            if outcome is not None:
+                instance = outcome.message
+                request._session_state = outcome.session_state
+            else:
+                if not from_suggested_response:
+                    leave_awaiting_on_typed_text(instance)
+                if settings.AI_ASYNC_MESSAGES:
+                    enqueue_agent_response(instance)
+                    request._ai_pending = True
+                else:
+                    instance = request_agent_response(
+                        user_message=instance, session=instance.session
+                    )
+                    instance.session.refresh_from_db()
         else:
-            instance = request_agent_response(user_message=instance, session=instance.session)
+            offer_reply = maybe_handle_offer_response(instance, from_suggested_response)
+            if offer_reply is not None:
+                instance = offer_reply
+            elif settings.AI_ASYNC_MESSAGES:
+                enqueue_agent_response(instance)
+                request._ai_pending = True
+                # Return the user message immediately; clients poll GET /messages
+                # (or session.last_message) for the agent reply.
+            else:
+                instance = request_agent_response(user_message=instance, session=instance.session)
 
         detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import transaction
 from django.db.models import F
 
@@ -37,6 +38,20 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
                     agent_message.save(
                         update_fields=list(dict.fromkeys(agent_update_fields))
                     )
+            elif settings.AI_STATE_MACHINE_ENABLED:
+                if agent_message.asset_id:
+                    session.last_asset_id = agent_message.asset_id
+                    session_step = (
+                        session.session_steps.filter(order=session.current_step_no - 1).first()
+                        if (session.current_step_no or 0) >= 1
+                        else None
+                    )
+                    if session_step:
+                        session_step.last_asset_id = agent_message.asset_id
+                        session_step.save(update_fields=["last_asset_id", "updated_at"])
+                if agent_message.exercise_id:
+                    agent_message.exercise = None
+                    agent_message.save(update_fields=["exercise", "updated_at"])
             else:
                 completion_result = agent_message.completion_result
                 is_step_complete = agent_message.is_step_complete

@@ -113,7 +113,7 @@ def test_pre_exercise_prompt(exercise, consumer, *, run_dry_run: bool = False) -
     return payload
 
 
-def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None):
+def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None, synthetic_text=None):
     """
     Handoff from check-in to Step 1: stamp completed_at + summary, advance
     current_step_no to 1, clear cached prompt, and start the exercise greeting.
@@ -126,24 +126,29 @@ def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None):
     if summary is None:
         summary = generate_pre_exercise_summary(session)
 
+    from django.conf import settings as django_settings
+
+    from ..utils import Constants
+
     session.pre_exercise_prompt_summary = summary
     session.pre_exercise_completed_at = dj_timezone.now()
     session.current_step_no = 1
     session.cached_prompt = None
-    session.save(
-        update_fields=[
-            "pre_exercise_prompt_summary",
-            "pre_exercise_completed_at",
-            "current_step_no",
-            "cached_prompt",
-            "updated_at",
-        ]
-    )
+    update_fields = [
+        "pre_exercise_prompt_summary",
+        "pre_exercise_completed_at",
+        "current_step_no",
+        "cached_prompt",
+        "updated_at",
+    ]
+    if django_settings.AI_STATE_MACHINE_ENABLED:
+        session.state = Constants.SESSION_STATE_STEP_ACTIVE
+        update_fields.append("state")
+    session.save(update_fields=update_fields)
 
     from ..utils.AIWorkerClient import request_session_greeting
 
-    request_session_greeting(session)
-    return session
+    return request_session_greeting(session, synthetic_text=synthetic_text)
 
 
 def generate_pre_exercise_summary(session) -> str:

@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 
+from django.conf import settings
 from django.db.models import Count
 from django.db.models.functions import TruncDate
 
@@ -185,21 +186,118 @@ class CompletePreExercise(SmartAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from ..exercise.pre_exercise import complete_pre_exercise_checkin
-
         summary = request.data.get("summary") if isinstance(request.data, dict) else None
+        return _complete_check_in(session, summary)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class StartExercise(CompletePreExercise):
+    """POST /sessions/<id>/start. Alias of complete-pre-exercise."""
+
+
+class Ready(SmartAPIView):
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        if not settings.AI_STATE_MACHINE_ENABLED:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from ..utils import Constants
+        from ..utils.SessionStateMachine import confirm_ready
+
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        confirm = bool(request.data.get("confirm")) if isinstance(request.data, dict) else False
         try:
-            complete_pre_exercise_checkin(session, summary=summary)
+            outcome = confirm_ready(session, confirm)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user_text = Constants.CHIP_READY_YES if confirm else Constants.CHIP_NOT_YET
+        return _transition_response(session, outcome, user_text)
 
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class Finish(SmartAPIView):
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        if not settings.AI_STATE_MACHINE_ENABLED:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from ..utils import Constants
+        from ..utils.SessionStateMachine import finish_exercise
+
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        try:
+            outcome = finish_exercise(session)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return _transition_response(session, outcome, Constants.CHIP_FINISH)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+def _complete_check_in(session, summary):
+    from ..exercise.pre_exercise import complete_pre_exercise_checkin
+    from ..utils.SessionStateMachine import build_session_state, start_check_in
+
+    try:
+        if settings.AI_STATE_MACHINE_ENABLED:
+            greeting = start_check_in(session, summary=summary)
+        else:
+            complete_pre_exercise_checkin(session, summary=summary)
+            greeting = None
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    session.refresh_from_db()
+    if not settings.AI_STATE_MACHINE_ENABLED:
         session = SessionDetailSerializer.optimise(
             Session.objects.filter(id=session.id)
         ).first()
         return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
 
-    def has_permission(self, request, method):
-        return method == "POST"
+    messages = [greeting] if greeting is not None else []
+    return Response(
+        {
+            "session_state": build_session_state(session),
+            "messages": _message_payloads(messages),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+def _transition_response(session, outcome, user_text):
+    from ..message.models import Message
+
+    session.refresh_from_db()
+    user_message = (
+        Message.objects.filter(session=session, text=user_text, sender__consumer__isnull=False)
+        .order_by("-created_at")
+        .first()
+    )
+    messages = []
+    if user_message is not None:
+        messages.append(user_message)
+    extra = outcome.message
+    if extra is not None and (user_message is None or extra.id != user_message.id):
+        messages.append(extra)
+    return Response(
+        {"session_state": outcome.session_state, "messages": _message_payloads(messages)},
+        status=status.HTTP_200_OK,
+    )
+
+
+def _message_payloads(messages):
+    from ..message.serializers import MessageDetailSerializer
+
+    return MessageDetailSerializer(messages, many=True).data
 
 
 class Summary(SmartAPIView):
