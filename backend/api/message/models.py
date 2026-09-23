@@ -1,7 +1,8 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from ..utils.Fields import CharIDField
+from ..utils import Constants
+from ..utils.Fields import CharIDField, EnumField
 from ..utils.Models import SmartModel
 
 
@@ -23,6 +24,17 @@ class Message(SmartModel):
     is_step_complete = models.BooleanField(null=True)
 
     usage = models.JSONField(null=True)
+
+    resources = models.JSONField(null=True, blank=True)
+    suggested_responses_kind = EnumField(
+        options=Constants.SUGGESTED_RESPONSES_KINDS,
+        default=Constants.SUGGESTED_RESPONSES_KIND_FREE,
+    )
+    question_kind = EnumField(
+        options=Constants.QUESTION_KINDS,
+        default=Constants.QUESTION_KIND_NONE,
+    )
+    probe_count = models.PositiveIntegerField(default=0)
 
     # Voice (ElevenLabs) idempotency — nullable; typed chat leaves these unset.
     voice_conversation_id = models.CharField(max_length=64, null=True, blank=True)

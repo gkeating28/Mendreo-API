@@ -83,6 +83,9 @@ class KnowledgeQuestion(SmartModel):
     order = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=True)
 
+    follow_up_prompt = models.TextField(null=True, blank=True)
+    generic_answers = models.JSONField(default=list, blank=True)
+
     def __str__(self):
         return f"KnowledgeQuestion: {self.id}"
 
@@ -114,6 +117,10 @@ class KnowledgeEntry(SmartModel):
     value = models.TextField()
     source = EnumField(options=Constants.KNOWLEDGE_ENTRY_SOURCES)
     confidence = models.FloatField(default=1.0)
+    review_status = EnumField(
+        options=Constants.KNOWLEDGE_REVIEW_STATUSES,
+        default=Constants.KNOWLEDGE_REVIEW_ACCEPTED,
+    )
 
     knowledge_question = models.ForeignKey(
         KnowledgeQuestion,

@@ -28,6 +28,15 @@ class Question(SmartModel):
 
     title = models.TextField()
 
+    key = models.CharField(max_length=255, null=True, blank=True)
+    knowledge_field = models.ForeignKey(
+        "api.KnowledgeField",
+        related_name="form_questions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
     suggested_responses = ArrayField(models.CharField(max_length=255, blank=False), blank=True, null=True)
 
     order = models.PositiveIntegerField(default=0)

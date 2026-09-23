@@ -55,7 +55,17 @@ class SessionListSerializer(ListModelSerializer):
     class Meta:
         model = Session
         # Internal AI state — large blobs (100s of KB) that must never go to clients.
-        exclude = ["cached_prompt", "cached_history"]
+        # WP1 columns stay off the wire until session_state is introduced.
+        exclude = [
+            "cached_prompt",
+            "cached_history",
+            "cached_prompt_meta",
+            "state",
+            "closed_at",
+            "form_answers",
+            "prompt_version",
+            "live_risk_level",
+        ]
     
     @classmethod
     def get_select_related_fields(cls):

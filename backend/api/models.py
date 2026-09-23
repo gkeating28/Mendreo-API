@@ -2,7 +2,9 @@ from django.db import models
 
 # Create your models here.
 from .user.models import User, UserSettings
-from .session.models import Session
+from .session.models import Session, SessionMetric  # noqa: F401
+from .prompt.models import PromptVersion  # noqa: F401
+from .eval.models import EvalCase, EvalRun  # noqa: F401
 from .summary.models import Summary
 from .ai_provider.models import AiProvider, AiProviderAuditLog
 from .attribute.models import Attribute  # noqa: F401

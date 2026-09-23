@@ -41,6 +41,26 @@ class Exercise(SmartModel):
         blank=True,
     )
 
+    # Catalogue and prompt fields. Stored only until later work packages read them.
+    use_when = models.TextField(null=True, blank=True)
+    reference_material = models.TextField(null=True, blank=True)
+    featured = models.BooleanField(default=False)
+    framework_label = models.CharField(max_length=255, null=True, blank=True)
+    sensitive_fields_allowed = models.JSONField(default=list, blank=True)
+    depth_check = models.BooleanField(default=False)
+
+    # Check-in mirrors pre_exercise_* so both can be read until the old columns go.
+    check_in_enabled = models.BooleanField(default=True)
+    check_in_tone = models.TextField(null=True, blank=True)
+    check_in_instruction = models.TextField(null=True, blank=True)
+    check_in_goal = models.TextField(null=True, blank=True)
+    check_in_summary_prompt = models.TextField(null=True, blank=True)
+    check_in_start_button_label = models.CharField(
+        max_length=24,
+        default="Start exercise",
+        blank=True,
+    )
+
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Exercise: {}".format(self.id)

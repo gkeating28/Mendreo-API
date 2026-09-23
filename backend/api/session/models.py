@@ -54,6 +54,23 @@ class Session(SmartModel):
     # When the exercise run itself finished (heatmap / Progress activity day).
     completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
+    # Stored for the later state machine. Chat flow does not read these yet.
+    state = EnumField(options=Constants.SESSION_STATES, default=Constants.SESSION_STATE_GENERAL)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    form_answers = models.JSONField(default=dict, blank=True)
+    prompt_version = models.ForeignKey(
+        "api.PromptVersion",
+        related_name="sessions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    live_risk_level = EnumField(
+        options=Constants.LIVE_RISK_LEVELS,
+        default=Constants.LIVE_RISK_LEVEL_NONE,
+    )
+    cached_prompt_meta = models.JSONField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(
@@ -244,6 +261,8 @@ class SessionStep(SmartModel):
 
     order = models.PositiveIntegerField()
 
+    result_confidence = models.FloatField(null=True, blank=True)
+
     @staticmethod
     def create(session, exercise):
         if not exercise:
@@ -263,3 +282,32 @@ class SessionStep(SmartModel):
                 )
             )
         SessionStep.objects.bulk_create(session_steps)
+
+
+class SessionMetric(SmartModel):
+    """Numeric form or knowledge answers for Progress charts. Written later."""
+
+    id = CharIDField(primary_key=True, prefix="smet_")
+
+    consumer = models.ForeignKey(Consumer, related_name="session_metrics", on_delete=models.CASCADE)
+    exercise = models.ForeignKey(
+        Exercise,
+        related_name="session_metrics",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    session = models.ForeignKey(Session, related_name="session_metrics", on_delete=models.CASCADE)
+
+    key = models.CharField(max_length=255)
+    value = models.DecimalField(max_digits=12, decimal_places=4)
+    source = EnumField(options=Constants.SESSION_METRIC_SOURCES)
+    recorded_at = models.DateTimeField()
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["consumer", "key", "recorded_at"],
+                name="sessionmetric_cons_key_rec_idx",
+            )
+        ]

@@ -25,6 +25,9 @@ class StepCreateSerializer(CreateModelSerializer):
             "completion_prompt",
             "success_title"
         ]
+        extra_kwargs = {
+            "completion_prompt": {"required": True, "allow_null": False},
+        }
 
 
 class StepEditSerializer(EditModelSerializer):
@@ -43,6 +46,9 @@ class StepEditSerializer(EditModelSerializer):
 
             "success_title"
         ]
+        extra_kwargs = {
+            "completion_prompt": {"allow_null": False},
+        }
 
 
 class StepListSerializer(ListModelSerializer):
