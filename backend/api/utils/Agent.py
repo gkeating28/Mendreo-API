@@ -10,7 +10,7 @@ from typing import Optional, List
 from dataclasses import dataclass
 
 from django.utils import timezone
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
@@ -76,6 +76,15 @@ class GeneralResponse(BaseModel):
     )
     asset_id: Optional[str] = Field(default=None, description="Optional. An asset id")
 
+    @field_validator("suggested_responses", mode="before")
+    @classmethod
+    def _coerce_chips(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
+
 
 class ExerciseStateResponse(GeneralResponse):
     """Exercise schema used when the state machine flag is on."""
@@ -95,6 +104,16 @@ class ExerciseStateResponse(GeneralResponse):
             "other questions."
         ),
     )
+
+    @field_validator("step_goal_met", "asks_readiness", mode="before")
+    @classmethod
+    def _coerce_flag(cls, value):
+        if isinstance(value, bool) or value is None:
+            return bool(value)
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        return text in {"true", "yes", "y", "1"}
 
 
 class ExerciseResponse(GeneralResponse):
@@ -394,13 +413,23 @@ def _state_machine_progression(prompt: str) -> str:
 
 
 def _register_tools(agent: Agent[Dependencies, BaseModel], session=None) -> None:
-    register_asset = True
+    # get_exercise is the general-chat catalogue tool. Inside an exercise,
+    # including check-in, calling it makes Gemini fail the structured turn.
+    # get_asset is only useful once a real step is underway.
+    in_exercise = bool(session and session.exercise_id)
+    in_check_in = bool(session and session.in_pre_exercise_phase())
     if _state_machine_enabled():
-        register_asset = bool(session and session.exercise_id)
+        if in_exercise and not in_check_in:
+            _register_get_asset(agent)
+        if not in_exercise:
+            _register_get_exercise(agent)
+        return
 
-    if register_asset:
-        _register_get_asset(agent)
+    _register_get_asset(agent)
+    _register_get_exercise(agent)
 
+
+def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
     @agent.tool
     def get_exercise(ctx: RunContext[Dependencies], exercise_id: str) -> str | dict:
         """Get an exercise to show to the user.
@@ -679,6 +708,12 @@ def _prepare_prompt(session: Session) -> str:
             exercise_steps = _get_formatted_exercise_steps_text(
                 exercise, token_context
             )
+            if _state_machine_enabled():
+                exercise_steps = (
+                    "The pre-exercise check-in is finished. Do not repeat it, "
+                    "and do not ask the user if they are ready to start.\n\n"
+                    + exercise_steps
+                )
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,

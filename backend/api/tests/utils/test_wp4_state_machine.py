@@ -85,7 +85,6 @@ class Wp4StateMachineTests(BaseTest):
                 step_goal_met=True,
                 asks_readiness=True,
             ),
-            _model_reply(text="Add whatever you need to.", step_goal_met=True),
             _model_reply(
                 text="Are you ready for the next step?",
                 step_goal_met=True,
@@ -171,16 +170,14 @@ class Wp4StateMachineTests(BaseTest):
             self.assertEqual(asked_again.json["session_state"]["phase"], "awaiting_ready")
             before = chat.call_count
             interruption = self._say(session, "I want to add one more detail.")
-            self.assertEqual(chat.call_count, before + 1)
+            self.assertEqual(chat.call_count, before)
             self.assertEqual(interruption.json["session_state"]["phase"], "step_active")
 
             self._say(session, "The thought is that I will fail the interview.")
-            self.assertEqual(chat.call_count, 4)
+            self.assertEqual(chat.call_count, 3)
 
             before = chat.call_count
-            advanced = self._say(
-                session, Constants.CHIP_READY_YES, from_suggested_response=True
-            )
+            advanced = self._say(session, "Yes")
             self.assertEqual(chat.call_count, before)
             self.assertEqual(extract.call_count, 1)
             self.assertEqual(advanced.json["session_state"]["phase"], "step_active")

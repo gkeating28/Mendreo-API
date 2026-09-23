@@ -90,16 +90,16 @@ class ListCreate(SmartPaginationAPIView):
         if settings.AI_STATE_MACHINE_ENABLED:
             from ..utils.SessionStateMachine import (
                 consume_chip,
-                leave_awaiting_on_typed_text,
+                handle_typed_while_awaiting,
             )
 
             outcome = consume_chip(instance, from_suggested_response)
+            if outcome is None and not from_suggested_response:
+                outcome = handle_typed_while_awaiting(instance)
             if outcome is not None:
                 instance = outcome.message
                 request._session_state = outcome.session_state
             else:
-                if not from_suggested_response:
-                    leave_awaiting_on_typed_text(instance)
                 if settings.AI_ASYNC_MESSAGES:
                     enqueue_agent_response(instance)
                     request._ai_pending = True

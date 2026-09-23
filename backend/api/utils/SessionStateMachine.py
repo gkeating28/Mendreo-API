@@ -32,10 +32,12 @@ def phase_of(session) -> str:
         return Constants.SESSION_STATE_COMPLETED
     if session.abandoned or session.state == Constants.SESSION_STATE_ABANDONED:
         return Constants.SESSION_STATE_ABANDONED
+    # Check-in is the step number, not a stale state value. A session can be
+    # stored as check_in after current_step_no has already moved to 1.
+    if session.in_pre_exercise_phase():
+        return Constants.SESSION_STATE_CHECK_IN
     if session.state == Constants.SESSION_STATE_AWAITING_READY:
         return Constants.SESSION_STATE_AWAITING_READY
-    if session.in_pre_exercise_phase() or session.state == Constants.SESSION_STATE_CHECK_IN:
-        return Constants.SESSION_STATE_CHECK_IN
     return Constants.SESSION_STATE_STEP_ACTIVE
 
 
@@ -108,6 +110,10 @@ def on_model_turn(session, agent_message, response) -> None:
     if session.in_pre_exercise_phase():
         return
 
+    if session.state == Constants.SESSION_STATE_CHECK_IN:
+        session.state = Constants.SESSION_STATE_STEP_ACTIVE
+        session.save(update_fields=["state", "updated_at"])
+
     session_step = _live_step(session)
     goal_met = bool(getattr(response, "step_goal_met", False))
     asks = bool(getattr(response, "asks_readiness", False))
@@ -163,12 +169,43 @@ def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | N
     return None
 
 
-def leave_awaiting_on_typed_text(user_message) -> None:
-    """A typed reply while waiting for readiness returns to the live step."""
+_READY_AFFIRMATIONS = {
+    "yes",
+    "yes please",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "ready",
+    "i'm ready",
+    "i am ready",
+    "im ready",
+    "yes i'm ready",
+    "yes, i'm ready",
+    "let's go",
+    "lets go",
+}
+
+
+def is_ready_affirmation(text: str) -> bool:
+    normalized = " ".join((text or "").strip().lower().replace("\u2019", "'").split())
+    return normalized.rstrip(".!") in _READY_AFFIRMATIONS
+
+
+def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
+    """A typed reply while waiting for readiness does not call the chat model.
+
+    A plain yes confirms the step. Anything else returns to the live step.
+    """
     session = user_message.session
     if session.state != Constants.SESSION_STATE_AWAITING_READY:
-        return
+        return None
+    if is_ready_affirmation(user_message.text or ""):
+        return _confirm(session, user_message)
+    _count_user_message(session, user_message)
     _retreat(session)
+    return ChipOutcome(user_message, build_session_state(session))
 
 
 def start_check_in(session, summary=None):

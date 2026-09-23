@@ -180,7 +180,11 @@ class Agent(SmartModel):
             suggested_responses = list(followup.suggested_responses)
 
         question_kind = normalize_question_kind(getattr(response, "question_kind", None))
-        if django_settings.AI_STATE_MACHINE_ENABLED and getattr(response, "asks_readiness", False):
+        if (
+            django_settings.AI_STATE_MACHINE_ENABLED
+            and getattr(response, "asks_readiness", False)
+            and not session.in_pre_exercise_phase()
+        ):
             question_kind = Constants.QUESTION_KIND_READINESS
         offer_chips = (
             is_yes_no_offer(suggested_responses)
