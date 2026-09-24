@@ -119,6 +119,12 @@ def on_model_turn(session, agent_message, response) -> None:
     asks = bool(getattr(response, "asks_readiness", False))
 
     if session_step and goal_met and session_step.goal_met_at is None:
+        if _depth_check_due(session, session_step):
+            if not _depth_check_passed(session, session_step):
+                asks = False
+                if agent_message is not None and agent_message.question_kind == Constants.QUESTION_KIND_READINESS:
+                    agent_message.question_kind = Constants.QUESTION_KIND_OPEN
+                    agent_message.save(update_fields=["question_kind", "updated_at"])
         session_step.goal_met_at = timezone.now()
         session_step.save(update_fields=["goal_met_at", "updated_at"])
 
@@ -413,6 +419,39 @@ def _confirm(
     card = {"title": title, "label": label or ""}
     display = greeting or user_message
     return ChipOutcome(display, build_session_state(session, completion_card=card))
+
+
+def _depth_check_due(session, session_step) -> bool:
+    exercise = session.exercise
+    step = session_step.step
+    return bool(
+        exercise
+        and exercise.depth_check
+        and (step.completion_prompt or "").strip()
+    )
+
+
+def _depth_check_passed(session, session_step) -> bool:
+    """First goal-met turn only. Low confidence blocks readiness and hints the next turn."""
+    from ..setting.models import Setting
+
+    from .extraction import extract_step_result
+
+    extracted = extract_step_result(session, session_step.step)
+    if not extracted:
+        return True
+    session_step.completion_result = extracted.get("value")
+    session_step.result_confidence = extracted.get("confidence")
+    session_step.save(
+        update_fields=["completion_result", "result_confidence", "updated_at"]
+    )
+    if (extracted.get("confidence") or 0) >= Setting.get_knowledge_min_confidence():
+        return True
+    meta = dict(session.cached_prompt_meta or {})
+    meta["depth_hint_step_id"] = session_step.id
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return False
 
 
 def _retreat(session) -> None:

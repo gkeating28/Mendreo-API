@@ -8,6 +8,10 @@ FOLLOW_UP_HINT = (
     "The reply was brief. Ask one specific follow-up about when, where or what "
     "happened before moving on. One question only."
 )
+DEPTH_HINT = (
+    "The step's result is not yet specific enough to record. "
+    "Ask one follow-up that would make it concrete."
+)
 ACCEPT_HINT = (
     "You have already followed up twice on this question. Accept the answer and continue."
 )
@@ -124,6 +128,9 @@ def user_prompt_with_hint(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
+    depth = _consume_depth_hint(session)
+    if depth:
+        return f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
     previous = (
         Message.objects.filter(session=session, sender__agent__isnull=False)
         .order_by("-created_at")
@@ -133,6 +140,16 @@ def user_prompt_with_hint(session, user_message) -> str:
     if not hint:
         return text
     return f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+
+
+def _consume_depth_hint(session) -> str | None:
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if not meta.get("depth_hint_step_id"):
+        return None
+    meta.pop("depth_hint_step_id", None)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return DEPTH_HINT
 
 
 def last_agent_message(session):

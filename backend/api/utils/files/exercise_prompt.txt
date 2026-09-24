@@ -85,6 +85,7 @@
         <STEPS_NO>
             {exercise_steps_no}
         </STEPS_NO>
+        {completed_steps}
     </EXERCISE>
 
     <SESSION_CONTEXT>

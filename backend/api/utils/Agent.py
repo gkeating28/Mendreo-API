@@ -714,6 +714,7 @@ def _prepare_prompt(session: Session) -> str:
                 "pre_exercise_block": format_pre_exercise_prompt_block(
                     exercise, consumer, session=session
                 ),
+                "completed_steps": "",
             }
         else:
             only_index = None
@@ -725,11 +726,17 @@ def _prepare_prompt(session: Session) -> str:
                     "and do not turn it into a welcome or a suitability check.\n\n"
                     + description
                 )
-            exercise_steps = _get_formatted_exercise_steps_text(
-                exercise, token_context, only_index=only_index
-            )
+            completed_steps = ""
             if _state_machine_enabled():
+                exercise_steps = _render_state_machine_steps(
+                    exercise, session, token_context, only_index
+                )
                 exercise_steps = _step_already_started(step_no, live_steps_no) + exercise_steps
+                completed_steps = _completed_steps_block(session)
+            else:
+                exercise_steps = _get_formatted_exercise_steps_text(
+                    exercise, token_context, only_index=only_index
+                )
             exercise_extra = {
                 "exercise_id": exercise.id,
                 "exercise_steps": exercise_steps,
@@ -740,6 +747,7 @@ def _prepare_prompt(session: Session) -> str:
                 "exercise_summary_notes": exercise_summary.detailed or "",
                 "form_answers": render_form_answers(session),
                 "pre_exercise_block": "",
+                "completed_steps": completed_steps,
             }
         exercise_extra["session_context"] = render_session_context(consumer, session)
         exercise_extra["knowledge"] = render_knowledge(
@@ -798,7 +806,7 @@ def _prompt_phase(session) -> str:
     if session.in_pre_exercise_phase():
         return "check_in"
     if _state_machine_enabled():
-        return f"step:{session.current_step_no or 1}"
+        return f"step:{session.current_step_no or 1}:{session.state or ''}"
     return "exercise"
 
 
@@ -811,14 +819,10 @@ def _prompt_template(session) -> str:
 
 def _step_already_started(step_no: int, steps_no: int) -> str:
     scope = (
+        "The step below in <STEP> is the only step you may work on. "
+        "Steps in <STEP_OUTLINE> are context only. Do not start them. "
         "Do only what this step's instructions tell you to do. "
-        "Do not start a later step. "
-        "Do not add work the instructions do not name. In particular, do not:\n"
-        "- weigh evidence for or against the worry\n"
-        "- ask how much the thought bothers them on a 0 to 10 scale\n"
-        "- look for a balanced or more accurate thought\n"
-        "- brainstorm solutions, plans, or who can support them\n"
-        "Your first message must be the first question in the instructions below.\n\n"
+        "Your first message must be the first question in those instructions.\n\n"
     )
     if step_no <= 1:
         return (
@@ -832,6 +836,88 @@ def _step_already_started(step_no: int, steps_no: int) -> str:
         "Do not introduce the exercise.\n"
         + scope
     )
+
+
+def _render_state_machine_steps(exercise, session, token_context, live_index) -> str:
+    """Live step in full. Every other step is a title outline."""
+    from .prompt_blocks import resolve_tokens
+
+    context = token_context or {}
+    statuses = _step_statuses(session)
+    blocks = []
+    steps = list(exercise.steps.order_by("order"))
+    steps_no = len(steps)
+    for i, step in enumerate(steps):
+        number = i + 1
+        if i != live_index:
+            blocks.append(
+                "<STEP_OUTLINE>\n"
+                f"    <NO>{number}</NO>\n"
+                f"    <NAME>{step.title}</NAME>\n"
+                f"    <STATUS>{statuses.get(step.id, 'pending')}</STATUS>\n"
+                "</STEP_OUTLINE>"
+            )
+            continue
+        completion = step.done_when if step.done_when else step.completion_criteria
+        completion = resolve_tokens(completion, context)
+        if i < steps_no - 1:
+            completion += (
+                "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+                "on a message whose only question is whether they are ready for the next step."
+            )
+        else:
+            completion += (
+                "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+                "on a message whose only question is whether they are ready to finish."
+            )
+        reference = resolve_tokens(step.reference_material or "", context)
+        blocks.append(
+            "<STEP>\n"
+            f"    <NO>{number}</NO>\n"
+            f"    <TITLE>{step.title}</TITLE>\n"
+            f"    <DESCRIPTION>{resolve_tokens(step.description, context)}</DESCRIPTION>\n"
+            f"    <INSTRUCTIONS>{resolve_tokens(step.instructions, context)}</INSTRUCTIONS>\n"
+            f"    <REFERENCE>{reference}</REFERENCE>\n"
+            f"    <DONE_WHEN>{completion}</DONE_WHEN>\n"
+            "</STEP>"
+        )
+    return "\n".join(blocks)
+
+
+def _step_statuses(session) -> dict:
+    statuses = {}
+    current = session.current_step_no or 0
+    for session_step in session.session_steps.all():
+        number = session_step.order + 1
+        if session_step.completed:
+            statuses[session_step.step_id] = "completed"
+        elif number == current:
+            statuses[session_step.step_id] = "active"
+        else:
+            statuses[session_step.step_id] = "pending"
+    return statuses
+
+
+def _completed_steps_block(session) -> str:
+    rows = (
+        session.session_steps.filter(completed=True)
+        .select_related("step")
+        .order_by("order")
+    )
+    if not rows:
+        return "<COMPLETED_STEPS>\n</COMPLETED_STEPS>"
+    parts = ["<COMPLETED_STEPS>"]
+    for session_step in rows:
+        step = session_step.step
+        parts.append(
+            "    <STEP>\n"
+            f"        <KEY>{step.key or ''}</KEY>\n"
+            f"        <NAME>{step.title}</NAME>\n"
+            f"        <RESULT>{session_step.completion_result or ''}</RESULT>\n"
+            "    </STEP>"
+        )
+    parts.append("</COMPLETED_STEPS>")
+    return "\n".join(parts)
 
 
 def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None):
