@@ -810,15 +810,23 @@ def _prompt_template(session) -> str:
 
 
 def _step_already_started(step_no: int, steps_no: int) -> str:
+    scope = (
+        "Do only what this step's instructions tell you to do. "
+        "Do not start a later step, and do not add problem-solving, planning, "
+        "brainstorming, or support questions those instructions do not ask for. "
+        "Your first message must be the first question in the instructions below.\n\n"
+    )
     if step_no <= 1:
         return (
             "The pre-exercise check-in is finished and this exercise has already been introduced. "
-            "You are on step 1. Your next message must be the first question in the step instructions below. "
-            "Do not write a welcome, a suitability check, a time estimate, or a line about getting started.\n\n"
+            "You are on step 1. "
+            "Do not write a welcome, a suitability check, a time estimate, or a line about getting started.\n"
+            + scope
         )
     return (
         f"You are already on step {step_no} of {steps_no}. "
-        "Do not introduce the exercise. Follow only this step's instructions.\n\n"
+        "Do not introduce the exercise.\n"
+        + scope
     )
 
 
