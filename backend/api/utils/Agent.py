@@ -812,8 +812,12 @@ def _prompt_template(session) -> str:
 def _step_already_started(step_no: int, steps_no: int) -> str:
     scope = (
         "Do only what this step's instructions tell you to do. "
-        "Do not start a later step, and do not add problem-solving, planning, "
-        "brainstorming, or support questions those instructions do not ask for. "
+        "Do not start a later step. "
+        "Do not add work the instructions do not name. In particular, do not:\n"
+        "- weigh evidence for or against the worry\n"
+        "- ask how much the thought bothers them on a 0 to 10 scale\n"
+        "- look for a balanced or more accurate thought\n"
+        "- brainstorm solutions, plans, or who can support them\n"
         "Your first message must be the first question in the instructions below.\n\n"
     )
     if step_no <= 1:
