@@ -80,9 +80,15 @@ class ExerciseCreateSerializer(CreateModelSerializer):
             "check_in_start_button_label",
             "use_when",
             "reference_material",
+            "featured",
+            "framework_label",
             "sensitive_fields_allowed",
             "depth_check",
         ]
+        extra_kwargs = {
+            "framework_label": {"required": False, "allow_null": True, "allow_blank": True},
+            "featured": {"required": False},
+        }
 
     def validate(self, attrs):
         last_exercise = Exercise.objects.order_by("-order").first()
@@ -97,6 +103,7 @@ class ExerciseCreateSerializer(CreateModelSerializer):
         """Recalculate average duration after steps are created."""
         if "steps" in nested_relations:
             model._update_average_duration()
+        clear_other_featured(model)
 
 
 class ExerciseEditSerializer(EditModelSerializer):
@@ -149,9 +156,15 @@ class ExerciseEditSerializer(EditModelSerializer):
             "check_in_start_button_label",
             "use_when",
             "reference_material",
+            "featured",
+            "framework_label",
             "sensitive_fields_allowed",
             "depth_check",
         ]
+        extra_kwargs = {
+            "framework_label": {"required": False, "allow_null": True, "allow_blank": True},
+            "featured": {"required": False},
+        }
 
     def validate(self, attrs):
         attrs = order_validation(self, attrs)
@@ -164,6 +177,7 @@ class ExerciseEditSerializer(EditModelSerializer):
         """Recalculate average duration after steps are updated."""
         if "steps" in nested_relations:
             model._update_average_duration()
+        clear_other_featured(model)
 
 
 class ExerciseListSerializer(ListModelSerializer):
@@ -200,6 +214,12 @@ class ExerciseDetailSerializer(ExerciseListSerializer):
             "check_in_instruction",
             "check_in_goal",
             "check_in_summary_prompt",
+            "use_when",
+            "reference_material",
+            "featured",
+            "framework_label",
+            "sensitive_fields_allowed",
+            "depth_check",
         ]
 
 
@@ -209,6 +229,7 @@ class ExerciseAdminListSerializer(ExerciseListSerializer):
             "status",
             "description",
             "completions_no",
+            "featured",
         ]
 
 
@@ -226,6 +247,7 @@ class ExerciseAdminDetailSerializer(ExerciseAdminListSerializer):
             "check_in_summary_prompt",
             "use_when",
             "reference_material",
+            "framework_label",
             "sensitive_fields_allowed",
             "depth_check",
         ]
@@ -285,6 +307,13 @@ def pre_exercise_validation(serializer, attrs) -> dict:
     return attrs
 
 
+def clear_other_featured(exercise):
+    """Only one exercise may be featured. The newly featured row wins."""
+    if not getattr(exercise, "featured", False):
+        return
+    Exercise.objects.filter(featured=True).exclude(pk=exercise.pk).update(featured=False)
+
+
 def use_when_validation(serializer, attrs):
     status_ = _resolved_pre_exercise_value(serializer, attrs, "status")
     use_when = _resolved_pre_exercise_value(serializer, attrs, "use_when")
@@ -321,6 +350,7 @@ class ExerciseDuplicateSerializer(serializers.Serializer):
 
         exercise.title = new_name
         exercise.status = Constants.EXERCISE_STATUS_DRAFT
+        exercise.featured = False
 
         exercise.save()
 
