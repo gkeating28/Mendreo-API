@@ -37,7 +37,7 @@ class List(SmartPaginationAPIView):
     def add_filters(self, queryset, request):
         # Internal AI-state blobs (100s of KB per session) — never serialized
         # for lists, so skip pulling them from the remote database entirely.
-        queryset = queryset.defer("cached_prompt", "cached_history")
+        queryset = queryset.defer("cached_prompt")
 
         exercise_id = QueryParams.get_str(request, "exercise_id")
         consumer_id = QueryParams.get_str(request, "consumer_id")
@@ -201,9 +201,6 @@ class Ready(SmartAPIView):
     permission_classes = [IsConsumerPermission]
 
     def post(self, request, id):
-        if not settings.AI_STATE_MACHINE_ENABLED:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-
         from ..utils import Constants
         from ..utils.SessionStateMachine import confirm_ready
 
@@ -221,13 +218,32 @@ class Ready(SmartAPIView):
         return method == "POST"
 
 
+class CloseSession(SmartAPIView):
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        from ..utils.session_close import close_session
+
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        close_session(session, "client")
+        session.refresh_from_db()
+        return Response(
+            {
+                "session_id": session.id,
+                "closed_at": session.closed_at,
+                "close_reason": session.close_reason,
+            }
+        )
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
 class Finish(SmartAPIView):
     permission_classes = [IsConsumerPermission]
 
     def post(self, request, id):
-        if not settings.AI_STATE_MACHINE_ENABLED:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-
         from ..utils import Constants
         from ..utils.SessionStateMachine import finish_exercise
 
@@ -248,11 +264,7 @@ def _complete_check_in(session, summary):
     from ..utils.SessionStateMachine import start_check_in
 
     try:
-        if settings.AI_STATE_MACHINE_ENABLED:
-            greeting = start_check_in(session, summary=summary)
-        else:
-            complete_pre_exercise_checkin(session, summary=summary)
-            greeting = None
+        greeting = start_check_in(session, summary=summary)
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -261,11 +273,8 @@ def _complete_check_in(session, summary):
         Session.objects.filter(id=session.id)
     ).first()
     payload = SessionDetailSerializer(session).data
-    # Keep the session document the current app reads (current_step_no, phase,
-    # pre_exercise, last_message). Add the flag-on fields beside it.
-    if settings.AI_STATE_MACHINE_ENABLED:
-        messages = [greeting] if greeting is not None else []
-        payload["messages"] = _message_payloads(messages)
+    messages = [greeting] if greeting is not None else []
+    payload["messages"] = _message_payloads(messages)
     return Response(payload, status=status.HTTP_200_OK)
 
 

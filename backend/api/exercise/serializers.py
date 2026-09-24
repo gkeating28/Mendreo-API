@@ -24,6 +24,7 @@ from ..utils.Serializers import (
 
 from ..utils import Constants
 from ..utils import Duplicate
+from ..utils.authoring import published_use_when_error
 
 
 class ExerciseCreateSerializer(CreateModelSerializer):
@@ -49,7 +50,7 @@ class ExerciseCreateSerializer(CreateModelSerializer):
 
     status = serializers.ChoiceField(choices=Constants.EXERCISE_STATUSES)
 
-    pre_exercise_start_button_label = serializers.CharField(
+    check_in_start_button_label = serializers.CharField(
         max_length=24,
         required=False,
         allow_blank=True,
@@ -71,12 +72,16 @@ class ExerciseCreateSerializer(CreateModelSerializer):
             "icon_background_color",
             "steps",
             "questions",
-            "pre_exercise_enabled",
-            "pre_exercise_description",
-            "pre_exercise_instruction",
-            "pre_exercise_goal",
-            "pre_exercise_completion_prompt",
-            "pre_exercise_start_button_label",
+            "check_in_enabled",
+            "check_in_tone",
+            "check_in_instruction",
+            "check_in_goal",
+            "check_in_summary_prompt",
+            "check_in_start_button_label",
+            "use_when",
+            "reference_material",
+            "sensitive_fields_allowed",
+            "depth_check",
         ]
 
     def validate(self, attrs):
@@ -85,6 +90,7 @@ class ExerciseCreateSerializer(CreateModelSerializer):
 
         attrs = steps_validation(self, attrs)
         attrs = pre_exercise_validation(self, attrs)
+        attrs = use_when_validation(self, attrs)
         return attrs
 
     def post_create(self, model, nested_relations):
@@ -113,7 +119,7 @@ class ExerciseEditSerializer(EditModelSerializer):
         create_serializer=QuestionExerciseCreateSerializer,
     )
 
-    pre_exercise_start_button_label = serializers.CharField(
+    check_in_start_button_label = serializers.CharField(
         max_length=24,
         required=False,
         allow_blank=True,
@@ -135,18 +141,23 @@ class ExerciseEditSerializer(EditModelSerializer):
             "steps",
             "questions",
             "order",
-            "pre_exercise_enabled",
-            "pre_exercise_description",
-            "pre_exercise_instruction",
-            "pre_exercise_goal",
-            "pre_exercise_completion_prompt",
-            "pre_exercise_start_button_label",
+            "check_in_enabled",
+            "check_in_tone",
+            "check_in_instruction",
+            "check_in_goal",
+            "check_in_summary_prompt",
+            "check_in_start_button_label",
+            "use_when",
+            "reference_material",
+            "sensitive_fields_allowed",
+            "depth_check",
         ]
 
     def validate(self, attrs):
         attrs = order_validation(self, attrs)
         attrs = steps_validation(self, attrs)
         attrs = pre_exercise_validation(self, attrs)
+        attrs = use_when_validation(self, attrs)
         return attrs
 
     def post_update(self, model, nested_relations):
@@ -171,8 +182,8 @@ class ExerciseListSerializer(ListModelSerializer):
             "created_at",
             "updated_at",
             "average_duration",
-            "pre_exercise_enabled",
-            "pre_exercise_start_button_label",
+            "check_in_enabled",
+            "check_in_start_button_label",
         ]
 
 
@@ -185,10 +196,10 @@ class ExerciseDetailSerializer(ExerciseListSerializer):
             "steps",
             "questions",
             "description",
-            "pre_exercise_description",
-            "pre_exercise_instruction",
-            "pre_exercise_goal",
-            "pre_exercise_completion_prompt",
+            "check_in_tone",
+            "check_in_instruction",
+            "check_in_goal",
+            "check_in_summary_prompt",
         ]
 
 
@@ -209,10 +220,14 @@ class ExerciseAdminDetailSerializer(ExerciseAdminListSerializer):
         fields = ExerciseAdminListSerializer.Meta.fields + [
             "steps",
             "questions",
-            "pre_exercise_description",
-            "pre_exercise_instruction",
-            "pre_exercise_goal",
-            "pre_exercise_completion_prompt",
+            "check_in_tone",
+            "check_in_instruction",
+            "check_in_goal",
+            "check_in_summary_prompt",
+            "use_when",
+            "reference_material",
+            "sensitive_fields_allowed",
+            "depth_check",
         ]
 
     @classmethod
@@ -245,28 +260,37 @@ def pre_exercise_validation(serializer, attrs) -> dict:
     """Publish rule: if pre-exercise enabled, Instruction + Goal are required."""
     status_ = _resolved_pre_exercise_value(serializer, attrs, "status")
     enabled = _resolved_pre_exercise_value(
-        serializer, attrs, "pre_exercise_enabled", default=True
+        serializer, attrs, "check_in_enabled", default=True
     )
     if status_ != Constants.EXERCISE_STATUS_PUBLISHED or not enabled:
         return attrs
 
     instruction = _resolved_pre_exercise_value(
-        serializer, attrs, "pre_exercise_instruction"
+        serializer, attrs, "check_in_instruction"
     )
-    goal = _resolved_pre_exercise_value(serializer, attrs, "pre_exercise_goal")
+    goal = _resolved_pre_exercise_value(serializer, attrs, "check_in_goal")
 
     errors = {}
     if not (instruction or "").strip():
-        errors["pre_exercise_instruction"] = (
+        errors["check_in_instruction"] = (
             "This field is required when pre-exercise is enabled and the exercise is published"
         )
     if not (goal or "").strip():
-        errors["pre_exercise_goal"] = (
+        errors["check_in_goal"] = (
             "This field is required when pre-exercise is enabled and the exercise is published"
         )
     if errors:
         raise serializers.ValidationError(errors)
 
+    return attrs
+
+
+def use_when_validation(serializer, attrs):
+    status_ = _resolved_pre_exercise_value(serializer, attrs, "status")
+    use_when = _resolved_pre_exercise_value(serializer, attrs, "use_when")
+    message = published_use_when_error(status_, use_when)
+    if message:
+        raise serializers.ValidationError({"use_when": message})
     return attrs
 
 

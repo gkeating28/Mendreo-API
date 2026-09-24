@@ -68,7 +68,6 @@ class Agent(SmartModel):
 
         if (
             user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP
-            and django_settings.AI_STATE_MACHINE_ENABLED
             and session.exercise_id
             and not session.in_pre_exercise_phase()
         ):
@@ -181,8 +180,7 @@ class Agent(SmartModel):
 
         question_kind = normalize_question_kind(getattr(response, "question_kind", None))
         if (
-            django_settings.AI_STATE_MACHINE_ENABLED
-            and getattr(response, "asks_readiness", False)
+            getattr(response, "asks_readiness", False)
             and not session.in_pre_exercise_phase()
         ):
             question_kind = Constants.QUESTION_KIND_READINESS
@@ -206,47 +204,15 @@ class Agent(SmartModel):
             getattr(response, "risk_level", None),
         )
 
-        step_no = response.step_no if hasattr(response, "step_no") else None
-        completion_result = response.completion_result if hasattr(response, "completion_result") else None
-        is_step_complete = response.is_step_complete if hasattr(response, "is_step_complete") else None
-
-        if step_no == 0 and session.exercise_id:
-            step_no = 1
-
-        if session.exercise_id and django_settings.AI_STATE_MACHINE_ENABLED:
-            step_no = session.current_step_no or None
-            is_step_complete = False
-            completion_result = None
-        elif session.exercise_id:
-            step_no, is_step_complete = resolve_step_progress(
-                current_step_no=session.current_step_no or 1,
-                total_steps_no=session_step_total(session),
-                tagged_step_no=step_no,
-                is_step_complete=bool(is_step_complete),
-                agent_text=text or "",
-                user_text=user_message.text or "",
-                last_agent_text=last_agent_text_for_session(session),
-                is_skip=user_message.text == Constants.MESSAGE_TEXT_SKIP_STEP,
-            )
-            completion_result = AgentUtils.coerce_completion_result(
-                completion_result=completion_result,
-                is_step_complete=is_step_complete,
-                session=session,
-                user_message=user_message,
-            )
-
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
         agent_message = Message.objects.create(
             usage=usage,
             asset=asset,
-            step_no=step_no,
             session=session,
             exercise=exercise,
             text=text,
             sender=participant,
             reasoning=response.reasoning,
-            is_step_complete=is_step_complete,
-            completion_result=completion_result,
             suggested_responses=suggested_responses,
             suggested_responses_kind=suggested_responses_kind,
             question_kind=question_kind,
@@ -254,7 +220,7 @@ class Agent(SmartModel):
             resources=resources,
         )
 
-        if django_settings.AI_STATE_MACHINE_ENABLED and session.exercise_id:
+        if session.exercise_id:
             from ..utils.SessionStateMachine import on_model_turn
 
             on_model_turn(session, agent_message, response)

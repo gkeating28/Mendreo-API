@@ -448,15 +448,15 @@ def _fallback_body(key: str) -> str:
     from ..setting.models import Setting
 
     if key == Constants.PROMPT_KEY_THERAPEUTIC:
-        return Setting.get_therapeutic_prompt()
+        return Constants.PROMPT_THERAPEUTIC_INSTRUCTIONS
     if key == Constants.PROMPT_KEY_GOALS:
-        return Setting.get_general_prompt()
+        return Constants.PROMPT_GENERAL_GOALS
     if key == Constants.PROMPT_KEY_TRIAGE:
         return Constants.PROMPT_TRIAGE
     if key == Constants.PROMPT_KEY_OBSERVATIONS_INSTRUCTION:
-        return Setting.get_observations_instruction()
+        return Constants.DEFAULT_OBSERVATIONS_INSTRUCTION
     if key == Constants.PROMPT_KEY_OBSERVATIONS_TONE_GUIDE:
-        return Setting.get_observations_tone_guide()
+        return Constants.DEFAULT_OBSERVATIONS_TONE_GUIDE
     if key == Constants.PROMPT_KEY_RESOURCES:
         import json
         return json.dumps(Constants.DEFAULT_RESOURCES)

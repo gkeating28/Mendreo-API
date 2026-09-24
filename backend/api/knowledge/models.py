@@ -3,7 +3,6 @@ from __future__ import annotations
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from ..attribute.models import Attribute
 from ..consumer.models import Consumer
 from ..utils import Constants
 from ..utils.Fields import CharIDField, EnumField
@@ -52,7 +51,7 @@ class KnowledgeQuestion(SmartModel):
     )
     extraction_prompt = models.TextField(blank=True, default="")
     flows = ArrayField(
-        EnumField(options=Constants.KNOWLEDGE_FLOWS),
+        models.CharField(max_length=255),
         blank=True,
         default=list,
     )
@@ -131,13 +130,6 @@ class KnowledgeEntry(SmartModel):
     )
     session = models.ForeignKey(
         "api.Session",
-        related_name="knowledge_entries",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
-    attribute = models.ForeignKey(
-        Attribute,
         related_name="knowledge_entries",
         null=True,
         blank=True,

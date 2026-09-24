@@ -20,7 +20,7 @@ from .serializers import (
     KnowledgeQuestionListSerializer,
 )
 from .services import apply_sensitive_masking_to_entry_data, test_extraction
-from ..utils import QueryParams
+from ..utils import Constants, QueryParams
 from ..utils.Permissions import IsAdminPermission
 from ..utils.Views import SmartAPIView, SmartDetailAPIView, SmartPaginationAPIView
 
@@ -209,8 +209,61 @@ class EntryListCreate(_SensitiveEntryMixin, SmartPaginationAPIView):
             queryset = queryset.filter(field_id=field_id)
         if source:
             queryset = queryset.filter(source=source)
+        review_status = QueryParams.get_str(request, "review_status")
+        if review_status:
+            queryset = queryset.filter(review_status=review_status)
 
         return queryset.order_by("-created_at")
+
+
+class _EntryReview(SmartAPIView):
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = KnowledgeEntry
+    review_status = Constants.KNOWLEDGE_REVIEW_ACCEPTED
+
+    def post(self, request, id):
+        if not self.has_role_permission("POST", KnowledgeEntry):
+            return self.get_permission_denied_response(request, "POST")
+        entry = KnowledgeEntry.objects.filter(id=id).first()
+        if entry is None:
+            return self.not_found()
+        entry.review_status = self.review_status
+        entry.save(update_fields=["review_status", "updated_at"])
+        data = KnowledgeEntryDetailSerializer(entry).data
+        data = apply_sensitive_masking_to_entry_data(data, self.should_obscure_pii(request))
+        return Response(data)
+
+
+class EntryAccept(_EntryReview):
+    review_status = Constants.KNOWLEDGE_REVIEW_ACCEPTED
+
+
+class EntryReject(_EntryReview):
+    review_status = Constants.KNOWLEDGE_REVIEW_REJECTED
+
+
+class EntryBulkAccept(SmartAPIView):
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = KnowledgeEntry
+
+    def post(self, request):
+        if not self.has_role_permission("POST", KnowledgeEntry):
+            return self.get_permission_denied_response(request, "POST")
+        try:
+            minimum = float((request.data or {}).get("min_confidence", 0))
+        except (TypeError, ValueError):
+            return self.respond_with(
+                "min_confidence must be a number.",
+                key="min_confidence",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        updated = KnowledgeEntry.objects.filter(
+            review_status=Constants.KNOWLEDGE_REVIEW_PENDING,
+            confidence__gte=minimum,
+        ).update(review_status=Constants.KNOWLEDGE_REVIEW_ACCEPTED)
+        return Response({"accepted": updated})
 
 
 class EntryDetail(_SensitiveEntryMixin, SmartDetailAPIView):

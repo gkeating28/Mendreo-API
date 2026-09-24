@@ -149,9 +149,9 @@ SKIP_COMPLETION_RESULT = "Step Skipped"
 def consumer_texts_for_current_step(session, latest_user_message: Optional[Message] = None) -> List[str]:
     """Consumer messages since the previous step completed (newest first)."""
     last_complete_at = (
-        Message.objects.filter(session=session, is_step_complete=True)
-        .order_by("-created_at")
-        .values_list("created_at", flat=True)
+        session.session_steps.filter(completed=True)
+        .order_by("-updated_at")
+        .values_list("updated_at", flat=True)
         .first()
     )
     qs = Message.objects.filter(
@@ -236,9 +236,6 @@ def update_summary(summary, date=None, freezer=None):
 
         all_lines.extend(session_message_data)
 
-        session_ai_prompt = build_session_prompt(session_message_data, summary, user_first_name)
-        update_session(session_ai_prompt, session)
-
     sessions = "\n".join(all_lines)
 
     exercise_prompt_text = ""
@@ -305,12 +302,10 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     prompt = _prepare_prompt(session=session)
 
-    from django.conf import settings as django_settings
-
-    if session.exercise and django_settings.AI_STATE_MACHINE_ENABLED:
+    if session.exercise:
         schema = ExerciseStateResponse
     else:
-        schema = ExerciseResponse if session.exercise else GeneralResponse
+        schema = GeneralResponse
 
     model_name = consumer.agent.model
 
@@ -354,7 +349,6 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         usage = result.usage().__dict__
         response_data = result.output
         timer_end = time.perf_counter()
-        session.update_chat_history(result)
 
     except Exception as e:
         timer_end = time.perf_counter()
@@ -399,9 +393,7 @@ _STATE_MACHINE_PROGRESSION = (
 
 
 def _state_machine_enabled() -> bool:
-    from django.conf import settings
-
-    return bool(getattr(settings, "AI_STATE_MACHINE_ENABLED", False))
+    return True
 
 
 def _state_machine_progression(prompt: str) -> str:
@@ -783,6 +775,12 @@ def _prepare_prompt(session: Session) -> str:
     if exercise and _state_machine_enabled():
         prompt = _state_machine_progression(prompt)
 
+    from .pending_question import assign_pending_question
+
+    pending = assign_pending_question(session)
+    if pending:
+        prompt = f"{prompt}\n\n{pending}"
+
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
     meta["state_machine"] = _state_machine_enabled()
@@ -858,8 +856,7 @@ def _render_state_machine_steps(exercise, session, token_context, live_index) ->
                 "</STEP_OUTLINE>"
             )
             continue
-        completion = step.done_when if step.done_when else step.completion_criteria
-        completion = resolve_tokens(completion, context)
+        completion = resolve_tokens(step.done_when or "", context)
         if i < steps_no - 1:
             completion += (
                 "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
@@ -929,8 +926,7 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=
     for i, step in enumerate(exercise.steps.order_by("order")):
         if only_index is not None and i != only_index:
             continue
-        completion_criteria = step.done_when if step.done_when else step.completion_criteria
-        completion_criteria = resolve_tokens(completion_criteria, context)
+        completion_criteria = resolve_tokens(step.done_when or "", context)
         description = resolve_tokens(step.description, context)
         instructions = resolve_tokens(step.instructions, context)
         if _state_machine_enabled():

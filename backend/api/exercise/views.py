@@ -17,6 +17,8 @@ from .serializers import (
 )
 from .pre_exercise import test_pre_exercise_prompt
 from .pre_exercise_serializers import PreExerciseTestSerializer
+from .dry_run import dry_run_step
+from ..utils.authoring import authoring_warnings, lint_catalogue
 
 from ..utils.Permissions import (
     IsAdminPermission,
@@ -66,9 +68,9 @@ class ListCreate(SmartPaginationAPIView):
 
         if pre_exercise and pre_exercise != "all":
             if pre_exercise == "enabled":
-                query = query.filter(pre_exercise_enabled=True)
+                query = query.filter(check_in_enabled=True)
             elif pre_exercise == "disabled":
-                query = query.filter(pre_exercise_enabled=False)
+                query = query.filter(check_in_enabled=False)
 
         return query
 
@@ -77,6 +79,11 @@ class ListCreate(SmartPaginationAPIView):
             return True
 
         return self.is_admin_request()
+
+    def post_response(self, request, instance, data):
+        data = dict(data)
+        data["warnings"] = authoring_warnings(instance)
+        return super().post_response(request, instance, data)
 
 
 class Detail(SmartDetailAPIView):
@@ -96,8 +103,76 @@ class Detail(SmartDetailAPIView):
             return True
 
         return self.is_admin_request()
-    
-    
+
+    def patch_response(self, data, instance):
+        data = dict(data)
+        data["warnings"] = authoring_warnings(instance)
+        return super().patch_response(data, instance)
+
+
+class ExerciseLint(SmartAPIView):
+    permission_classes = [IsAdminPermission]
+    model = Exercise
+
+    def get(self, request):
+        if not self.has_permission(request, "GET"):
+            return self.get_permission_denied_response(request, "GET")
+        return Response(lint_catalogue(), status=status.HTTP_200_OK)
+
+
+class StepDryRun(SmartAPIView):
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id, step_id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        exercise = Exercise.objects.filter(id=id).first()
+        if exercise is None:
+            return self.not_found()
+        step = exercise.steps.filter(id=step_id).first()
+        if step is None:
+            return self.not_found()
+
+        consumer_id = request.data.get("consumer_id") if isinstance(request.data, dict) else None
+        if not consumer_id:
+            return self.respond_with(
+                "Choose a user to dry-run against.",
+                key="consumer_id",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from ..consumer.models import Consumer
+
+        consumer = Consumer.objects.select_related("user").filter(pk=consumer_id).first()
+        if consumer is None:
+            return self.respond_with(
+                "Consumer not found",
+                key="consumer_id",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        transcript = None
+        if isinstance(request.data, dict):
+            transcript = request.data.get("transcript") or None
+
+        try:
+            payload = dry_run_step(exercise, step, consumer, transcript)
+        except Exception as exc:
+            return self.respond_with(
+                f"Dry run failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class DuplicateExerciseView(SmartAPIView):
     permission_classes = [IsAdminPermission]
 

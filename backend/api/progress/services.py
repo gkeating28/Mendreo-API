@@ -557,10 +557,13 @@ def _run_observation_ai(consumer) -> ObservationResult:
     from ..utils.AI import AI
     from ..knowledge.services import get_current_knowledge_summary
 
+    from ..utils.prompt_blocks import ensure_prompt_versions
+
     knowledge = get_current_knowledge_summary(consumer, include_sensitive=True)
     transcript = _recent_transcript_excerpt(consumer, days=7)
-    instruction = Setting.get_observations_instruction()
-    tone = Setting.get_observations_tone_guide()
+    prompts = ensure_prompt_versions()
+    instruction = prompts[Constants.PROMPT_KEY_OBSERVATIONS_INSTRUCTION].body
+    tone = prompts[Constants.PROMPT_KEY_OBSERVATIONS_TONE_GUIDE].body
     max_words = Setting.get_observations_max_length()
 
     class Schema(BaseModel):

@@ -51,11 +51,8 @@ class Survey(SmartAPIView):
 
         survey_questions = Question.objects.filter(survey=True).order_by("order")
         questions_data = QuestionDetailSerializer(survey_questions, many=True).data
-
-        attributes_data = consumer.attributes.all().values("question", "value")
-        attributes_by_qid = {a["question"]: a for a in attributes_data}
         for q in questions_data:
-            q["attribute"] = attributes_by_qid.get(q["id"], None)
+            q["attribute"] = None
             if q["type"] == "boolean":
                 q["suggested_responses"] = ["Yes", "No"]
 

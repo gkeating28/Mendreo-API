@@ -49,7 +49,7 @@ class ListCreate(SmartPaginationAPIView):
             data["ai_pending"] = True
         if getattr(request, "_session_state", None) is not None:
             data["session_state"] = request._session_state
-        elif settings.AI_STATE_MACHINE_ENABLED:
+        else:
             from ..utils.SessionStateMachine import build_session_state
 
             data["session_state"] = build_session_state(instance.session)
@@ -87,38 +87,25 @@ class ListCreate(SmartPaginationAPIView):
 
         from_suggested_response = _from_suggested_response(request.data)
 
-        if settings.AI_STATE_MACHINE_ENABLED:
-            from ..utils.SessionStateMachine import (
-                consume_chip,
-                handle_typed_while_awaiting,
-            )
+        from ..utils.SessionStateMachine import (
+            consume_chip,
+            handle_typed_while_awaiting,
+        )
 
-            outcome = consume_chip(instance, from_suggested_response)
-            if outcome is None and not from_suggested_response:
-                outcome = handle_typed_while_awaiting(instance)
-            if outcome is not None:
-                instance = outcome.message
-                request._session_state = outcome.session_state
-            else:
-                if settings.AI_ASYNC_MESSAGES:
-                    enqueue_agent_response(instance)
-                    request._ai_pending = True
-                else:
-                    instance = request_agent_response(
-                        user_message=instance, session=instance.session
-                    )
-                    instance.session.refresh_from_db()
+        outcome = consume_chip(instance, from_suggested_response)
+        if outcome is None and not from_suggested_response:
+            outcome = handle_typed_while_awaiting(instance)
+        if outcome is not None:
+            instance = outcome.message
+            request._session_state = outcome.session_state
+        elif settings.AI_ASYNC_MESSAGES:
+            enqueue_agent_response(instance)
+            request._ai_pending = True
         else:
-            offer_reply = maybe_handle_offer_response(instance, from_suggested_response)
-            if offer_reply is not None:
-                instance = offer_reply
-            elif settings.AI_ASYNC_MESSAGES:
-                enqueue_agent_response(instance)
-                request._ai_pending = True
-                # Return the user message immediately; clients poll GET /messages
-                # (or session.last_message) for the agent reply.
-            else:
-                instance = request_agent_response(user_message=instance, session=instance.session)
+            instance = request_agent_response(
+                user_message=instance, session=instance.session
+            )
+            instance.session.refresh_from_db()
 
         detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data

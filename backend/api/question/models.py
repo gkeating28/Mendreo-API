@@ -76,35 +76,16 @@ class Question(SmartModel):
     @staticmethod
     def get_with_attributes(queryset, consumer, serializer=None):
         from .serializers import QuestionDetailSerializer
-        from ..attribute.serializers import AttributeListSerializer
 
         if not serializer:
             serializer = QuestionDetailSerializer
 
         questions = queryset.order_by("order")
         questions_data = serializer(questions, many=True).data
-
-        question_ids = []
         for question_data in questions_data:
-            question_ids.append(question_data["id"])
-
-        question_ids = list(questions.values_list("id", flat=True))
-
-        attributes = consumer.attributes.filter(question_id__in=question_ids)
-        attributes_data = AttributeListSerializer(attributes, many=True).data
-
-        attributes_by_question_id_data = {}
-        for attribute_data in attributes_data:
-            question_id = attribute_data["question"]
-            attributes_by_question_id_data[question_id] = attribute_data
-
-        for question_data in questions_data:
-            question_id = question_data["id"]
-            question_data["attribute"] = attributes_by_question_id_data.get(question_id, None)
-
+            question_data["attribute"] = None
             if question_data["type"] == "boolean":
                 question_data["suggested_responses"] = ["Yes", "No"]
-
         return questions_data
 
 

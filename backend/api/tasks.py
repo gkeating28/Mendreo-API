@@ -91,6 +91,36 @@ def check_subscriptions():
 
 @shared_task(
     base=PeriodicTask,
+    run_every=timedelta(minutes=15),
+    name="close_idle_sessions",
+    ignore_result=True,
+)
+def close_idle_sessions():
+    from .utils.session_close import close_idle_sessions as _close
+
+    logger.info("Start > close_idle_sessions")
+    closed = _close()
+    logger.info("End > close_idle_sessions closed=%s", closed)
+
+
+@shared_task(
+    name="run_eval",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=600,
+    time_limit=660,
+)
+def run_eval(provider=None):
+    from .eval.runner import run_eval as _run
+
+    logger.info("Start > run_eval provider=%s", provider)
+    result = _run(provider)
+    logger.info("End > run_eval %s", result)
+    return result
+
+
+@shared_task(
+    base=PeriodicTask,
     run_every=crontab(minute=0, hour=1),  # 1:00 AM
     name='update_daily_summaries',
     ignore_result=True

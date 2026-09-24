@@ -4,13 +4,14 @@ from rest_framework import serializers
 
 from .models import Setting
 from ..utils import Constants
+from ..utils.authoring import PROMPT_SETTING_FIELDS
 
 
 class SettingCreateSerializer(serializers.Serializer):
 
     survey_enabled = serializers.BooleanField()
-    general_prompt = serializers.CharField()
-    therapeutic_prompt = serializers.CharField()
+    general_prompt = serializers.CharField(required=False)
+    therapeutic_prompt = serializers.CharField(required=False)
     refresh_onboarding_cadence_days = serializers.IntegerField(
         required=False,
         min_value=1,
@@ -41,6 +42,7 @@ class SettingCreateSerializer(serializers.Serializer):
         max_value=1,
     )
     history_max_turns = serializers.IntegerField(required=False, min_value=1)
+    session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
     generic_answers_default = serializers.ListField(
         child=serializers.CharField(),
@@ -49,19 +51,23 @@ class SettingCreateSerializer(serializers.Serializer):
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
 
+    def validate(self, attrs):
+        incoming = set(getattr(self, "initial_data", {}) or {})
+        blocked = [name for name in PROMPT_SETTING_FIELDS if name in incoming]
+        if blocked:
+            raise serializers.ValidationError(
+                {
+                    name: "Save this text as a prompt version, not a setting."
+                    for name in blocked
+                }
+            )
+        return attrs
+
     def create(self, validated_data):
 
         survey_setting = Setting.get_or_create_survey_enabled()
         survey_setting.value = str(validated_data.get("survey_enabled")).lower()
         survey_setting.save()
-
-        general_prompt = Setting.get_or_create_general_prompt()
-        general_prompt.value = str(validated_data.get("general_prompt"))
-        general_prompt.save()
-
-        therapeutic_prompt = Setting.get_or_create_therapeutic_prompt()
-        therapeutic_prompt.value = str(validated_data.get("therapeutic_prompt"))
-        therapeutic_prompt.save()
 
         cadence = Setting.get_or_create_refresh_onboarding_cadence_days()
         cadence.value = str(
@@ -80,22 +86,6 @@ class SettingCreateSerializer(serializers.Serializer):
         ).lower()
         obs_enabled.save()
 
-        obs_instruction = Setting.get_or_create_observations_instruction()
-        obs_instruction.value = str(
-            validated_data.get(
-                "observations_instruction", Constants.DEFAULT_OBSERVATIONS_INSTRUCTION
-            )
-        )
-        obs_instruction.save()
-
-        obs_tone = Setting.get_or_create_observations_tone_guide()
-        obs_tone.value = str(
-            validated_data.get(
-                "observations_tone_guide", Constants.DEFAULT_OBSERVATIONS_TONE_GUIDE
-            )
-        )
-        obs_tone.save()
-
         obs_max = Setting.get_or_create_observations_max_length()
         obs_max.value = str(
             validated_data.get(
@@ -113,6 +103,11 @@ class SettingCreateSerializer(serializers.Serializer):
             turns = Setting.get_or_create_history_max_turns()
             turns.value = str(validated_data["history_max_turns"])
             turns.save()
+
+        if "session_inactivity_minutes" in validated_data:
+            idle = Setting.get_or_create_session_inactivity_minutes()
+            idle.value = str(validated_data["session_inactivity_minutes"])
+            idle.save()
 
         if "thin_answer_min_words" in validated_data:
             words = Setting.get_or_create_thin_answer_min_words()
@@ -136,15 +131,12 @@ class SettingCreateSerializer(serializers.Serializer):
 
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
-            "general_prompt": validated_data.get("general_prompt"),
-            "therapeutic_prompt": validated_data.get("therapeutic_prompt"),
             "refresh_onboarding_cadence_days": int(cadence.value),
             "observations_enabled": obs_enabled.value == "true",
-            "observations_instruction": obs_instruction.value,
-            "observations_tone_guide": obs_tone.value,
             "observations_max_length": int(obs_max.value),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
+            "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "risk_keywords": Setting.get_risk_keywords(),

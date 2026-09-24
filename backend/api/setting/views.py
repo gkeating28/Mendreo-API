@@ -40,6 +40,7 @@ class ListCreate(SmartAPIView):
             elif setting.key in (
                 Constants.SETTING_KEY_HISTORY_MAX_TURNS,
                 Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS,
+                Constants.SETTING_KEY_SESSION_INACTIVITY_MINUTES,
             ):
                 try:
                     data[setting.key] = int(setting.value)
@@ -48,6 +49,8 @@ class ListCreate(SmartAPIView):
                         Setting.get_history_max_turns()
                         if setting.key == Constants.SETTING_KEY_HISTORY_MAX_TURNS
                         else Setting.get_thin_answer_min_words()
+                        if setting.key == Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS
+                        else Setting.get_session_inactivity_minutes()
                     )
             elif setting.key == Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT:
                 data[setting.key] = Setting.get_generic_answers_default()
@@ -68,11 +71,10 @@ class ListCreate(SmartAPIView):
         defaults = {
             "refresh_onboarding_cadence_days": Setting.get_refresh_onboarding_cadence_days(),
             "observations_enabled": Setting.get_observations_enabled(),
-            "observations_instruction": Setting.get_observations_instruction(),
-            "observations_tone_guide": Setting.get_observations_tone_guide(),
             "observations_max_length": Setting.get_observations_max_length(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
+            "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "risk_keywords": Setting.get_risk_keywords(),

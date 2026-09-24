@@ -44,8 +44,6 @@ class Session(SmartModel):
 
     cached_prompt = models.TextField(null=True)
 
-    cached_history = models.JSONField(null=True)
-
     usage = models.JSONField(null=True)
 
     # Pre-Exercise Prompt check-in (V2). During check-in, current_step_no is 0.
@@ -71,6 +69,14 @@ class Session(SmartModel):
     )
     cached_prompt_meta = models.JSONField(null=True, blank=True)
     history_summary = models.TextField(null=True, blank=True)
+    pending_knowledge_question = models.ForeignKey(
+        "api.KnowledgeQuestion",
+        related_name="sessions",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    close_reason = models.CharField(max_length=64, null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -107,6 +113,9 @@ class Session(SmartModel):
         self.completed = True
         if self.completed_at is None:
             self.completed_at = when or timezone.now()
+        from ..utils.session_close import close_session
+
+        close_session(self, "completed")
         return self
 
     @staticmethod
@@ -160,12 +169,9 @@ class Session(SmartModel):
             total_steps_no=total_steps_no,
             current_step_no=current_step_no,
         )
-        from django.conf import settings as django_settings
+        from ..utils.SessionStateMachine import initial_state
 
-        if django_settings.AI_STATE_MACHINE_ENABLED:
-            from ..utils.SessionStateMachine import initial_state
-
-            create_kwargs["state"] = initial_state(exercise, run_pre_exercise)
+        create_kwargs["state"] = initial_state(exercise, run_pre_exercise)
         session = Session.objects.create(**create_kwargs)
 
         if exercise:
@@ -237,22 +243,6 @@ class Session(SmartModel):
             {"session": session_id, "messages": messages_by_session[session_id]}
             for session_id in session_ids
         ]
-
-    def get_chat_history(self):
-        from pydantic_ai.messages import ModelMessagesTypeAdapter
-
-        if not self.cached_history:
-            return []
-
-        return ModelMessagesTypeAdapter.validate_python(self.cached_history)
-
-    def update_chat_history(self, result):
-        from pydantic_core import to_jsonable_python
-
-        history = result.all_messages()
-        self.cached_history = to_jsonable_python(history)
-        self.save(update_fields=["cached_history"])
-        return self
 
 
 class SessionStep(SmartModel):

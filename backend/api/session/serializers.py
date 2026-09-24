@@ -6,6 +6,7 @@ from ..asset.serializers import AssetListSerializer
 
 from ..consumer.serializers import ConsumerMinSerializer
 from ..exercise.serializers import ExerciseDetailSerializer, ExerciseListSerializer
+from ..utils import Constants
 from ..utils.Serializers import ListModelSerializer
 
 
@@ -26,8 +27,6 @@ class SessionLastMessageSerializer(ListModelSerializer):
             "suggested_responses_kind",
             "question_kind",
             "resources",
-            "is_step_complete",
-            "step_no",
             "completion_label",
             "asset",
             "exercise",
@@ -62,7 +61,6 @@ class SessionListSerializer(ListModelSerializer):
         # WP1 columns stay off the wire until session_state is introduced.
         exclude = [
             "cached_prompt",
-            "cached_history",
             "cached_prompt_meta",
             "state",
             "closed_at",
@@ -124,7 +122,7 @@ class SessionListSerializer(ListModelSerializer):
     def get_session_state(self, session):
         from django.conf import settings
 
-        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", False):
+        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", True):
             return None
         from ..utils.SessionStateMachine import build_session_state
 
@@ -134,8 +132,13 @@ class SessionListSerializer(ListModelSerializer):
         from django.conf import settings
 
         data = super().to_representation(instance)
-        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", False):
+        if not getattr(settings, "AI_STATE_MACHINE_ENABLED", True):
             data.pop("session_state", None)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "type", None) == Constants.USER_TYPE_ADMIN:
+            data["live_risk_level"] = instance.live_risk_level
+            data["state_transitions"] = _state_transitions(instance)
         return data
 
 
@@ -151,6 +154,7 @@ class SessionStepListSerializer(ListModelSerializer):
             "completed",
             "completion_label",
             "completion_result",
+            "result_confidence",
         ]
 
 
@@ -205,3 +209,44 @@ class SessionDetailSerializer(SessionListSerializer):
             "session_steps__last_asset__post__thumbnail",
             "questions",
         ]
+
+
+def _state_transitions(session) -> list:
+    events = []
+    if session.pre_exercise_completed_at:
+        events.append(
+            {
+                "kind": "check_in_completed",
+                "at": session.pre_exercise_completed_at,
+            }
+        )
+    for session_step in session.session_steps.all():
+        if not session_step.completed:
+            continue
+        events.append(
+            {
+                "kind": "step_completed",
+                "step_no": session_step.order + 1,
+                "result": session_step.completion_result,
+                "confidence": session_step.result_confidence,
+                "at": session_step.updated_at,
+            }
+        )
+    from ..message.models import Message
+
+    kinds = (
+        Constants.SUGGESTED_RESPONSES_KIND_READY,
+        Constants.SUGGESTED_RESPONSES_KIND_FINISH,
+    )
+    for message in Message.objects.filter(session=session, suggested_responses_kind__in=kinds):
+        events.append(
+            {
+                "kind": message.suggested_responses_kind,
+                "at": message.created_at,
+                "message_id": message.id,
+            }
+        )
+    if session.closed_at:
+        events.append({"kind": "closed", "at": session.closed_at})
+    events.sort(key=lambda item: item["at"] or session.created_at)
+    return events

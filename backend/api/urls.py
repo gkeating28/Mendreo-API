@@ -16,7 +16,6 @@ urlpatterns = [
     path('posts', include('api.post.urls')),
 
     path('questions', include('api.question.urls')),
-    path('attributes', include('api.attribute.urls')),
 
     path('packages', include('api.package.urls')),
     path('subscriptions', include('api.subscription.urls')),
@@ -36,6 +35,8 @@ urlpatterns = [
     path('assets', include('api.asset.urls')),
     path('feedback', include('api.feedback.urls')), 
     path('settings', include('api.setting.urls')),
+    path('prompts', include('api.prompt.urls')),
+    path('eval', include('api.eval.urls')),
 
     path('ai-providers', include('api.ai_provider.urls')),
     path('ai', include('api.ai.urls')),

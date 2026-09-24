@@ -170,15 +170,9 @@ def _transcript_buckets(messages: list[Message]) -> dict[int, list[dict]]:
         text = (message.text or "").strip()
         if not text:
             continue
-        tagged = message.step_no or 0
-        if message.is_step_complete:
-            step = tagged if tagged >= 1 else current
-            current = max(current, step + 1)
-        else:
-            step = tagged if tagged >= 1 else current
         sender = getattr(message, "sender", None)
         role = "user" if getattr(sender, "consumer_id", None) else "guide"
-        buckets.setdefault(step, []).append({"role": role, "text": text})
+        buckets.setdefault(1, []).append({"role": role, "text": text})
     return buckets
 
 

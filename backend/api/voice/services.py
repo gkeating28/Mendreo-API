@@ -337,7 +337,7 @@ def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message:
     Do not call POST /messages (that would enqueue/double-fire Gemini).
     """
     session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
-    session.refresh_from_db(fields=["cached_history", "cached_prompt"])
+    session.refresh_from_db(fields=["cached_prompt"])
     user_message = create_user_voice_message(grant=grant, text=user_text)
     agent_message = Agent.get_response(session=session, user_message=user_message)
     apply_agent_response(user_message, agent_message)

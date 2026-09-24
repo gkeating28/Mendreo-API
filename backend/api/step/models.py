@@ -19,7 +19,6 @@ class Step(SmartModel):
     description = models.TextField()
     instructions = models.TextField()
 
-    completion_criteria = models.TextField()
     completion_label = models.CharField(max_length=255)
     completion_prompt = models.TextField(null=True, blank=True)
 

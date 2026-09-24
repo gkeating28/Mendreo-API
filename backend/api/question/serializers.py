@@ -66,7 +66,13 @@ class QuestionExerciseCreateSerializer(QuestionCreateSerializer):
             "can_complete_exercise",
             "complete_on_value",
             "complete_text",
+            "key",
+            "knowledge_field",
         ]
+        extra_kwargs = {
+            "key": {"required": False, "allow_null": True, "allow_blank": True},
+            "knowledge_field": {"required": False, "allow_null": True},
+        }
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -101,6 +107,8 @@ class QuestionEditSerializer(EditModelSerializer):
             "value_labels",
             "min_selections",
             "max_selections",
+            "key",
+            "knowledge_field",
         ]
 
     def validate(self, attrs):
@@ -151,7 +159,9 @@ class QuestionExerciseDetailSerializer(ListModelSerializer):
             "suggested_responses",
             "can_complete_exercise",
             "complete_on_value",
-            "complete_text"
+            "complete_text",
+            "key",
+            "knowledge_field",
         ]
 
 

@@ -124,7 +124,6 @@ def write_knowledge_entry(
         review_status=review_status,
         knowledge_question=knowledge_question,
         session=session,
-        attribute=attribute,
         created_by=created_by,
         needs_followup=bool(needs_followup),
         followup_attempts=followup_attempts,
@@ -294,60 +293,5 @@ def get_field_history_queryset(consumer, field):
 
 
 def backfill_knowledge_from_onboarding(consumer_id: str | None = None) -> dict:
-    """
-    Create KnowledgeEntry rows from existing onboarding Attribute answers.
-
-    Matching is by Attribute.key / Question.attribute_key → KnowledgeField.key.
-    Idempotent: skips attributes that already have a linked KnowledgeEntry.
-    """
-    from ..attribute.models import Attribute
-    from ..question.models import Question
-    from .models import KnowledgeEntry, KnowledgeField
-
-    fields_by_key = {f.key: f for f in KnowledgeField.objects.filter(active=True)}
-    if not fields_by_key:
-        return {"created": 0, "skipped": 0, "unmatched": 0}
-
-    onboarding_question_ids = Question.objects.filter(
-        survey=False,
-        exercise__isnull=True,
-        session__isnull=True,
-    ).values_list("id", flat=True)
-
-    attributes = Attribute.objects.filter(question_id__in=onboarding_question_ids).select_related(
-        "question", "consumer"
-    )
-    if consumer_id:
-        attributes = attributes.filter(consumer_id=consumer_id)
-
-    already_linked = set(
-        KnowledgeEntry.objects.filter(attribute__isnull=False).values_list("attribute_id", flat=True)
-    )
-
-    created = 0
-    skipped = 0
-    unmatched = 0
-
-    for attribute in attributes.iterator():
-        if attribute.id in already_linked:
-            skipped += 1
-            continue
-
-        key = attribute.key or (attribute.question.attribute_key if attribute.question_id else None)
-        field = fields_by_key.get(key) if key else None
-        if not field:
-            unmatched += 1
-            continue
-
-        write_knowledge_entry(
-            consumer=attribute.consumer,
-            field=field,
-            value=attribute.value,
-            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
-            confidence=1.0,
-            attribute=attribute,
-            invalidate_prompt_cache=False,
-        )
-        created += 1
-
-    return {"created": created, "skipped": skipped, "unmatched": unmatched}
+    """Attribute rows are gone. Knowledge is written directly at onboarding."""
+    return {"created": 0, "skipped": 0, "unmatched": 0}

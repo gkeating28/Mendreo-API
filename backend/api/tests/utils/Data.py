@@ -245,6 +245,7 @@ def valid_exercise_flexible_thinking():
         "icon": "leaf",
         "icon_background_color": "tan",
         "status": Constants.EXERCISE_STATUS_PUBLISHED,
+        "use_when": "When a difficult automatic thought is circling.",
         "pre_exercise_enabled": False,
         "description": """
             I. Guiding Principles
@@ -332,7 +333,7 @@ def valid_exercise_flexible_thinking():
                 """,
                 "completion_criteria": "User has identified a suitable target thought free from any category / judgemental errors.",
                 "completion_label": "Your Target Thought Is",
-                "completion_prompt": "The identified target thought",
+                "completion_prompt": "State the identified target thought",
                 "instructions": """
                     Ask the user for a thought: Ask the user to tell you what automatic thought they’re having.
     
@@ -358,7 +359,7 @@ def valid_exercise_flexible_thinking():
     
                     Ask them how the situation makes them feel about anybody else involved.
     
-                    Make the thought concise: Once the user has identified a target thought free from a category error, reflect it back to them, making it more concise if necessary. Ask them if they are ready to proceed.
+                    Make the thought concise: Once the user has identified a target thought free from a category error, reflect it back to them, making it more concise if necessary. Ask them if that wording is right.
     
                     Judgmental error: Next, ask the user if the target thought could be rephrased in a way that’s less judgmental and more factual.
     
@@ -404,7 +405,7 @@ def valid_exercise_flexible_thinking():
                 """,
                 "completion_criteria": "User has rephrased the target thought to a more suitable one.",
                 "completion_label": "Target Thought",
-                "completion_prompt": "The refined thought after identifying any thinking traps",
+                "completion_prompt": "State the refined thought after identifying any thinking traps",
                 "instructions": """
                     Ask the user if they remember what a thinking trap is. If they don’t, explain it to them.
 
@@ -433,11 +434,11 @@ def valid_exercise_flexible_thinking():
                 "title": "Challenging the Thought",
                 "completion_criteria": "All relevant questions from the list have been asked and the user has come up with alternative ways of thinking about the thought.",
                 "completion_label": "Target Thought",
-                "completion_prompt": "The rephrased target thought",
+                "completion_prompt": "State the rephrased target thought",
                 "description": """
                     Purpose of this step is to identify alternative ways of thinking by challenging the initial thought suggested in step 1
                     
-                    Watch for errors: Gently coach the user if you see them making category errors or judgmental errors in how they respond to the questions. If they make a very serious error, ask them to revise their answer, but if the error is small, simply highlight it to them and move on to the next question.
+                    Watch for errors: Gently coach the user if you see them making category errors or judgmental errors in how they respond to the questions. If they make a very serious error, ask them to revise their answer, but if the error is small, simply highlight it to them and carry on with the next question.
     
                     Remind: The user does not have to believe any of their alternatives, they just have to think of them.
     

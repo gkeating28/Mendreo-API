@@ -18,10 +18,7 @@ class Message(SmartModel):
     reasoning = models.TextField(null=True)
     suggested_responses = ArrayField(models.CharField(max_length=255, blank=False), blank=True, null=True)
 
-    step_no = models.PositiveIntegerField(null=True)
     completion_label = models.TextField(null=True)
-    completion_result = models.TextField(null=True)
-    is_step_complete = models.BooleanField(null=True)
 
     usage = models.JSONField(null=True)
 

@@ -47,12 +47,8 @@ class Setting(SmartModel):
     @staticmethod
     def create_all():
         Setting.get_or_create_survey_enabled()
-        Setting.get_or_create_general_prompt()
-        Setting.get_or_create_therapeutic_prompt()
         Setting.get_or_create_refresh_onboarding_cadence_days()
         Setting.get_or_create_observations_enabled()
-        Setting.get_or_create_observations_instruction()
-        Setting.get_or_create_observations_tone_guide()
         Setting.get_or_create_observations_max_length()
         Setting.get_or_create_knowledge_min_confidence()
         Setting.get_or_create_history_max_turns()
@@ -218,6 +214,25 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.HISTORY_MAX_TURNS
+
+    @staticmethod
+    def get_or_create_session_inactivity_minutes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_SESSION_INACTIVITY_MINUTES,
+            defaults={"value": str(Constants.SESSION_INACTIVITY_MINUTES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_session_inactivity_minutes() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_SESSION_INACTIVITY_MINUTES,
+            Setting.get_or_create_session_inactivity_minutes,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.SESSION_INACTIVITY_MINUTES
 
     @staticmethod
     def get_or_create_thin_answer_min_words():

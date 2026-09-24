@@ -439,15 +439,9 @@ def restart_onboarding(consumer):
     Clear onboarding progress so the initial flow can be re-run with new values.
     Soft-deletes knowledge written during onboarding and legacy Attribute answers.
     """
-    from ..attribute.models import Attribute
     from ..knowledge.services import invalidate_consumer_prompt_cache
 
     KnowledgeEntry.objects.filter(consumer=consumer).delete()
-    Attribute.objects.filter(
-        consumer=consumer,
-        question__survey=False,
-        question__exercise__isnull=True,
-    ).delete()
 
     consumer.onboarded = False
     consumer.last_onboarding_flow_completed_at = None

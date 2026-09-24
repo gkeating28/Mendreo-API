@@ -36,7 +36,7 @@ def should_run_pre_exercise_checkin(consumer, exercise) -> bool:
     - same-day second runs also get check-in when a new session is created
     - incomplete same-day resume is handled by Session.get_or_create (no re-start)
     """
-    if not exercise or not getattr(exercise, "pre_exercise_enabled", False):
+    if not exercise or not getattr(exercise, "check_in_enabled", False):
         return False
     return has_completed_exercise_before(consumer, exercise)
 
@@ -59,12 +59,12 @@ def resolve_pre_exercise_fields(exercise, consumer, session=None) -> dict:
     """Return resolved description / instruction / goal for a consumer."""
     context = build_token_context(consumer, exercise, session)
     return {
-        "pre_exercise_enabled": bool(exercise.pre_exercise_enabled),
-        "description": resolve_template(exercise.pre_exercise_description, context),
-        "instruction": resolve_template(exercise.pre_exercise_instruction, context),
-        "goal": resolve_template(exercise.pre_exercise_goal, context),
-        "completion_prompt": exercise.pre_exercise_completion_prompt or "",
-        "start_button_label": exercise.pre_exercise_start_button_label
+        "pre_exercise_enabled": bool(exercise.check_in_enabled),
+        "description": resolve_template(exercise.check_in_tone, context),
+        "instruction": resolve_template(exercise.check_in_instruction, context),
+        "goal": resolve_template(exercise.check_in_goal, context),
+        "completion_prompt": exercise.check_in_summary_prompt or "",
+        "start_button_label": exercise.check_in_start_button_label
         or DEFAULT_START_BUTTON_LABEL,
         "resolved_tokens": context,
     }
@@ -141,9 +141,8 @@ def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None, syn
         "cached_prompt",
         "updated_at",
     ]
-    if django_settings.AI_STATE_MACHINE_ENABLED:
-        session.state = Constants.SESSION_STATE_STEP_ACTIVE
-        update_fields.append("state")
+    session.state = Constants.SESSION_STATE_STEP_ACTIVE
+    update_fields.append("state")
     session.save(update_fields=update_fields)
 
     from ..utils.AIWorkerClient import request_session_greeting
@@ -154,7 +153,7 @@ def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None, syn
 def generate_pre_exercise_summary(session) -> str:
     """Build check-in summary via completion prompt + transcript (best-effort)."""
     exercise = session.exercise
-    completion_prompt = (exercise.pre_exercise_completion_prompt or "").strip()
+    completion_prompt = (exercise.check_in_summary_prompt or "").strip()
     if not completion_prompt:
         return "Pre-exercise check-in completed."
 
@@ -191,29 +190,15 @@ def generate_pre_exercise_summary(session) -> str:
 
 def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
     """XML block injected into the system prompt during the check-in phase."""
-    from django.conf import settings as django_settings
-
     resolved = resolve_pre_exercise_fields(exercise, consumer, session=session)
-    if django_settings.AI_STATE_MACHINE_ENABLED:
-        # step_no / is_step_complete are not in the flag-on output schema.
-        # Telling the model to set them makes Gemini reject the turn.
-        rules = """
+    rules = """
             - Conduct a short conversational check-in only.
             - Do not begin Step 1 or any exercise step content.
             - Do not set step_goal_met or asks_readiness during the check-in.
             - When the check-in goal is met, invite the user to tap the start button;
               do not invent step progression yourself.
         """
-        phase_note = "Do NOT start exercise steps yet. The app moves to Step 1 when the user taps Start."
-    else:
-        rules = """
-            - Conduct a short conversational check-in only.
-            - Do not begin Step 1 or any exercise step content.
-            - Always set step_no to 0 and is_step_complete to false.
-            - When the check-in goal is met, invite the user to tap the start button;
-              do not invent step progression yourself.
-        """
-        phase_note = "Keep step_no at 0 and is_step_complete false until the user taps Start."
+    phase_note = "Do NOT start exercise steps yet. The app moves to Step 1 when the user taps Start."
     return f"""
     <PRE_EXERCISE_CHECK_IN>
         <!-- You are in the pre-exercise check-in phase. Do NOT start exercise steps yet. -->

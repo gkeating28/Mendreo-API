@@ -16,7 +16,7 @@ from . import Constants
 
 
 def enabled() -> bool:
-    return bool(getattr(settings, "AI_STATE_MACHINE_ENABLED", False))
+    return True
 
 
 @dataclass
@@ -297,9 +297,6 @@ def skip_step(session, user_message):
         text="Step skipped.",
         reasoning="Skip step triggered",
         suggested_responses=[],
-        step_no=step_no,
-        is_step_complete=True,
-        completion_result="Step Skipped",
         completion_label=label,
         question_kind=Constants.QUESTION_KIND_NONE,
     )
@@ -356,19 +353,8 @@ def _confirm(
 
     readiness = readiness_message or _last_agent_message(session, before=user_message)
     if readiness is not None:
-        readiness.is_step_complete = True
-        readiness.step_no = step_no
         readiness.completion_label = label
-        readiness.completion_result = value
-        readiness.save(
-            update_fields=[
-                "is_step_complete",
-                "step_no",
-                "completion_label",
-                "completion_result",
-                "updated_at",
-            ]
-        )
+        readiness.save(update_fields=["completion_label", "updated_at"])
 
     if count_user:
         _count_user_message(session, user_message)
