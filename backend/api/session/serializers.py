@@ -110,7 +110,7 @@ class SessionListSerializer(ListModelSerializer):
         occurred = session.had_pre_exercise_checkin()
         label = None
         if exercise and (pending or occurred):
-            label = exercise.pre_exercise_start_button_label or "Start exercise"
+            label = exercise.check_in_start_button_label or "Start exercise"
         return {
             "pending": pending,
             "occurred": occurred,
