@@ -112,10 +112,11 @@ class Detail(SmartDetailAPIView):
 
 class ExerciseLint(SmartAPIView):
     permission_classes = [IsAdminPermission]
+    role_permission = True
     model = Exercise
 
     def get(self, request):
-        if not self.has_permission(request, "GET"):
+        if not self.has_role_permission("GET", Exercise):
             return self.get_permission_denied_response(request, "GET")
         return Response(lint_catalogue(), status=status.HTTP_200_OK)
 
