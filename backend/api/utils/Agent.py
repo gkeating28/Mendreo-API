@@ -481,10 +481,21 @@ def _register_get_asset(agent: Agent[Dependencies, BaseModel]) -> None:
                 "message": f"Failed to get asset as couldn't determine the step"
             }
 
-        tags = step.tags.all()
-        assets = Asset.objects.all()
-        if tags:
-            assets = assets.filter(tags__in=tags).distinct()
+        tags = list(step.tags.all())
+        other_titles = {
+            title.casefold()
+            for title in Exercise.objects.exclude(id=exercise.id).values_list("title", flat=True)
+            if title
+        }
+        # A tag that is another exercise's name is not a tag for this exercise.
+        # A step with no remaining tags must not fall through to the whole library.
+        tags = [tag for tag in tags if (tag.name or "").casefold() not in other_titles]
+        if not tags:
+            return {
+                "status": "not_found",
+                "message": "Sorry, I couldn't find an appropriate asset for this exercise"
+            }
+        assets = Asset.objects.filter(tags__in=tags).distinct()
 
         # Avoid ORDER BY random() (full sort). Sample from a capped id list.
         asset_ids = list(assets.values_list("id", flat=True)[:200])
