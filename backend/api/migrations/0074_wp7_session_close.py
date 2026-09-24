@@ -1,4 +1,5 @@
 import django.db.models.deletion
+from django.contrib.postgres.fields import ArrayField
 from django.db import migrations, models
 
 
@@ -28,7 +29,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name="knowledgequestion",
             name="flows",
-            field=models.ArrayField(
+            field=ArrayField(
                 base_field=models.CharField(max_length=255),
                 blank=True,
                 default=list,
