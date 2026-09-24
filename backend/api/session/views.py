@@ -70,6 +70,10 @@ class List(SmartPaginationAPIView):
         if risk_level:
             queryset = queryset.filter(risk_level=risk_level)
 
+        live_risk_level = QueryParams.get_str(request, "live_risk_level")
+        if live_risk_level:
+            queryset = queryset.filter(live_risk_level=live_risk_level)
+
         if min_rating is not None:
             queryset = queryset.filter(rating__gte=min_rating)
 

@@ -167,6 +167,15 @@ class SessionDetailSerializer(SessionListSerializer):
     class Meta(SessionListSerializer.Meta):
         pass
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "type", None) == Constants.USER_TYPE_ADMIN:
+            data["prompt_version"] = instance.prompt_version_id
+            data["cached_prompt_meta"] = instance.cached_prompt_meta
+        return data
+
     def get_exercise(self, session):
         from ..question.serializers import Question, QuestionExerciseDetailSerializer
 
