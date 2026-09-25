@@ -64,7 +64,6 @@ class SessionListSerializer(ListModelSerializer):
             "cached_prompt_meta",
             "state",
             "closed_at",
-            "form_answers",
             "prompt_version",
             "live_risk_level",
             "history_summary",

@@ -10,10 +10,40 @@ from . import Constants
 from .turn_hint import entry_quality, generic_answers_for
 
 
-def record_form_answer(attribute) -> None:
-    """Keyed form answer, plus a metric row when the answer is numeric."""
+def decimal_answer(value) -> Decimal | None:
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, AttributeError, ValueError):
+        return None
+
+
+def save_form_answer(session, key: str, value: str) -> None:
+    """Store one answer on the session. A numeric value also inserts a metric row."""
     from ..session.models import SessionMetric
 
+    answers = dict(session.form_answers or {})
+    answers[key] = value
+    session.form_answers = answers
+    session.cached_prompt = None
+    session.save(update_fields=["form_answers", "cached_prompt", "updated_at"])
+
+    number = decimal_answer(value)
+    if number is None:
+        return
+
+    SessionMetric.objects.create(
+        consumer=session.consumer,
+        exercise=session.exercise,
+        session=session,
+        key=key,
+        value=number,
+        source=Constants.SESSION_METRIC_SOURCE_FORM,
+        recorded_at=timezone.now(),
+    )
+
+
+def record_form_answer(attribute) -> None:
+    """Keyed form answer, plus a metric row when the answer is numeric."""
     question = attribute.question
     session = getattr(question, "session", None)
     if session is None:
@@ -23,32 +53,19 @@ def record_form_answer(attribute) -> None:
     if not key:
         return
 
-    answers = dict(session.form_answers or {})
-    answers[key] = attribute.value
-    session.form_answers = answers
-    session.cached_prompt = None
-    session.save(update_fields=["form_answers", "cached_prompt", "updated_at"])
-
     if question.type not in (
         Constants.QUESTION_TYPE_NUMBER,
         Constants.QUESTION_TYPE_SLIDER,
-    ):
+    ) and decimal_answer(attribute.value) is not None:
+        # Non-numeric question types keep their text even if it looks like a number.
+        answers = dict(session.form_answers or {})
+        answers[key] = attribute.value
+        session.form_answers = answers
+        session.cached_prompt = None
+        session.save(update_fields=["form_answers", "cached_prompt", "updated_at"])
         return
 
-    try:
-        number = Decimal(str(attribute.value).strip())
-    except (InvalidOperation, AttributeError):
-        return
-
-    SessionMetric.objects.create(
-        consumer=attribute.consumer,
-        exercise=session.exercise,
-        session=session,
-        key=key,
-        value=number,
-        source=Constants.SESSION_METRIC_SOURCE_FORM,
-        recorded_at=timezone.now(),
-    )
+    save_form_answer(session, key, attribute.value)
 
 
 def record_onboarding_knowledge(attribute) -> None:

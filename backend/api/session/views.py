@@ -244,6 +244,39 @@ class CloseSession(SmartAPIView):
         return method == "POST"
 
 
+class FormAnswers(SmartAPIView):
+    """POST /sessions/<id>/form-answers. Body: { "key", "value" }."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        from ..question.models import Question
+        from ..utils.form_answers import save_form_answer
+
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        body = request.data if isinstance(request.data, dict) else {}
+        key = body.get("key")
+        value = body.get("value")
+        if not isinstance(key, str) or not key.strip():
+            return Response({"key": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(value, str):
+            return Response({"value": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        key = key.strip()
+        question = Question.objects.filter(session=session, key=key).first()
+        if question is None:
+            return Response(
+                {"key": "No question with this key on the session."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        save_form_answer(session, key, value)
+        session = SessionDetailSerializer.optimise(Session.objects.filter(id=session.id)).first()
+        return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
 class Finish(SmartAPIView):
     permission_classes = [IsConsumerPermission]
 
