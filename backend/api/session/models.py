@@ -88,6 +88,10 @@ class Session(SmartModel):
                 fields=["consumer", "exercise", "created_at"],
                 name="session_cons_ex_created_idx",
             ),
+            models.Index(
+                fields=["consumer", "completed", "completed_at"],
+                name="session_cons_completed_at_idx",
+            ),
         ]
 
     def __str__(self):

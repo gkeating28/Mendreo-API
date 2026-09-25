@@ -252,26 +252,7 @@ def _mood_points_only(consumer, field, start, end, labels):
     return [by_day[d] for d in sorted(by_day.keys())]
 
 
-def _user_activity_stamps(session) -> list:
-    """Timestamps of the consumer's own messages (not Toni / agent)."""
-    cached = getattr(session, "_prefetched_objects_cache", None) or {}
-    if "messages" in cached:
-        stamps = [
-            message.created_at
-            for message in session.messages.all()
-            if message.created_at
-            and getattr(getattr(message, "sender", None), "consumer_id", None)
-        ]
-    else:
-        stamps = list(
-            session.messages.filter(sender__consumer_id__isnull=False)
-            .order_by("created_at")
-            .values_list("created_at", flat=True)
-        )
-    return sorted(ts for ts in stamps if ts is not None)
-
-
-def _session_activity_minutes(session) -> int:
+def _minutes_from_stamps(stamps, *, created_at, completed_at, updated_at) -> int:
     """
     Minutes the person was actively in the exercise.
 
@@ -282,7 +263,7 @@ def _session_activity_minutes(session) -> int:
     max_idle = Constants.PROGRESS_ACTIVITY_IDLE_GAP_MINUTES * 60
     total = 0.0
     prev = None
-    for ts in _user_activity_stamps(session):
+    for ts in stamps:
         if prev is not None:
             gap = (ts - prev).total_seconds()
             if 0 < gap <= max_idle:
@@ -290,8 +271,8 @@ def _session_activity_minutes(session) -> int:
         prev = ts
 
     if total <= 0:
-        start = session.created_at
-        end = session.completed_at or session.updated_at
+        start = created_at
+        end = completed_at or updated_at
         if start and end:
             seconds = (end - start).total_seconds()
             if 0 < seconds <= max_idle:
@@ -303,22 +284,64 @@ def _session_activity_minutes(session) -> int:
     return min(actual, Constants.PROGRESS_ACTIVITY_MAX_MINUTES)
 
 
+def _activity_in_range(range_start, range_end):
+    """Same rows as Coalesce(completed_at, updated_at, created_at) in range.
+
+    The completed_at branch can use (consumer, completed, completed_at).
+    """
+    return (
+        Q(completed_at__gte=range_start, completed_at__lt=range_end)
+        | Q(
+            completed_at__isnull=True,
+            updated_at__gte=range_start,
+            updated_at__lt=range_end,
+        )
+        | Q(
+            completed_at__isnull=True,
+            updated_at__isnull=True,
+            created_at__gte=range_start,
+            created_at__lt=range_end,
+        )
+    )
+
+
+def _user_stamps_by_session(session_ids) -> dict:
+    """User-message timestamps only. Does not load message bodies or senders."""
+    from ..message.models import Message
+
+    grouped = defaultdict(list)
+    if not session_ids:
+        return grouped
+    rows = (
+        Message.objects.filter(
+            session_id__in=session_ids,
+            sender__consumer_id__isnull=False,
+        )
+        .order_by("created_at")
+        .values_list("session_id", "created_at")
+    )
+    for session_id, created_at in rows:
+        if created_at:
+            grouped[session_id].append(created_at)
+    return grouped
+
+
 def get_exercises_progress(consumer, start: date, end: date) -> dict:
     range_start, range_end = _range_bounds(start, end)
-    sessions = (
+    sessions = list(
         Session.objects.filter(
             consumer=consumer,
             completed=True,
             exercise__isnull=False,
         )
+        .filter(_activity_in_range(range_start, range_end))
         .annotate(
             activity_at=Coalesce("completed_at", "updated_at", "created_at"),
         )
-        .filter(activity_at__gte=range_start, activity_at__lt=range_end)
-        .select_related("exercise", "last_message")
-        .prefetch_related("messages__sender")
+        .select_related("exercise")
         .order_by("activity_at")
     )
+    stamps_by_session = _user_stamps_by_session([session.id for session in sessions])
 
     completed_days = set()
     minutes_by_day: dict[date, int] = {}
@@ -329,7 +352,12 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
         when = session.activity_at
         day = DateUtils.progress_calendar_date(when)
         completed_days.add(day)
-        minutes_by_day[day] = minutes_by_day.get(day, 0) + _session_activity_minutes(session)
+        minutes_by_day[day] = minutes_by_day.get(day, 0) + _minutes_from_stamps(
+            stamps_by_session.get(session.id, []),
+            created_at=session.created_at,
+            completed_at=session.completed_at,
+            updated_at=session.updated_at,
+        )
         exercise = session.exercise
         row = by_exercise.get(exercise.id)
         if not row:
