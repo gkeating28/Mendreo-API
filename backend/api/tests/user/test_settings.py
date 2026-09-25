@@ -129,6 +129,16 @@ class UserSettingsApiTests(BaseTest):
         stored = UserSettings.objects.get(user=self.consumer_one.user)
         self.assertEqual(stored.voice_id, "male_irish")
 
+    def test_patch_auto_read_replies(self):
+        response = self._patch_settings(
+            {"auto_read_replies": True},
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertIs(response.json["auto_read_replies"], True)
+        stored = UserSettings.objects.get(user=self.consumer_one.user)
+        self.assertTrue(stored.auto_read_replies)
+
     def test_patch_new_voice_ids(self):
         for voice_id in (
             "american_male",

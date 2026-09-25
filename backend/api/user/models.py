@@ -113,6 +113,7 @@ class UserSettings(SmartModel):
         choices=VoiceId.choices,
         default=VoiceId.FEMALE_IRISH,
     )
+    auto_read_replies = models.BooleanField(default=False)
 
     def __str__(self):
         return f"UserSettings: {self.user_id}"

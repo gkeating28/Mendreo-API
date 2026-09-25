@@ -223,6 +223,7 @@ class UserSettingsDetailSerializer(ListModelSerializer):
             "chat_text_size",
             "chat_speed",
             "voice_id",
+            "auto_read_replies",
         ]
 
 
@@ -234,6 +235,7 @@ class UserSettingsEditSerializer(EditModelSerializer):
     chat_text_size = serializers.CharField(required=False)
     chat_speed = serializers.CharField(required=False)
     voice_id = serializers.CharField(required=False)
+    auto_read_replies = serializers.BooleanField(required=False)
 
     class Meta:
         model = UserSettings
@@ -245,6 +247,7 @@ class UserSettingsEditSerializer(EditModelSerializer):
             "chat_text_size",
             "chat_speed",
             "voice_id",
+            "auto_read_replies",
         ]
 
     def validate_timezone(self, value):
