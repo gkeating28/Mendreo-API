@@ -6,6 +6,7 @@ Chip taps do not call the chat model.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -73,6 +74,7 @@ def build_session_state(session, completion_card=None) -> dict:
                 "key": session_step.step.key,
                 "name": session_step.step.title,
                 "status": status,
+                "completion_result": session_step.completion_result,
             }
         )
 
@@ -103,6 +105,45 @@ def initial_state(exercise, run_pre_exercise: bool) -> str:
     if run_pre_exercise:
         return Constants.SESSION_STATE_CHECK_IN
     return Constants.SESSION_STATE_STEP_ACTIVE
+
+
+_MODEL_READY_CHIPS = re.compile(
+    r"^(yes, i['’]m ready|not yet|finish exercise|ready to proceed|i['’]m ready for the next step)[.!]?$",
+    re.IGNORECASE,
+)
+
+
+def prepare_model_readiness(session, response, question_kind, chips, text):
+    """Drop model-authored readiness chips. Code asks that question."""
+    if session.state == Constants.SESSION_STATE_AWAITING_READY:
+        return question_kind, chips
+
+    asks = bool(getattr(response, "asks_readiness", False))
+    live = _live_step(session)
+    goal_met = bool(getattr(response, "step_goal_met", False)) or bool(
+        live and live.goal_met_at
+    )
+    official = (
+        asks
+        and goal_met
+        and not session.in_pre_exercise_phase()
+        and live is not None
+    )
+    if official:
+        return Constants.QUESTION_KIND_READINESS, []
+
+    if question_kind == Constants.QUESTION_KIND_READINESS:
+        question_kind = (
+            Constants.QUESTION_KIND_OPEN
+            if (text or "").strip().endswith("?")
+            else Constants.QUESTION_KIND_NONE
+        )
+    kept = [
+        chip
+        for chip in (chips or [])
+        if not _MODEL_READY_CHIPS.match(str(chip).strip())
+    ]
+    return question_kind, kept
 
 
 def on_model_turn(session, agent_message, response) -> None:

@@ -178,12 +178,16 @@ class Agent(SmartModel):
         if followup.suggested_responses is not None:
             suggested_responses = list(followup.suggested_responses)
 
+        from ..utils.SessionStateMachine import prepare_model_readiness
+
         question_kind = normalize_question_kind(getattr(response, "question_kind", None))
-        if (
-            getattr(response, "asks_readiness", False)
-            and not session.in_pre_exercise_phase()
-        ):
-            question_kind = Constants.QUESTION_KIND_READINESS
+        question_kind, suggested_responses = prepare_model_readiness(
+            session,
+            response,
+            question_kind,
+            suggested_responses,
+            text,
+        )
         offer_chips = (
             is_yes_no_offer(suggested_responses)
             and not session.exercise_id
