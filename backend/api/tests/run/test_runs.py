@@ -1,4 +1,6 @@
 import inspect
+from datetime import datetime, timezone as dt_timezone
+from types import SimpleNamespace
 
 from django.test import SimpleTestCase
 from django.utils import timezone
@@ -13,11 +15,63 @@ from ...session.models import Session, SessionStep
 from ...run import services as run_services
 
 
+def _at(minute: int):
+    return datetime(2026, 9, 25, 11, minute, tzinfo=dt_timezone.utc)
+
+
+def _chat(text, *, minute, guide=True, label=""):
+    sender = SimpleNamespace(consumer_id=None if guide else "user")
+    return SimpleNamespace(
+        text=text,
+        created_at=_at(minute),
+        sender=sender,
+        completion_label=label,
+    )
+
+
 class RunServicesImportTests(SimpleTestCase):
     def test_does_not_import_agent_at_module_level(self):
         source = inspect.getsource(run_services)
         self.assertNotIn("utils.Agent", source)
         self.assertIn("utils.completion", source)
+
+    def test_transcript_buckets_follow_completion_labels(self):
+        check_in = _chat("Welcome back.", minute=0)
+        thread = [
+            check_in,
+            _chat("What is the worry?", minute=2),
+            _chat("Getting fired", minute=3, guide=False),
+            _chat("Are you ready to continue?", minute=5, label="You have described it"),
+            _chat("Yes, I'm ready", minute=6, guide=False),
+            _chat("What time of day?", minute=7),
+            _chat("Mornings", minute=8, guide=False),
+            _chat("Ready to finish?", minute=9, label="The plan is set"),
+            _chat("Finish exercise", minute=10, guide=False),
+        ]
+        buckets = run_services._transcript_buckets(
+            thread,
+            check_in_completed_at=_at(1),
+        )
+        self.assertEqual(
+            [item["text"] for item in buckets[1]],
+            [
+                "What is the worry?",
+                "Getting fired",
+                "Are you ready to continue?",
+                "Yes, I'm ready",
+            ],
+        )
+        self.assertEqual(
+            [item["text"] for item in buckets[2]],
+            [
+                "What time of day?",
+                "Mornings",
+                "Ready to finish?",
+                "Finish exercise",
+            ],
+        )
+        self.assertNotIn(3, buckets)
+        self.assertNotIn("Welcome back.", [item["text"] for item in buckets[1]])
 
 
 class ReflectRunApiTests(BaseTest):

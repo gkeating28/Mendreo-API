@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 from django.db.models import Prefetch
-from django.utils import timezone
 
 from ..message.models import Message
 from ..session.models import Session, SessionStep
@@ -163,16 +162,64 @@ def _prompt_for(exercise_title: str, index: int) -> tuple[str, str]:
     return DEFAULT_PROMPT
 
 
-def _transcript_buckets(messages: list[Message]) -> dict[int, list[dict]]:
+def _is_guide(message: Message) -> bool:
+    sender = getattr(message, "sender", None)
+    return not getattr(sender, "consumer_id", None)
+
+
+def _transcript_entry(message: Message) -> dict | None:
+    text = (message.text or "").strip()
+    if not text:
+        return None
+    role = "user" if not _is_guide(message) else "guide"
+    return {"role": role, "text": text}
+
+
+def _transcript_buckets(
+    messages: list[Message],
+    *,
+    check_in_completed_at=None,
+) -> dict[int, list[dict]]:
+    """Same boundaries as the live chat's messagesForMachineStep.
+
+    Messages at or before the check-in stamp are omitted. A guide message
+    with a completion_label closes the current step, and the user's confirming
+    reply stays with it. The next guide message opens the following step.
+    """
     buckets: dict[int, list[dict]] = {}
-    current = 1
-    for message in sorted(messages, key=lambda item: item.created_at or timezone.now()):
-        text = (message.text or "").strip()
-        if not text:
+    step = 1
+    closed = False
+    loose: list[Message] = []
+    dated = []
+    for message in messages:
+        if getattr(message, "created_at", None) is None:
+            loose.append(message)
+        else:
+            dated.append(message)
+    dated.sort(key=lambda item: item.created_at)
+
+    def push(target: int, message: Message) -> None:
+        entry = _transcript_entry(message)
+        if entry is None:
+            return
+        buckets.setdefault(target, []).append(entry)
+
+    for message in dated:
+        if (
+            check_in_completed_at is not None
+            and message.created_at <= check_in_completed_at
+        ):
             continue
-        sender = getattr(message, "sender", None)
-        role = "user" if getattr(sender, "consumer_id", None) else "guide"
-        buckets.setdefault(1, []).append({"role": role, "text": text})
+        if closed and _is_guide(message):
+            step += 1
+            closed = False
+        push(step, message)
+        label = (getattr(message, "completion_label", None) or "").strip()
+        if _is_guide(message) and label:
+            closed = True
+
+    for message in loose:
+        push(step, message)
     return buckets
 
 
@@ -196,7 +243,14 @@ def _step_records(session: Session, include_transcript: bool) -> list[dict]:
             by_step_id[step.id] = row
             by_order[step.order] = row
 
-    buckets = _transcript_buckets(list(session.messages.all())) if include_transcript else {}
+    buckets = (
+        _transcript_buckets(
+            list(session.messages.all()),
+            check_in_completed_at=session.pre_exercise_completed_at,
+        )
+        if include_transcript
+        else {}
+    )
     total = session.total_steps_no or (exercise.steps_no if exercise else 0) or len(session_steps)
     total = max(total, len(catalogue), 1)
     records = []
