@@ -165,6 +165,10 @@ class PromptBlockTests(TestCase):
             ],
         )
 
+        self.assertIn("cognitive restructuring as appropriate", general_a)
+        self.assertNotIn("cognitive restructuring as appropriate", exercise_a)
+        self.assertIn("only as background", exercise_a)
+
         for prompt in (general_a, exercise_a):
             self.assertIn("rested nights", prompt)
             self.assertIn("Favourite tea", prompt)

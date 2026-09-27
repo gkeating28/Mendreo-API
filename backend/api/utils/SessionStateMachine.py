@@ -6,14 +6,16 @@ Chip taps do not call the chat model.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
-from django.conf import settings
 from django.db.models import F
 from django.utils import timezone
 
 from . import Constants
+
+logger = logging.getLogger(__name__)
 
 
 def enabled() -> bool:
@@ -108,7 +110,13 @@ def initial_state(exercise, run_pre_exercise: bool) -> str:
 
 
 _MODEL_READY_CHIPS = re.compile(
-    r"^(yes, i['’]m ready|not yet|finish exercise|ready to proceed|i['’]m ready for the next step)[.!]?$",
+    r"^(?:"
+    r"(?:yes[, ]+)?(?:i['’]m |i am )?ready(?: (?:to|for) (?:continue|proceed|move on|start|the next step))?"
+    r"|not yet"
+    r"|finish(?: the)? exercise"
+    r"|(?:yes[, ]+)?(?:let['’]s |lets )?(?:move on|continue|start)(?: to the next step)?"
+    r"|next step"
+    r")[.!?…]*$",
     re.IGNORECASE,
 )
 
@@ -141,9 +149,14 @@ def prepare_model_readiness(session, response, question_kind, chips, text):
     kept = [
         chip
         for chip in (chips or [])
-        if not _MODEL_READY_CHIPS.match(str(chip).strip())
+        if not is_model_ready_chip(chip)
     ]
     return question_kind, kept
+
+
+def is_model_ready_chip(chip) -> bool:
+    """True when the whole chip is a readiness or advance phrase."""
+    return bool(_MODEL_READY_CHIPS.match(str(chip or "").strip()))
 
 
 def on_model_turn(session, agent_message, response) -> None:
@@ -160,14 +173,8 @@ def on_model_turn(session, agent_message, response) -> None:
     asks = bool(getattr(response, "asks_readiness", False))
 
     if session_step and goal_met and session_step.goal_met_at is None:
-        if _depth_check_due(session, session_step):
-            if not _depth_check_passed(session, session_step):
-                asks = False
-                if agent_message is not None and agent_message.question_kind == Constants.QUESTION_KIND_READINESS:
-                    agent_message.question_kind = Constants.QUESTION_KIND_OPEN
-                    agent_message.save(update_fields=["question_kind", "updated_at"])
-        session_step.goal_met_at = timezone.now()
-        session_step.save(update_fields=["goal_met_at", "updated_at"])
+        if not _accept_goal(session, session_step, agent_message):
+            asks = False
 
     if not asks or session_step is None or session_step.goal_met_at is None:
         return
@@ -446,6 +453,56 @@ def _confirm(
     card = {"title": title, "label": label or ""}
     display = greeting or user_message
     return ChipOutcome(display, build_session_state(session, completion_card=card))
+
+
+def _accept_goal(session, session_step, agent_message) -> bool:
+    """Stamp goal_met_at only after done_when, and depth when it is due, both pass."""
+    if not _done_when_passed(session, session_step, agent_message):
+        return False
+    if _depth_check_due(session, session_step) and not _depth_check_passed(session, session_step):
+        _downgrade_readiness(agent_message)
+        return False
+    session_step.goal_met_at = timezone.now()
+    session_step.save(update_fields=["goal_met_at", "updated_at"])
+    return True
+
+
+def _done_when_passed(session, session_step, agent_message) -> bool:
+    from .extraction import check_done_when
+
+    try:
+        result = check_done_when(session, session_step.step)
+    except Exception:
+        logger.exception(
+            "done_when check failed for session=%s step=%s",
+            getattr(session, "id", None),
+            getattr(session_step, "id", None),
+        )
+        return True
+    if result is None or result.get("met"):
+        return True
+    _downgrade_readiness(agent_message)
+    _store_goal_hint(session, result.get("missing") or "")
+    return False
+
+
+def _store_goal_hint(session, missing: str) -> None:
+    from .turn_hint import goal_hint_text
+
+    meta = dict(session.cached_prompt_meta or {})
+    meta.pop("depth_hint_step_id", None)
+    meta["goal_hint"] = goal_hint_text(missing)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
+def _downgrade_readiness(agent_message) -> None:
+    if agent_message is None:
+        return
+    if agent_message.question_kind != Constants.QUESTION_KIND_READINESS:
+        return
+    agent_message.question_kind = Constants.QUESTION_KIND_OPEN
+    agent_message.save(update_fields=["question_kind", "updated_at"])
 
 
 def _depth_check_due(session, session_step) -> bool:

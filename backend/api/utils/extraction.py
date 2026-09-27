@@ -13,6 +13,57 @@ class _Extraction(BaseModel):
     confidence: float = Field(description="Confidence from 0 to 1")
 
 
+class _GoalCheck(BaseModel):
+    met: bool = Field(
+        description=(
+            "True only when every concrete element named in DONE_WHEN is present "
+            "in the user's own words."
+        )
+    )
+    missing: str = Field(
+        description="What is still missing from DONE_WHEN. Empty when met is true."
+    )
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"true", "yes", "y", "1"}
+
+
+def check_done_when(session, step) -> dict | None:
+    """Whether the user's words meet done_when.
+
+    None means done_when is empty, so the caller accepts the model's claim.
+    Raises when the checker itself fails.
+    """
+    criteria = (getattr(step, "done_when", None) or "").strip()
+    if not criteria:
+        return None
+
+    transcript = _step_transcript(session, step)
+    data = AI.ask(
+        (
+            "DONE_WHEN:\n"
+            f"{criteria}\n\n"
+            "Transcript of this step:\n"
+            f"{transcript or '(no messages)'}\n\n"
+            "Decide whether every concrete element named in DONE_WHEN is present "
+            "in the user's own words. A summary the assistant wrote does not count. "
+            "A yes, ok, or readiness reply does not count. "
+            "Set met true only when those elements are present. "
+            "When met is false, missing names the element that is still absent."
+        ),
+        _GoalCheck,
+        temperature=0.1,
+    )
+    met = _as_bool(data.get("met"))
+    missing = "" if met else (data.get("missing") or "").strip()[:240]
+    return {"met": met, "missing": missing}
+
+
 def extract_step_result(session, step) -> dict | None:
     """Return ``{value, confidence}`` or None when the step has no completion prompt."""
     prompt_text = (getattr(step, "completion_prompt", None) or "").strip()

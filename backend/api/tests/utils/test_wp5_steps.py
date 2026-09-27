@@ -80,6 +80,11 @@ class Wp5StepRenderingTests(BaseTest):
         self.assertNotIn("<TITLE>Name it</TITLE>", prompt)
         self.assertNotIn("<TITLE>Later one</TITLE>", prompt)
         self.assertIn("<REFERENCE>", prompt.split("<SESSION_CONTEXT>", 1)[0])
+        self.assertIn("weigh evidence for or against a thought or worry", prompt)
+        self.assertIn("0 to 10 scale", prompt)
+        self.assertIn("balanced or more accurate thought", prompt)
+        self.assertIn("only as background", prompt)
+        self.assertNotIn("cognitive restructuring as appropriate", prompt)
         self.assertEqual(_prompt_phase(session), "step:3:step_active")
         self.assertEqual(steps[2].title, "Live step")
 

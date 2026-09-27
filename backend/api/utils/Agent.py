@@ -390,6 +390,16 @@ _STATE_MACHINE_PROGRESSION = (
     "message a single question.\n"
     "        - Do not complete the step yourself. The app shows the readiness chips.\n"
 )
+_UP_GUIDE_SENTENCE = (
+    "          to guide your responses. This includes applying evidence-based strategies "
+    "for managing guilt, emotional regulation,\n"
+    "          and cognitive restructuring as appropriate."
+)
+_UP_BACKGROUND_SENTENCE = (
+    "          only as background. The only technique you may use is the one named in "
+    "the instructions for the work in front of you.\n"
+    "          Do not apply cognitive restructuring, or any other technique, on your own."
+)
 
 
 def _state_machine_enabled() -> bool:
@@ -397,6 +407,7 @@ def _state_machine_enabled() -> bool:
 
 
 def _state_machine_progression(prompt: str) -> str:
+    prompt = prompt.replace(_UP_GUIDE_SENTENCE, _UP_BACKGROUND_SENTENCE)
     start = prompt.find(_PROGRESSION_START)
     end = prompt.find("    </PROGRAMMING_INSTRUCTIONS>")
     if start == -1 or end == -1 or end < start:
@@ -820,6 +831,12 @@ def _step_already_started(step_no: int, steps_no: int) -> str:
         "The step below in <STEP> is the only step you may work on. "
         "Steps in <STEP_OUTLINE> are context only. Do not start them. "
         "Do only what this step's instructions tell you to do. "
+        "Do not add a technique those instructions do not name. "
+        "Unless those instructions ask for it, do not:\n"
+        "- weigh evidence for or against a thought or worry\n"
+        "- ask how much something bothers them on a 0 to 10 scale\n"
+        "- look for a balanced or more accurate thought\n"
+        "- brainstorm solutions, plans, or who can support them\n"
         "Your first message must be the first question in those instructions.\n\n"
     )
     if step_no <= 1:

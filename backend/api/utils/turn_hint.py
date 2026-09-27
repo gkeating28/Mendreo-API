@@ -123,11 +123,22 @@ def probe_count_for(previous, question_kind: str) -> int:
     return 0
 
 
+def goal_hint_text(missing: str) -> str:
+    gap = (missing or "").strip() or "what this step still requires"
+    return (
+        "This step is not done yet. "
+        f"Ask one question that would supply what is still missing: {gap}"
+    )
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     from ..message.models import Message
 
     text = user_message.text or ""
+    goal = _consume_goal_hint(session)
+    if goal:
+        return f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
     depth = _consume_depth_hint(session)
     if depth:
         return f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
@@ -140,6 +151,16 @@ def user_prompt_with_hint(session, user_message) -> str:
     if not hint:
         return text
     return f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+
+
+def _consume_goal_hint(session) -> str | None:
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if "goal_hint" not in meta:
+        return None
+    hint = (meta.pop("goal_hint") or "").strip()
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return hint or None
 
 
 def _consume_depth_hint(session) -> str | None:
