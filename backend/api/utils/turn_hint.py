@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 from . import Constants
+
+_TRAILING_ELLIPSIS = re.compile(r"(?:\s*(?:\.{3}|…))+\s*$")
 
 FOLLOW_UP_HINT = (
     "The reply was brief. Ask one specific follow-up about when, where or what "
@@ -74,6 +78,13 @@ def entry_quality(value: str, *, response_type: str, generic_answers) -> tuple[f
     return 1.0, Constants.KNOWLEDGE_REVIEW_ACCEPTED
 
 
+def _strip_trailing_ellipsis(text: str) -> str:
+    stripped = _TRAILING_ELLIPSIS.sub("", text)
+    if stripped == text:
+        return text
+    return stripped.rstrip()
+
+
 def shape_chips(chips, question_kind: str):
     """Open questions keep at most two sentence-starter chips."""
     if normalize_question_kind(question_kind) != Constants.QUESTION_KIND_OPEN:
@@ -91,8 +102,9 @@ def shape_chips(chips, question_kind: str):
             continue
         if is_generic_answer(text, generic) or len(text.split()) == 1:
             continue
-        if not text.endswith("...") and not text.endswith("…"):
-            text = text + "..."
+        text = _strip_trailing_ellipsis(text)
+        if not text:
+            continue
         kept.append(text)
         if len(kept) == 2:
             break

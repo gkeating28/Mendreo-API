@@ -395,7 +395,7 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
           If you cannot offer real answers, omit suggested_responses.
 
         - When question_kind is open, chips are sentence starters the user completes, never complete answers.
-          Offer at most two, and end each with an ellipsis.
+          Offer at most two. Do not end a chip with an ellipsis.
           
         - Events are recorded in special messages in the format:
           [EVENT ....]

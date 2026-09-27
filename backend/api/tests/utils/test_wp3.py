@@ -103,7 +103,11 @@ class Wp3Tests(TestCase):
             ["fine", "I was at home", "When I noticed it", "Tonight"],
             Constants.QUESTION_KIND_OPEN,
         )
-        self.assertEqual(shaped, ["I was at home...", "When I noticed it..."])
+        self.assertEqual(shaped, ["I was at home", "When I noticed it"])
+        self.assertEqual(
+            shape_chips(["It's mostly about work…"], Constants.QUESTION_KIND_OPEN),
+            ["It's mostly about work"],
+        )
         self.assertEqual(
             shape_chips(["Yes", "No"], Constants.QUESTION_KIND_CLOSED),
             ["Yes", "No"],
