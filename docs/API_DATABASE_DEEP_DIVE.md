@@ -554,7 +554,7 @@ Supabase Storage is the external system here; the `File`/`Image` rows are the DB
     session grading text.
   - **Supabase Storage** — file/image bytes and the appended per-consumer chat logs (§8/§11).
   - **Stripe / Apple / Google** — subscription lifecycle and receipt validation (§10).
-  - **SendGrid (email) via Celery** — verification/reset codes and notifications (task enqueues,
+  - **Resend (email) via Celery** — verification/reset codes and notifications (task enqueues,
     not DB writes, though the tasks themselves may stamp `verification_code*` on `User`).
 
 ---

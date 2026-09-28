@@ -2,21 +2,13 @@ import traceback
 
 from rest_framework.exceptions import APIException
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (Mail, Personalization, Email)
+import resend
 
 from ..utils import Api, Message, Constants, DateUtils
 
 from ..user.models import User
 
 import random, os
-
-SendGrid = SendGridAPIClient(Api.SENDGRID_API_KEY)
-
-HEADERS = {
-    'Authorization': "Bearer {}".format(Api.SENDGRID_API_KEY),
-    'Content-Type': "application/json"
-}
 
 
 class MailableException:
@@ -31,19 +23,24 @@ class MailableException:
         self.stack_trace = traceback.format_exc()
 
 
+def _named_from() -> str:
+    return f"{Constants.APP_NAME} <{Api.EMAIL_FROM}>"
+
+
 def send_code(user_id):
     user = User.objects.get(id=user_id)
     user.verification_code = generate_random_number(4)
     user.verification_code_sent_at = DateUtils.now()
     user.save()
 
-    mail = Mail(
-        from_email=(Api.EMAIL_FROM, Constants.APP_NAME),
-        to_emails=user.email,
-        subject='Password Reset Request',
-        html_content='Hi {},<br><br><b>{}</b> is your password reset code'.format(user.first_name, user.verification_code))
-
-    _send_email(mail)
+    _send_email({
+        "from": _named_from(),
+        "to": user.email,
+        "subject": "Password Reset Request",
+        "html": "Hi {},<br><br><b>{}</b> is your password reset code".format(
+            user.first_name, user.verification_code
+        ),
+    })
 
 
 def send_account_verification_code(user_id):
@@ -52,13 +49,14 @@ def send_account_verification_code(user_id):
     user.verification_code_sent_at = DateUtils.now()
     user.save()
 
-    mail = Mail(
-        from_email=(Api.EMAIL_FROM, Constants.APP_NAME),
-        to_emails=user.email,
-        subject='Account Verification',
-        html_content='Hi {},<br><br><b>{}</b> is your account verification code'.format(user.first_name, user.verification_code))
-
-    _send_email(mail)
+    _send_email({
+        "from": _named_from(),
+        "to": user.email,
+        "subject": "Account Verification",
+        "html": "Hi {},<br><br><b>{}</b> is your account verification code".format(
+            user.first_name, user.verification_code
+        ),
+    })
 
 
 def send_trust_and_safety_alert(session_id: str):
@@ -71,18 +69,17 @@ def send_trust_and_safety_alert(session_id: str):
 
     session = Session.objects.filter(id=session_id).select_related("consumer").first()
     consumer_id = session.consumer_id if session else "unknown"
-    message = Mail(
-        from_email=(Api.EMAIL_FROM, Constants.APP_NAME),
-        to_emails=address,
-        subject="High-risk session needs review",
-        html_content=(
+    _send_email({
+        "from": _named_from(),
+        "to": address,
+        "subject": "High-risk session needs review",
+        "html": (
             "A session was flagged high risk and needs a Trust and Safety review.<br><br>"
             f"Session: {session_id}<br>"
             f"Consumer: {consumer_id}<br><br>"
             "The message text is not included in this email. Open the session in the admin console."
         ),
-    )
-    _send_email(message)
+    })
 
 
 def send_developer_errors(body: str, subject: str = "System Error", mailable_exceptions: [MailableException] = None):
@@ -93,25 +90,37 @@ def send_developer_errors(body: str, subject: str = "System Error", mailable_exc
             body += f"Exception: {mailable_exception.exception}\n"
             body += f"Stack Trace: {mailable_exception.stack_trace}\n"
 
-    message = Mail(
-        from_email=Api.EMAIL_FROM,
-        to_emails=Constants.DEVELOPERS,
-        subject=subject,
-        html_content=body
-    )
-
-    _send_email(message)
+    _send_email({
+        "from": Api.EMAIL_FROM,
+        "to": Constants.DEVELOPERS,
+        "subject": subject,
+        "html": body,
+    })
 
 
 def generate_random_number(length):
     return int(''.join([str(random.randint(1, 9)) for _ in range(length)]))
 
 
-def _send_email(mail):
+def _recipients(to) -> list:
+    if isinstance(to, str):
+        return [to]
+    return list(to)
+
+
+def _send_email(mail: dict):
+    # Set at send time so an empty key fails here, the same way an empty
+    # SendGrid key failed inside SendGrid.send, and not at import.
+    resend.api_key = Api.RESEND_API_KEY or ""
 
     try:
-        SendGrid.send(mail)
+        resend.Emails.send({
+            "from": mail["from"],
+            "to": _recipients(mail["to"]),
+            "subject": mail["subject"],
+            "html": mail["html"],
+        })
     except Exception as e:
         if not os.environ.get("GENERAL_DEBUG", "False") == "True":
-            print(f"error while sending email with content: {mail.content}", e)
+            print(f"error while sending email with content: {mail['html']}", e)
         raise APIException(Message.create(e))

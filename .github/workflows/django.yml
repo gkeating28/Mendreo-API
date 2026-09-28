@@ -105,8 +105,6 @@ jobs:
           echo "SUPABASE_STORAGE_BUCKET=${{ secrets.SUPABASE_STORAGE_BUCKET }}" >> $GITHUB_ENV
           echo "SUPABASE_STORAGE_PRIVATE_BUCKET=${{ secrets.SUPABASE_STORAGE_PRIVATE_BUCKET }}" >> $GITHUB_ENV
           echo "EMAIL_FROM=${{ secrets.EMAIL_FROM }}" >> $GITHUB_ENV
-          echo "SENDGRID_API_ID=${{ secrets.SENDGRID_API_ID }}" >> $GITHUB_ENV
-          echo "SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }}" >> $GITHUB_ENV
           echo "BROKER_URL=${{ secrets.BROKER_URL }}" >> $GITHUB_ENV
           echo "STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" >> $GITHUB_ENV
           echo "FACEBOOK_CLIENT_ID=${{ secrets.FACEBOOK_CLIENT_ID }}" >> $GITHUB_ENV

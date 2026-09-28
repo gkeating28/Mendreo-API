@@ -264,7 +264,7 @@ SUPABASE_STORAGE_SECRET_ACCESS_KEY=...
 SUPABASE_STORAGE_BUCKET=...          # public bucket: images/files
 SUPABASE_STORAGE_PRIVATE_BUCKET=...  # private bucket: chat logs (PII)
 SUPABASE_ANON_KEY=...                # REST uploads (or SUPABASE_SERVICE_ROLE_KEY)
-SENDGRID_API_KEY=...
+RESEND_API_KEY=...
 STRIPE_SECRET_KEY=...
 INTERNAL_API_SECRET=<same-as-vercel>
 GUNICORN_TIMEOUT=150
@@ -332,7 +332,7 @@ SUPABASE_STORAGE_SECRET_ACCESS_KEY=...
 SUPABASE_STORAGE_BUCKET=...          # same values as worker
 SUPABASE_STORAGE_PRIVATE_BUCKET=...  # same values as worker
 SUPABASE_ANON_KEY=...                # or SUPABASE_SERVICE_ROLE_KEY
-SENDGRID_API_KEY=...
+RESEND_API_KEY=...
 STRIPE_SECRET_KEY=...
 # OAuth / survey vars as needed
 ```
@@ -381,7 +381,7 @@ If Vercel is healthy but chat fails, the worker may still be running a pre-hybri
 | `INTERNAL_API_SECRET` | same as Vercel |
 | `GOOGLE_API_KEY` | Gemini seed + Google Play validation |
 | `AI_SECRETS_MASTER_KEY` | Fernet key for encrypted AI provider keys in DB |
-| `SUPABASE_STORAGE_*` (object storage), `SENDGRID_*`, `STRIPE_*` | as needed |
+| `SUPABASE_STORAGE_*` (object storage), `RESEND_API_KEY`, `EMAIL_FROM`, `STRIPE_*` | as needed |
 
 Do **not** set `AI_WORKER_URL` on the worker.
 

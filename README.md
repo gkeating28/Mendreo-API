@@ -12,7 +12,7 @@ Optional for full feature parity:
 
 - **Redis** — only if running Celery worker/beat (`Procfile`); local dev uses `CELERY_TASK_ALWAYS_EAGER=True` instead
 - **Supabase Storage** — file and image uploads (via its S3-compatible API)
-- **SendGrid** — transactional email
+- **Resend** — transactional email
 - **Stripe** — subscriptions
 - **Google API key** — Gemini AI chat and image generation
 - **OAuth keys** — Google, Apple, Facebook social login
@@ -55,7 +55,7 @@ Health check: `curl http://127.0.0.1:5000/` → `{"service":"mendreo-api","statu
 | `BROKER_URL` | No | Celery broker (`memory://` for local) |
 | `GOOGLE_API_KEY` | For AI | Gemini models for chat/sessions |
 | `SUPABASE_STORAGE_*` | For uploads | Supabase Storage (S3-compatible object storage + image CDN) |
-| `SENDGRID_API_KEY` | For email | Password reset, verification |
+| `RESEND_API_KEY` | For email | Password reset, verification |
 | `STRIPE_SECRET_KEY` | For billing | Subscriptions |
 | `BYPASS_SUBSCRIPTION` | Temporary | `true` skips Stripe paywall (complimentary active subs). Remove once billing works. |
 | OAuth / Apple / survey vars | Optional | Social login and survey flows |

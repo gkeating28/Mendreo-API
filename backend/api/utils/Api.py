@@ -72,7 +72,7 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "noreply@example.com")
 
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 

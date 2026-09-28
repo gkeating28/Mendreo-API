@@ -329,12 +329,6 @@ else:
 INTERNAL_IPS = ['127.0.0.1']
 
 ADMINS = [("keith", "keith@mosaic.ie")]
-EMAIL_HOST = "smtp.sendgrid.net"
-EMAIL_HOST_USER = "apikey"
-EMAIL_HOST_PASSWORD = os.environ.get('SENDGRID_API_KEY', '')
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-SERVER_EMAIL = "notifications@mendreo.com"
 
 # used by XMLTestRunner, name is as expected in github yaml
 TEST_OUTPUT_FILE_NAME = "test-results.xml"
