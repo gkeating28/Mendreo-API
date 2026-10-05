@@ -55,27 +55,56 @@ def resolve_template(text: Optional[str], context: dict[str, str]) -> str:
     return resolve_tokens(text, context)
 
 
-def resolve_pre_exercise_fields(exercise, consumer, session=None) -> dict:
+def resolve_pre_exercise_fields(exercise, consumer, session=None, *, overrides=None) -> dict:
     """Return resolved description / instruction / goal for a consumer."""
     context = build_token_context(consumer, exercise, session)
+    overrides = overrides or {}
+
+    def _field(name, saved):
+        if name in overrides:
+            return overrides[name]
+        return saved
+
+    tone = _field("check_in_tone", exercise.check_in_tone)
+    instruction = _field("check_in_instruction", exercise.check_in_instruction)
+    goal = _field("check_in_goal", exercise.check_in_goal)
+    summary = _field("check_in_summary_prompt", exercise.check_in_summary_prompt)
     return {
         "pre_exercise_enabled": bool(exercise.check_in_enabled),
-        "description": resolve_template(exercise.check_in_tone, context),
-        "instruction": resolve_template(exercise.check_in_instruction, context),
-        "goal": resolve_template(exercise.check_in_goal, context),
-        "completion_prompt": exercise.check_in_summary_prompt or "",
+        "description": resolve_template(tone, context),
+        "instruction": resolve_template(instruction, context),
+        "goal": resolve_template(goal, context),
+        "completion_prompt": summary or "",
         "start_button_label": exercise.check_in_start_button_label
         or DEFAULT_START_BUTTON_LABEL,
         "resolved_tokens": context,
     }
 
 
-def test_pre_exercise_prompt(exercise, consumer, *, run_dry_run: bool = False) -> dict:
+def test_pre_exercise_prompt(
+    exercise,
+    consumer,
+    *,
+    run_dry_run: bool = False,
+    transcript: str | None = None,
+    overrides=None,
+) -> dict:
     """
     Admin Test Prompt: resolve tokens against a real user; optional single-turn
-    dry-run opening message (no persist).
+    dry-run opening message (no persist). Overrides replace saved check-in text
+    for this call only.
     """
-    resolved = resolve_pre_exercise_fields(exercise, consumer)
+    resolved = resolve_pre_exercise_fields(exercise, consumer, overrides=overrides)
+    prompt = (
+        "You are starting a pre-exercise check-in with a returning user. "
+        "Produce only the opening assistant message (no step progression).\n\n"
+        f"Description:\n{resolved['description']}\n\n"
+        f"Instruction:\n{resolved['instruction']}\n\n"
+        f"Goal:\n{resolved['goal']}\n\n"
+        f"User first name: {resolved['resolved_tokens'].get('user.first_name', '')}\n"
+    )
+    if transcript:
+        prompt = f"{prompt}\n\nTranscript so far:\n{transcript}"
     payload = {
         "exercise_id": exercise.id,
         "consumer_id": getattr(consumer, "pk", None) or getattr(consumer, "user_id", None),
@@ -87,6 +116,7 @@ def test_pre_exercise_prompt(exercise, consumer, *, run_dry_run: bool = False) -
             "start_button_label": resolved["start_button_label"],
         },
         "tokens": resolved["resolved_tokens"],
+        "prompt": prompt,
         "dry_run": None,
     }
 
@@ -100,14 +130,6 @@ def test_pre_exercise_prompt(exercise, consumer, *, run_dry_run: bool = False) -
     class OpeningMessage(BaseModel):
         text: str = Field(description="The assistant's opening check-in message")
 
-    prompt = (
-        "You are starting a pre-exercise check-in with a returning user. "
-        "Produce only the opening assistant message (no step progression).\n\n"
-        f"Description:\n{resolved['description']}\n\n"
-        f"Instruction:\n{resolved['instruction']}\n\n"
-        f"Goal:\n{resolved['goal']}\n\n"
-        f"User first name: {resolved['resolved_tokens'].get('user.first_name', '')}\n"
-    )
     result = AI.ask(prompt, OpeningMessage, temperature=0.4)
     payload["dry_run"] = {"opening_message": result.get("text")}
     return payload

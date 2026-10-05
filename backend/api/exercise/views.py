@@ -17,7 +17,7 @@ from .serializers import (
 )
 from .pre_exercise import test_pre_exercise_prompt
 from .pre_exercise_serializers import PreExerciseTestSerializer
-from .dry_run import dry_run_step
+from .dry_run import dry_run_step, step_fields_from_data
 from ..utils.authoring import authoring_warnings, lint_catalogue
 
 from ..utils.Permissions import (
@@ -126,16 +126,18 @@ class StepDryRun(SmartAPIView):
     role_permission = True
     model = Exercise
 
-    def post(self, request, id, step_id):
+    def post(self, request, id, step_id=None):
         if not self.has_role_permission("POST", Exercise):
             return self.get_permission_denied_response(request, "POST")
 
         exercise = Exercise.objects.filter(id=id).first()
         if exercise is None:
             return self.not_found()
-        step = exercise.steps.filter(id=step_id).first()
-        if step is None:
-            return self.not_found()
+        step = None
+        if step_id:
+            step = exercise.steps.filter(id=step_id).first()
+            if step is None:
+                return self.not_found()
 
         consumer_id = request.data.get("consumer_id") if isinstance(request.data, dict) else None
         if not consumer_id:
@@ -160,12 +162,20 @@ class StepDryRun(SmartAPIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        step_fields, order_error = step_fields_from_data(request.data)
+        if order_error:
+            return self.respond_with(
+                order_error,
+                key="order",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         transcript = None
         if isinstance(request.data, dict):
             transcript = request.data.get("transcript") or None
 
         try:
-            payload = dry_run_step(exercise, step, consumer, transcript)
+            payload = dry_run_step(exercise, step, consumer, transcript, step_fields)
         except Exception as exc:
             return self.respond_with(
                 f"Dry run failed: {exc}",
@@ -229,11 +239,24 @@ class TestPreExercisePrompt(SmartAPIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        validated = serializer.validated_data
+        overrides = {}
+        for field in (
+            "check_in_tone",
+            "check_in_instruction",
+            "check_in_goal",
+            "check_in_summary_prompt",
+        ):
+            if field in validated:
+                overrides[field] = "" if validated[field] is None else validated[field]
+
         try:
             payload = test_pre_exercise_prompt(
                 exercise,
                 consumer,
-                run_dry_run=serializer.validated_data.get("run_dry_run", False),
+                run_dry_run=validated.get("run_dry_run", False),
+                transcript=validated.get("transcript") or None,
+                overrides=overrides,
             )
         except Exception as exc:
             return self.respond_with(

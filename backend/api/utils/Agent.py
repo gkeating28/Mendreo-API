@@ -652,7 +652,7 @@ def update_session(session_ai_prompt, session):
         traceback.format_exc()
 
 
-def _prepare_prompt(session: Session) -> str:
+def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     cached = session.cached_prompt
     prompt_phase = _prompt_phase(session)
@@ -695,8 +695,15 @@ def _prepare_prompt(session: Session) -> str:
     exercise = session.exercise
 
     if exercise:
-        exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
-        live_steps_no = exercise.steps.count() or exercise.steps_no
+        if create_summary:
+            exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
+            summary_notes = exercise_summary.detailed or ""
+        else:
+            found = ExerciseSummary.objects.filter(consumer=consumer, exercise=exercise).first()
+            summary_notes = (found.detailed or "") if found else ""
+        live_steps_no = (
+            len(steps) if steps is not None else (exercise.steps.count() or exercise.steps_no)
+        )
         reference = resolve_tokens(exercise.reference_material or "", token_context)
         description = resolve_tokens(exercise.description or "", token_context)
 
@@ -712,7 +719,7 @@ def _prepare_prompt(session: Session) -> str:
                 "exercise_name": exercise.title,
                 "exercise_description": description,
                 "exercise_reference": reference,
-                "exercise_summary_notes": exercise_summary.detailed or "",
+                "exercise_summary_notes": summary_notes,
                 "form_answers": render_form_answers(session),
                 "pre_exercise_block": format_pre_exercise_prompt_block(
                     exercise, consumer, session=session
@@ -732,13 +739,13 @@ def _prepare_prompt(session: Session) -> str:
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(
-                    exercise, session, token_context, only_index
+                    exercise, session, token_context, only_index, steps=steps
                 )
                 exercise_steps = _step_already_started(step_no, live_steps_no) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
                 exercise_steps = _get_formatted_exercise_steps_text(
-                    exercise, token_context, only_index=only_index
+                    exercise, token_context, only_index=only_index, steps=steps
                 )
             exercise_extra = {
                 "exercise_id": exercise.id,
@@ -747,7 +754,7 @@ def _prepare_prompt(session: Session) -> str:
                 "exercise_name": exercise.title,
                 "exercise_description": description,
                 "exercise_reference": reference,
-                "exercise_summary_notes": exercise_summary.detailed or "",
+                "exercise_summary_notes": summary_notes,
                 "form_answers": render_form_answers(session),
                 "pre_exercise_block": "",
                 "completed_steps": completed_steps,
@@ -853,16 +860,16 @@ def _step_already_started(step_no: int, steps_no: int) -> str:
     )
 
 
-def _render_state_machine_steps(exercise, session, token_context, live_index) -> str:
+def _render_state_machine_steps(exercise, session, token_context, live_index, steps=None) -> str:
     """Live step in full. Every other step is a title outline."""
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
     statuses = _step_statuses(session)
     blocks = []
-    steps = list(exercise.steps.order_by("order"))
-    steps_no = len(steps)
-    for i, step in enumerate(steps):
+    ordered = list(steps) if steps is not None else list(exercise.steps.order_by("order"))
+    steps_no = len(ordered)
+    for i, step in enumerate(ordered):
         number = i + 1
         if i != live_index:
             blocks.append(
@@ -934,13 +941,14 @@ def _completed_steps_block(session) -> str:
     return "\n".join(parts)
 
 
-def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None):
+def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None, steps=None):
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
-    steps_no = exercise.steps.count()
-    steps = ""
-    for i, step in enumerate(exercise.steps.order_by("order")):
+    ordered = list(steps) if steps is not None else list(exercise.steps.order_by("order"))
+    steps_no = len(ordered)
+    rendered = ""
+    for i, step in enumerate(ordered):
         if only_index is not None and i != only_index:
             continue
         completion_criteria = resolve_tokens(step.done_when or "", context)
@@ -978,14 +986,14 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=
                 "(good morning / good afternoon / good evening / goodnight). "
                 "The app shows the summary page after they confirm."
             )
-        steps += Constants.PROMPT_STEP.format(
+        rendered += Constants.PROMPT_STEP.format(
             step_title=step.title,
             step_description=description,
             step_instructions=instructions,
             step_completion_criteria=completion_criteria,
             step_completion_prompt=step.completion_prompt or "",
         )
-    return steps
+    return rendered
 
 
 def _published_exercises_prompt_block() -> str:
