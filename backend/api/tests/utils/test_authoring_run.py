@@ -26,7 +26,7 @@ from ...setting.models import Setting
 from ...step.models import Step
 from ...summary.models import Summary
 from ...utils import Constants, DateUtils
-from ...utils.Agent import ExerciseStateResponse
+from ...utils.Agent import ExerciseStateResponse, _prepare_prompt
 from ...utils.authoring_run import (
     AuthoringDeleteRefused,
     delete_authoring_run,
@@ -36,7 +36,7 @@ from ...utils.authoring_run import (
 from ...utils.form_answers import record_onboarding_knowledge, save_form_answer
 from ...utils.prompt_blocks import render_session_context
 from ...utils.risk import apply_turn_risk
-from ...utils.SessionStateMachine import _confirm
+from ...utils.SessionStateMachine import _confirm, opening_turn
 from ...utils.session_close import close_idle_sessions
 from ..TestCase import TestCase
 from ..utils.BaseTest import BaseTest
@@ -699,6 +699,69 @@ class AuthoringSnapshotTests(AuthoringRunTestCase):
         self.assertFalse(Session.all_objects.filter(authoring_test=True).exists())
         exercise.refresh_from_db()
         self.assertEqual(exercise.completions_no, 4)
+
+    def test_prompt_uses_the_source_summary_and_last_run(self):
+        exercise = self._draft()
+        step = exercise.steps.order_by("order").first()
+        step.instructions = "Ask about {{last_run.check_in_summary}}"
+        step.save(update_fields=["instructions", "updated_at"])
+        ExerciseSummary.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            detailed="SOURCE SUMMARY MARKER",
+        )
+        Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=True,
+            completed_at=timezone.now(),
+            pre_exercise_prompt_summary="LAST RUN MARKER",
+            current_step_no=2,
+            state=Constants.SESSION_STATE_COMPLETED,
+        )
+        real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=False,
+            current_step_no=1,
+            total_steps_no=exercise.steps.count(),
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        snapshot = write_authoring_snapshot(exercise, {})
+        flagged = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=snapshot,
+            authoring_test=True,
+            completed=False,
+            current_step_no=1,
+            total_steps_no=snapshot.steps.count(),
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        summaries_before = ExerciseSummary.objects.count()
+
+        test_prompt = _prepare_prompt(flagged)
+        real_prompt = _prepare_prompt(real)
+
+        self.assertIn("SOURCE SUMMARY MARKER", test_prompt)
+        self.assertIn("LAST RUN MARKER", test_prompt)
+        self.assertIn("SOURCE SUMMARY MARKER", real_prompt)
+        self.assertIn("LAST RUN MARKER", real_prompt)
+        self.assertFalse(ExerciseSummary.objects.filter(exercise=snapshot).exists())
+        self.assertEqual(ExerciseSummary.objects.count(), summaries_before)
+
+    def test_opening_line_matches_a_real_start(self):
+        exercise = self._draft()
+        response = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            {"consumer_id": self.consumer_one.user_id},
+            self.admin_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        hidden = self.model.call_args.kwargs["consumer_message"].text
+        self.assertEqual(hidden, opening_turn(1))
+        self.assertNotIn("greet me and explain", hidden)
 
 
 def _agent_turn(text, goal=False, asks=False, reasoning="test"):

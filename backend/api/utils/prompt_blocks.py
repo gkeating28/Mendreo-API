@@ -282,9 +282,11 @@ def build_token_context(consumer, exercise=None, session=None) -> dict[str, str]
 
     last = None
     if exercise is not None:
+        # A snapshot's last run is the source exercise's last completed run.
+        lookup_id = getattr(exercise, "authoring_source_id", None) or exercise.id
         last_qs = Session.objects.filter(
             consumer=consumer,
-            exercise=exercise,
+            exercise_id=lookup_id,
             completed=True,
             authoring_test=False,
         )

@@ -703,7 +703,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
             summary_notes = exercise_summary.detailed or ""
         else:
-            found = ExerciseSummary.objects.filter(consumer=consumer, exercise=exercise).first()
+            # A snapshot has no summary of its own. Read the source exercise's.
+            summary_exercise_id = getattr(exercise, "authoring_source_id", None) or exercise.id
+            found = ExerciseSummary.objects.filter(
+                consumer=consumer, exercise_id=summary_exercise_id
+            ).first()
             summary_notes = (found.detailed or "") if found else ""
         live_steps_no = (
             len(steps) if steps is not None else (exercise.steps.count() or exercise.steps_no)
