@@ -8,6 +8,7 @@ from django.utils import timezone
 from rest_framework import status
 
 from ...exercise.models import Exercise
+from ...tag.models import Tag
 from ...exercise.pre_exercise import has_completed_exercise_before
 from ...exercise_summary.models import ExerciseSummary
 from ...knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
@@ -23,6 +24,8 @@ from ...run.services import completed_runs_queryset
 from ...session.models import Session, SessionMetric
 from ...summary.models import Summary
 from ...utils import Constants, DateUtils
+from ...utils.Agent import ExerciseStateResponse
+from ...utils.authoring_run import write_authoring_snapshot
 from ...utils.form_answers import record_onboarding_knowledge, save_form_answer
 from ...utils.prompt_blocks import render_session_context
 from ...utils.risk import apply_turn_risk
@@ -362,3 +365,327 @@ class AuthoringRunIsolationTests(BaseTest):
         self.assertFalse(
             Exercise.objects.filter(id=hidden.id, authoring_snapshot=False).exists()
         )
+
+
+_OPENING_TEXT = "Welcome. This is the test opening."
+
+
+def _fake_opening(session, consumer_message):
+    """Stand in for the greeting model. The greeting does not call AI.ask."""
+    return (
+        ExerciseStateResponse(
+            text=_OPENING_TEXT,
+            reasoning="test",
+            suggested_responses=[],
+            question_kind="none",
+            step_goal_met=False,
+            asks_readiness=False,
+            risk_level="none",
+        ),
+        {},
+        None,
+        None,
+    )
+
+
+class AuthoringSnapshotTests(BaseTest):
+    """Snapshot writer and POST /exercises/<id>/test-runs."""
+
+    def endpoint(self):
+        return "exercises"
+
+    def setUp(self):
+        # BaseTest creates a consumer, which sends mail. The greeting calls
+        # the agent, not AI.ask, so both are patched before any of that runs.
+        self._resend = patch("resend.Emails.send", return_value={"id": "email_test"})
+        self._ask = patch("api.utils.AI.AI.ask", side_effect=_ai_payload)
+        self._model = patch("api.utils.Agent.get_response", side_effect=_fake_opening)
+        self.resend = self._resend.start()
+        self._ask.start()
+        self._model.start()
+        try:
+            super().setUp()
+        except Exception:
+            self._stop_patches()
+            raise
+
+    def tearDown(self):
+        self._stop_patches()
+        super().tearDown()
+
+    def _stop_patches(self):
+        self._model.stop()
+        self._ask.stop()
+        self._resend.stop()
+
+    def _draft(self):
+        exercise = General.create_exercise()
+        exercise.status = Constants.EXERCISE_STATUS_DRAFT
+        exercise.completions_no = 4
+        exercise.featured = True
+        exercise.check_in_enabled = True
+        exercise.save(
+            update_fields=[
+                "status",
+                "completions_no",
+                "featured",
+                "check_in_enabled",
+                "updated_at",
+            ]
+        )
+        return exercise
+
+    def test_unsaved_step_instruction_is_what_the_snapshot_stores(self):
+        exercise = self._draft()
+        step = exercise.steps.order_by("order").first()
+        saved_instructions = step.instructions
+        saved_step_count = exercise.steps.count()
+        marker = "UNSAVED-STEP-INSTRUCTION"
+        tag = Tag.objects.create(name="Focus")
+        tag_count = Tag.objects.count()
+        question = Question.objects.create(
+            exercise=exercise,
+            type=Constants.QUESTION_TYPE_TEXT,
+            title="Saved question",
+            order=0,
+        )
+        paused = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=False,
+            abandoned=False,
+            current_step_no=2,
+            total_steps_no=saved_step_count,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+
+        snapshot = write_authoring_snapshot(
+            exercise,
+            {
+                "check_in_enabled": True,
+                "featured": True,
+                "steps": [
+                    {"id": step.id, "instructions": marker, "tags": [tag.id]},
+                    {
+                        "title": "Unsaved extra step",
+                        "description": "Not in the saved exercise",
+                        "instructions": "Do the new step",
+                        "completion_label": "Done",
+                    },
+                ],
+                "questions": [{"id": question.id, "title": "Unsaved question"}],
+            },
+        )
+
+        exercise.refresh_from_db()
+        step.refresh_from_db()
+        question.refresh_from_db()
+        paused.refresh_from_db()
+
+        self.assertTrue(snapshot.authoring_snapshot)
+        self.assertNotEqual(snapshot.id, exercise.id)
+        self.assertEqual(snapshot.status, Constants.EXERCISE_STATUS_DRAFT)
+        self.assertEqual(snapshot.completions_no, 0)
+        self.assertFalse(snapshot.featured)
+        self.assertFalse(snapshot.check_in_enabled)
+        self.assertEqual(exercise.completions_no, 4)
+        self.assertTrue(exercise.featured)
+        self.assertEqual(exercise.status, Constants.EXERCISE_STATUS_DRAFT)
+        self.assertEqual(step.instructions, saved_instructions)
+        self.assertEqual(exercise.steps.count(), saved_step_count)
+        self.assertEqual(snapshot.steps.count(), 2)
+        self.assertEqual(snapshot.sessions.count(), 0)
+        self.assertFalse(paused.abandoned)
+
+        copied = snapshot.steps.get(instructions=marker)
+        self.assertEqual(copied.title, step.title)
+        self.assertNotEqual(copied.id, step.id)
+        self.assertEqual(list(copied.tags.values_list("id", flat=True)), [tag.id])
+        self.assertEqual(Tag.objects.count(), tag_count)
+        self.assertTrue(snapshot.steps.filter(title="Unsaved extra step").exists())
+
+        copied_question = snapshot.questions.get()
+        self.assertEqual(copied_question.title, "Unsaved question")
+        self.assertNotEqual(copied_question.id, question.id)
+        self.assertIsNone(copied_question.session_id)
+        self.assertEqual(question.title, "Saved question")
+
+        full = write_authoring_snapshot(exercise, {})
+        self.assertEqual(
+            list(full.steps.order_by("order").values_list("title", flat=True)),
+            list(exercise.steps.order_by("order").values_list("title", flat=True)),
+        )
+        source_question_ids = set(exercise.questions.values_list("id", flat=True))
+        copied_question_ids = set(full.questions.values_list("id", flat=True))
+        self.assertTrue(copied_question_ids)
+        self.assertTrue(copied_question_ids.isdisjoint(source_question_ids))
+        self.assertFalse(full.questions.filter(session__isnull=False).exists())
+
+    def test_admin_starts_a_flagged_run_at_step_one(self):
+        exercise = self._draft()
+        step = exercise.steps.order_by("order").first()
+        marker = "UNSAVED-STEP-INSTRUCTION"
+        question = Question.objects.create(
+            exercise=exercise,
+            type=Constants.QUESTION_TYPE_TEXT,
+            title="Saved question",
+            order=0,
+        )
+        paused = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=False,
+            abandoned=False,
+            current_step_no=2,
+            total_steps_no=exercise.steps.count(),
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        metrics_before = SessionMetric.objects.count()
+        knowledge_before = KnowledgeEntry.objects.count()
+        summaries_before = Summary.objects.count()
+        exercise_summaries_before = ExerciseSummary.objects.count()
+        mail_before = self.resend.call_count
+
+        with patch("api.tasks.notify_trust_and_safety.delay_on_commit") as notify:
+            response = self._post(
+                f"/exercises/{exercise.id}/test-runs",
+                {
+                    "consumer_id": self.consumer_one.user_id,
+                    "check_in_enabled": True,
+                    "steps": [
+                        {"id": step.id, "instructions": marker},
+                        {
+                            "title": "Unsaved extra step",
+                            "description": "Not in the saved exercise",
+                            "instructions": "Do the new step",
+                            "completion_label": "Done",
+                        },
+                    ],
+                    "questions": [{"id": question.id, "title": "Unsaved question"}],
+                },
+                self.admin_one_access_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["opening_message"], _OPENING_TEXT)
+        self.assertEqual(response.json["session_state"]["phase"], Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(response.json["session_state"]["current_step_no"], 1)
+        self.assertFalse(notify.called)
+        self.assertEqual(self.resend.call_count, mail_before)
+
+        started = Session.objects.get(id=response.json["session_id"])
+        snapshot = Exercise.objects.get(id=response.json["snapshot_exercise_id"])
+        self.assertTrue(started.authoring_test)
+        self.assertEqual(started.exercise_id, snapshot.id)
+        self.assertNotEqual(started.exercise_id, exercise.id)
+        self.assertEqual(started.current_step_no, 1)
+        self.assertEqual(started.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(started.in_pre_exercise_phase())
+        self.assertFalse(started.questions.exists())
+        self.assertEqual(snapshot.steps.order_by("order").first().instructions, marker)
+        self.assertTrue(snapshot.questions.filter(session__isnull=True).exists())
+        self.assertFalse(snapshot.check_in_enabled)
+
+        paused.refresh_from_db()
+        exercise.refresh_from_db()
+        self.assertFalse(paused.abandoned)
+        self.assertEqual(paused.exercise_id, exercise.id)
+        self.assertEqual(paused.current_step_no, 2)
+        self.assertFalse(paused.authoring_test)
+        self.assertEqual(exercise.completions_no, 4)
+        self.assertEqual(SessionMetric.objects.count(), metrics_before)
+        self.assertEqual(KnowledgeEntry.objects.count(), knowledge_before)
+        self.assertEqual(Summary.objects.count(), summaries_before)
+        self.assertEqual(ExerciseSummary.objects.count(), exercise_summaries_before)
+
+    def test_consumer_and_admin_without_pii_are_rejected(self):
+        exercise = self._draft()
+        completions = exercise.completions_no
+        metrics_before = SessionMetric.objects.count()
+        knowledge_before = KnowledgeEntry.objects.count()
+        summaries_before = Summary.objects.count()
+        mail_before = self.resend.call_count
+        body = {"consumer_id": self.consumer_one.user_id, "steps": []}
+
+        consumer_response = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            body,
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(consumer_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        missing_exercise = self._post(
+            "/exercises/exrcs_missing/test-runs",
+            body,
+            self.admin_one_access_token,
+        )
+        self.assertEqual(missing_exercise.status_code, status.HTTP_404_NOT_FOUND)
+
+        unknown_consumer = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            {"consumer_id": "user_missing"},
+            self.admin_one_access_token,
+        )
+        self.assertEqual(unknown_consumer.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(unknown_consumer.json["consumer_id"], "Consumer not found")
+
+        missing_consumer = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            {},
+            self.admin_one_access_token,
+        )
+        self.assertEqual(missing_consumer.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            missing_consumer.json["consumer_id"],
+            "Choose a user to dry-run against.",
+        )
+
+        self.admin_one.role.permissions.pii = []
+        self.admin_one.role.permissions.save()
+        hidden = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            body,
+            self.admin_one_access_token,
+        )
+        self.assertEqual(hidden.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            hidden.json["detail"],
+            "Personal Information view permission is required to test against a user",
+        )
+
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.completions_no, completions)
+        self.assertFalse(Session.objects.filter(authoring_test=True).exists())
+        self.assertFalse(Exercise.objects.filter(authoring_snapshot=True).exists())
+        self.assertEqual(SessionMetric.objects.count(), metrics_before)
+        self.assertEqual(KnowledgeEntry.objects.count(), knowledge_before)
+        self.assertEqual(Summary.objects.count(), summaries_before)
+        self.assertEqual(self.resend.call_count, mail_before)
+
+    def test_model_failure_returns_502_and_keeps_nothing(self):
+        exercise = self._draft()
+        # The real greeting catches a provider error and returns a stock
+        # sentence. Stop the stand-in so this test hits that path.
+        self._model.stop()
+        try:
+            with patch(
+                "api.utils.Agent.run_with_failover",
+                side_effect=RuntimeError("model down"),
+            ):
+                response = self._post(
+                    f"/exercises/{exercise.id}/test-runs",
+                    {"consumer_id": self.consumer_one.user_id},
+                    self.admin_one_access_token,
+                )
+        finally:
+            self._model.start()
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY, response.json)
+        self.assertIn("model down", response.json["detail"])
+        self.assertFalse(Exercise.all_objects.filter(authoring_snapshot=True).exists())
+        self.assertFalse(Session.all_objects.filter(authoring_test=True).exists())
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.completions_no, 4)
+
