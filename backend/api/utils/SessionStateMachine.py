@@ -428,9 +428,10 @@ def _confirm(
                 "updated_at",
             ]
         )
-        Exercise.all_objects.filter(id=session.exercise_id).update(
-            completions_no=F("completions_no") + 1
-        )
+        if not session.authoring_test:
+            Exercise.all_objects.filter(id=session.exercise_id).update(
+                completions_no=F("completions_no") + 1
+            )
     else:
         session.state = Constants.SESSION_STATE_STEP_ACTIVE
         session.current_step_no = step_no + 1

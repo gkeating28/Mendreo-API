@@ -141,9 +141,9 @@ def render_session_context(consumer, session) -> str:
     now = DateUtils.local_now()
     start, end = DateUtils.progress_day_bounds(now.date(), now.date())
 
-    total = Session.objects.filter(consumer=consumer).count()
-    earlier_today = Session.objects.filter(
-        consumer=consumer,
+    real = Session.objects.filter(consumer=consumer, authoring_test=False)
+    total = real.count()
+    earlier_today = real.filter(
         created_at__gte=start,
         created_at__lt=end,
     ).exclude(pk=session.pk)
@@ -152,8 +152,7 @@ def render_session_context(consumer, session) -> str:
     first_today = not earlier_today.exists()
 
     previous = (
-        Session.objects.filter(consumer=consumer)
-        .exclude(pk=session.pk)
+        real.exclude(pk=session.pk)
         .order_by("-created_at")
         .only("created_at")
         .first()
@@ -167,8 +166,7 @@ def render_session_context(consumer, session) -> str:
         days_since_text = "none"
 
     last_completed = (
-        Session.objects.filter(
-            consumer=consumer,
+        real.filter(
             exercise__isnull=False,
             completed=True,
         )
@@ -185,8 +183,7 @@ def render_session_context(consumer, session) -> str:
 
     week_start = start - datetime.timedelta(days=7)
     recent = (
-        Session.objects.filter(
-            consumer=consumer,
+        real.filter(
             exercise__isnull=False,
             completed=True,
             completed_at__gte=week_start,
@@ -202,8 +199,7 @@ def render_session_context(consumer, session) -> str:
     recent_text = ", ".join(recent_names) if recent_names else "none"
 
     completed_today = (
-        Session.objects.filter(
-            consumer=consumer,
+        real.filter(
             completed_at__gte=start,
             completed_at__lt=end,
         )
@@ -290,6 +286,7 @@ def build_token_context(consumer, exercise=None, session=None) -> dict[str, str]
             consumer=consumer,
             exercise=exercise,
             completed=True,
+            authoring_test=False,
         )
         if session is not None:
             last_qs = last_qs.exclude(pk=session.pk)
@@ -415,7 +412,8 @@ def render_exercise_catalogue() -> str:
 
     blocks = ""
     exercises = Exercise.objects.filter(
-        status=Constants.EXERCISE_STATUS_PUBLISHED
+        status=Constants.EXERCISE_STATUS_PUBLISHED,
+        authoring_snapshot=False,
     ).prefetch_related("steps__result_field")
     for exercise in exercises:
         use_when = (exercise.use_when or "").strip() or (exercise.description or "")

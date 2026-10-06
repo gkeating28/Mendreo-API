@@ -47,7 +47,7 @@ class ListCreate(SmartPaginationAPIView):
     def add_filters(self, query, request):
         # Serializers render nested steps/questions; prefetch to avoid N+1
         # (each extra query costs a full round-trip to the remote database).
-        query = query.prefetch_related("steps", "questions")
+        query = query.prefetch_related("steps", "questions").filter(authoring_snapshot=False)
 
         status_ = QueryParams.get_str(request, "status")
         search_term = QueryParams.get_str(request, "search_term")
@@ -97,6 +97,9 @@ class Detail(SmartDetailAPIView):
     admin_detail_serializer = ExerciseAdminDetailSerializer
 
     deletable = True
+
+    def add_filters(self, queryset, request):
+        return queryset.filter(authoring_snapshot=False)
 
     def has_permission(self, request, method):
         if method == "GET":

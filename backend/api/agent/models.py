@@ -125,7 +125,10 @@ class Agent(SmartModel):
                 )
             usage = {}
         elif user_message.text in [Constants.MESSAGE_TEXT_EXERCISE]:
-            exercise = Exercise.objects.filter(status=Constants.EXERCISE_STATUS_PUBLISHED).first()
+            exercise = Exercise.objects.filter(
+                status=Constants.EXERCISE_STATUS_PUBLISHED,
+                authoring_snapshot=False,
+            ).first()
 
             text = "Exercise Returned" if exercise else "No Matching Exercises Found"
             if session.exercise:

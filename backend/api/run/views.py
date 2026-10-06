@@ -80,6 +80,7 @@ class RunReflection(SmartAPIView):
             completed=True,
             abandoned=False,
             exercise__isnull=False,
+            authoring_test=False,
         ).first()
         if not session:
             return Response({"detail": "Run not found."}, status=status.HTTP_404_NOT_FOUND)

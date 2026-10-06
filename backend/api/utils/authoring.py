@@ -104,7 +104,9 @@ def lint_catalogue() -> dict:
     from ..exercise.models import Exercise
 
     findings = []
-    for exercise in Exercise.objects.prefetch_related("steps__tags", "questions").order_by("order"):
+    for exercise in Exercise.objects.filter(authoring_snapshot=False).prefetch_related(
+        "steps__tags", "questions"
+    ).order_by("order"):
         findings.extend(_exercise_findings(exercise))
         findings.extend(authoring_warnings(exercise))
     counts = {"error": 0, "warning": 0}

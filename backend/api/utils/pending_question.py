@@ -69,6 +69,7 @@ def _trigger_met(question, session, session_count: int) -> bool:
             consumer=session.consumer,
             exercise_id=session.exercise_id,
             completed=True,
+            authoring_test=False,
         ).exists()
     return False
 

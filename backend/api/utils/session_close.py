@@ -25,6 +25,9 @@ def close_session(session, reason: str):
         update_fields=["closed_at", "close_reason", "completed", "completed_at", "updated_at"]
     )
 
+    if getattr(session, "authoring_test", False):
+        return session
+
     try:
         _rate(session)
     except Exception:
@@ -52,7 +55,11 @@ def close_idle_sessions() -> int:
     minutes = Setting.get_session_inactivity_minutes()
     cutoff = timezone.now() - timedelta(minutes=minutes)
     closed = 0
-    queryset = Session.objects.filter(closed_at__isnull=True, last_message__created_at__lt=cutoff)
+    queryset = Session.objects.filter(
+        closed_at__isnull=True,
+        authoring_test=False,
+        last_message__created_at__lt=cutoff,
+    )
     for session in queryset.iterator():
         close_session(session, "inactivity")
         closed += 1

@@ -440,7 +440,11 @@ def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
         Args:
             exercise_id: ID of  the exercise
         """
-        exercise = Exercise.objects.filter(id=exercise_id, status=Constants.EXERCISE_STATUS_PUBLISHED).first()
+        exercise = Exercise.objects.filter(
+            id=exercise_id,
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+            authoring_snapshot=False,
+        ).first()
 
         if exercise:
             ctx.deps.matched_exercise = exercise
@@ -695,7 +699,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     exercise = session.exercise
 
     if exercise:
-        if create_summary:
+        if create_summary and not session.authoring_test:
             exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
             summary_notes = exercise_summary.detailed or ""
         else:

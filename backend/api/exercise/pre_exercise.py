@@ -26,6 +26,7 @@ def has_completed_exercise_before(consumer, exercise) -> bool:
         consumer=consumer,
         exercise=exercise,
         completed=True,
+        authoring_test=False,
     ).exists()
 
 

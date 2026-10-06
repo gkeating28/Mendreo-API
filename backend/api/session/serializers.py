@@ -67,6 +67,7 @@ class SessionListSerializer(ListModelSerializer):
             "prompt_version",
             "live_risk_level",
             "history_summary",
+            "authoring_test",
         ]
     
     @classmethod

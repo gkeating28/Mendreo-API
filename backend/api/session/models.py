@@ -40,6 +40,10 @@ class Session(SmartModel):
     # Keep the row and its answers; do not surface it as in_progress.
     abandoned = models.BooleanField(default=False)
 
+    # Exercise-builder preview. Stays off the consumer's history and does not
+    # write knowledge, metrics, summaries, completions, or safety mail.
+    authoring_test = models.BooleanField(default=False, db_index=True)
+
     current_step_no = models.PositiveIntegerField(null=True)
 
     cached_prompt = models.TextField(null=True)
@@ -133,6 +137,7 @@ class Session(SmartModel):
                 exercise=exercise,
                 completed=False,
                 abandoned=False,
+                authoring_test=False,
             )
             if force_new:
                 paused.update(abandoned=True)
@@ -147,6 +152,7 @@ class Session(SmartModel):
                 exercise=None,
                 created_at__gte=start,
                 created_at__lt=end,
+                authoring_test=False,
             ).order_by("-created_at").first()
 
             if session and not session.completed:

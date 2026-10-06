@@ -32,6 +32,8 @@ class Exercise(SmartModel):
     use_when = models.TextField(null=True, blank=True)
     reference_material = models.TextField(null=True, blank=True)
     featured = models.BooleanField(default=False)
+    # Hidden copy for an exercise-builder test run. Not a catalogue exercise.
+    authoring_snapshot = models.BooleanField(default=False, db_index=True)
     framework_label = models.CharField(max_length=255, null=True, blank=True)
     sensitive_fields_allowed = models.JSONField(default=list, blank=True)
     depth_check = models.BooleanField(default=False)

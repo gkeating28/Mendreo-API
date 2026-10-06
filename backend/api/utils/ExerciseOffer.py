@@ -107,6 +107,7 @@ def unresolved_offer_message(session: Session) -> Message | None:
         started = Session.objects.filter(
             consumer_id=session.consumer_id,
             exercise_id=offer.exercise_id,
+            authoring_test=False,
         ).exists()
         if not started:
             return offer
@@ -121,6 +122,7 @@ def latest_exercise_session(consumer_id, exercise_id) -> Session | None:
             consumer_id=consumer_id,
             exercise_id=exercise_id,
             abandoned=False,
+            authoring_test=False,
         )
         .order_by("-created_at")
         .only("id", "completed", "current_step_no", "total_steps_no")
