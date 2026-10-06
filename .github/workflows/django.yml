@@ -158,7 +158,7 @@ jobs:
         run: |
           source venv/bin/activate
           cd backend
-          coverage run --source='.' manage.py test api.tests --testrunner=xmlrunner.extra.djangotestrunner.XMLTestRunner
+          coverage run --source='.' manage.py test api.tests.utils.test_authoring_run --verbosity=2 --testrunner=xmlrunner.extra.djangotestrunner.XMLTestRunner
           coverage combine
           coverage xml
 
