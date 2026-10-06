@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import copy
 
-from django.db import transaction
+from django.db import router, transaction
+from django.db.models import Q
 
 from ..exercise.models import Exercise
 from ..question.models import Question
@@ -77,6 +78,11 @@ def delete_authoring_run(session):
     session_id = session.id
     snapshot_id = snapshot.id
     with transaction.atomic():
+        # Direct SQL, so the collector never walks the dropped Attribute table.
+        # Only this snapshot's questions and questions on this test session.
+        Question.all_objects.filter(
+            Q(exercise_id=snapshot_id) | Q(session_id=session_id)
+        )._raw_delete(using=router.db_for_write(Question))
         Session.objects.filter(pk=session_id, authoring_test=True).update(
             last_message=None,
             last_asset=None,
@@ -137,6 +143,11 @@ def sweep_authoring_test_runs() -> int:
         sessions__isnull=True,
     )
     for snapshot in list(orphans):
+        if not Exercise.objects.filter(pk=snapshot.pk, authoring_snapshot=True).exists():
+            continue
+        Question.all_objects.filter(exercise_id=snapshot.pk)._raw_delete(
+            using=router.db_for_write(Question)
+        )
         Exercise.objects.filter(pk=snapshot.pk, authoring_snapshot=True).hard_delete()
         deleted += 1
     return deleted

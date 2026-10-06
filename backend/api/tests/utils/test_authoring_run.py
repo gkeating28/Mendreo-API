@@ -1104,7 +1104,7 @@ class AuthoringCleanupTests(AuthoringRunTestCase):
         summaries_before = Summary.objects.count()
         exercise_summaries_before = ExerciseSummary.objects.count()
 
-        response = self._delete(
+        response = TestCase._delete(
             f"/exercises/{exercise.id}/test-runs/{session_id}",
             self.admin_one_access_token,
         )
@@ -1212,6 +1212,32 @@ class AuthoringCleanupTests(AuthoringRunTestCase):
         self.assertIsNone(real.closed_at)
         self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
 
+    def test_sweeper_deletes_an_orphan_snapshot_and_leaves_a_real_exercise(self):
+        exercise = self._draft()
+        real_question_ids = set(exercise.questions.values_list("id", flat=True))
+        self.assertTrue(real_question_ids)
+        orphan = write_authoring_snapshot(exercise, {})
+        self.assertTrue(orphan.authoring_snapshot)
+        self.assertFalse(Session.objects.filter(exercise=orphan).exists())
+        orphan_question_ids = list(orphan.questions.values_list("id", flat=True))
+        self.assertTrue(orphan_question_ids)
+        Exercise.objects.filter(pk=orphan.pk).update(
+            updated_at=timezone.now() - timedelta(hours=3)
+        )
+
+        setting = Setting.get_or_create_authoring_test_idle_minutes()
+        setting.value = str(Constants.AUTHORING_TEST_IDLE_MINUTES)
+        setting.save()
+        sweep_authoring_test_runs()
+
+        self.assertFalse(Exercise.all_objects.filter(id=orphan.id).exists())
+        self.assertFalse(Question.all_objects.filter(id__in=orphan_question_ids).exists())
+        self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
+        self.assertEqual(
+            set(Question.objects.filter(exercise=exercise).values_list("id", flat=True)),
+            real_question_ids,
+        )
+
     def test_non_test_session_is_refused(self):
         exercise = self._draft()
         real = Session.objects.create(
@@ -1226,7 +1252,7 @@ class AuthoringCleanupTests(AuthoringRunTestCase):
         self.assertTrue(Session.objects.filter(id=real.id).exists())
         self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
 
-        response = self._delete(
+        response = TestCase._delete(
             f"/exercises/{exercise.id}/test-runs/{real.id}",
             self.admin_one_access_token,
         )
