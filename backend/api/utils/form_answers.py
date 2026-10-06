@@ -28,7 +28,7 @@ def save_form_answer(session, key: str, value: str) -> None:
     session.save(update_fields=["form_answers", "cached_prompt", "updated_at"])
 
     number = decimal_answer(value)
-    if number is None:
+    if number is None or getattr(session, "authoring_test", False):
         return
 
     SessionMetric.objects.create(
@@ -73,6 +73,9 @@ def record_onboarding_knowledge(attribute) -> None:
     from ..knowledge.services import write_knowledge_entry
 
     question = attribute.question
+    session = getattr(question, "session", None)
+    if session is not None and getattr(session, "authoring_test", False):
+        return
     field = getattr(question, "knowledge_field", None)
     if field is None:
         return

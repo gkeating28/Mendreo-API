@@ -37,7 +37,7 @@ class List(SmartPaginationAPIView):
     def add_filters(self, queryset, request):
         # Internal AI-state blobs (100s of KB per session) — never serialized
         # for lists, so skip pulling them from the remote database entirely.
-        queryset = queryset.defer("cached_prompt")
+        queryset = queryset.defer("cached_prompt").filter(authoring_test=False)
 
         exercise_id = QueryParams.get_str(request, "exercise_id")
         consumer_id = QueryParams.get_str(request, "consumer_id")
@@ -110,7 +110,8 @@ class Today(SmartAPIView):
             created_at__gte=start,
             created_at__lt=end,
             consumer=consumer,
-            exercise__isnull=True
+            exercise__isnull=True,
+            authoring_test=False,
         )
         queryset = SessionDetailSerializer.optimise(queryset)
         session = queryset.first()

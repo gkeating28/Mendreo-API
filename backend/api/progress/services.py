@@ -333,6 +333,7 @@ def get_exercises_progress(consumer, start: date, end: date) -> dict:
             consumer=consumer,
             completed=True,
             exercise__isnull=False,
+            authoring_test=False,
         )
         .filter(_activity_in_range(range_start, range_end))
         .annotate(
@@ -496,6 +497,7 @@ def _activity_days_exercise(consumer) -> set[date]:
         consumer=consumer,
         completed=True,
         exercise__isnull=False,
+        authoring_test=False,
     ).values_list("completed_at", "updated_at", "created_at"):
         days.add(DateUtils.progress_calendar_date(completed_at or updated_at or created_at))
     return days
@@ -617,7 +619,11 @@ def _recent_transcript_excerpt(consumer, days: int = 7) -> str:
 
     start = timezone.now() - timedelta(days=days)
     messages = (
-        Message.objects.filter(session__consumer=consumer, created_at__gte=start)
+        Message.objects.filter(
+            session__consumer=consumer,
+            session__authoring_test=False,
+            created_at__gte=start,
+        )
         .select_related("sender", "session")
         .order_by("created_at")[:200]
     )

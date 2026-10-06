@@ -122,6 +122,11 @@ def _step_transcript(session, step) -> str:
 
 
 def _write_result_knowledge(session, step, value: str, confidence: float) -> None:
+    from .authoring_run import is_authoring_test
+
+    if is_authoring_test(session):
+        return
+
     from ..knowledge.services import write_knowledge_entry
     from ..setting.models import Setting
 

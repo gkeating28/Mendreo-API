@@ -22,7 +22,10 @@ class Metrics(SmartAPIView):
 
     def get(self, request):
         consumer = self.get_consumer_from_request()
-        queryset = SessionMetric.objects.filter(consumer=consumer).order_by("recorded_at")
+        queryset = SessionMetric.objects.filter(
+            consumer=consumer,
+            session__authoring_test=False,
+        ).order_by("recorded_at")
 
         keys_param = (request.query_params.get("keys") or "").strip()
         keys = []

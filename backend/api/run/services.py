@@ -344,6 +344,7 @@ def completed_runs_queryset(consumer, include_messages=False):
             completed=True,
             abandoned=False,
             exercise__isnull=False,
+            authoring_test=False,
         )
         .select_related("exercise")
         .prefetch_related(*prefetches)

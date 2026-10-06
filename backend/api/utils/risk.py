@@ -62,7 +62,7 @@ def apply_turn_risk(session, user_text: str, model_level) -> dict | None:
     if level in (Constants.LIVE_RISK_LEVEL_MODERATE, Constants.LIVE_RISK_LEVEL_HIGH):
         resources = resources_payload(session)
 
-    if level == Constants.LIVE_RISK_LEVEL_HIGH:
+    if level == Constants.LIVE_RISK_LEVEL_HIGH and not getattr(session, "authoring_test", False):
         from ..tasks import notify_trust_and_safety
 
         notify_trust_and_safety.delay_on_commit(session.id)
