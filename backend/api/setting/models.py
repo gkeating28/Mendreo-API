@@ -235,6 +235,25 @@ class Setting(SmartModel):
             return Constants.SESSION_INACTIVITY_MINUTES
 
     @staticmethod
+    def get_or_create_authoring_test_idle_minutes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_AUTHORING_TEST_IDLE_MINUTES,
+            defaults={"value": str(Constants.AUTHORING_TEST_IDLE_MINUTES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_authoring_test_idle_minutes() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_AUTHORING_TEST_IDLE_MINUTES,
+            Setting.get_or_create_authoring_test_idle_minutes,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.AUTHORING_TEST_IDLE_MINUTES
+
+    @staticmethod
     def get_or_create_thin_answer_min_words():
         setting, _ = Setting.objects.get_or_create(
             key=Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS,

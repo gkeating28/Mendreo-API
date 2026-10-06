@@ -44,6 +44,16 @@ class Session(SmartModel):
     # write knowledge, metrics, summaries, completions, or safety mail.
     authoring_test = models.BooleanField(default=False, db_index=True)
 
+    # Admin who started this preview. The session's consumer is the person
+    # being tested against, which is a different account.
+    authoring_admin = models.ForeignKey(
+        "api.Admin",
+        related_name="authoring_test_runs",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
     current_step_no = models.PositiveIntegerField(null=True)
 
     cached_prompt = models.TextField(null=True)

@@ -211,7 +211,11 @@ class TestRun(SmartAPIView):
             )
 
         from ..consumer.models import Consumer
-        from ..utils.authoring_run import start_authoring_test, write_authoring_snapshot
+        from ..utils.authoring_run import (
+            delete_admin_authoring_runs,
+            start_authoring_test,
+            write_authoring_snapshot,
+        )
 
         consumer = Consumer.objects.select_related("user").filter(pk=consumer_id).first()
         if consumer is None:
@@ -226,10 +230,14 @@ class TestRun(SmartAPIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        admin = self.get_admin_from_request()
         try:
             with transaction.atomic():
+                delete_admin_authoring_runs(admin, exercise)
                 snapshot = write_authoring_snapshot(exercise, request.data)
-                session, opening, session_state = start_authoring_test(snapshot, consumer)
+                session, opening, session_state = start_authoring_test(
+                    snapshot, consumer, admin
+                )
         except ValueError as exc:
             return self.respond_with(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
@@ -306,6 +314,48 @@ class TestRunMessage(SmartAPIView):
                 status_code=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class TestRunDetail(SmartAPIView):
+    """Hard-delete one flagged test run and its snapshot."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def delete(self, request, id, run_id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "DELETE")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        from ..session.models import Session
+        from ..utils.authoring_run import AuthoringDeleteRefused, delete_authoring_run
+
+        session = (
+            Session.objects.select_related("exercise")
+            .filter(
+                id=run_id,
+                authoring_test=True,
+                exercise__authoring_snapshot=True,
+                exercise__authoring_source_id=exercise.id,
+            )
+            .first()
+        )
+        if session is None:
+            return self.not_found()
+        try:
+            delete_authoring_run(session)
+        except AuthoringDeleteRefused:
+            return self.not_found()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DuplicateExerciseView(SmartAPIView):
