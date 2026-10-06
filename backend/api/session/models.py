@@ -121,6 +121,10 @@ class Session(SmartModel):
         self.completed = True
         if self.completed_at is None:
             self.completed_at = when or timezone.now()
+        # A test run is finished once the session is marked. close_session
+        # rates, extracts, and writes the exercise summary.
+        if getattr(self, "authoring_test", False):
+            return self
         from ..utils.session_close import close_session
 
         close_session(self, "completed")

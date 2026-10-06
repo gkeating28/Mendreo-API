@@ -9,6 +9,7 @@ from .views import (
     ExerciseLint,
     StepDryRun,
     TestRun,
+    TestRunMessage,
 )
 
 urlpatterns = [
@@ -17,6 +18,7 @@ urlpatterns = [
     path('/lint', ExerciseLint.as_view()),
     path('/<str:id>/dry-run', StepDryRun.as_view()),
     path('/<str:id>/test-runs', TestRun.as_view()),
+    path('/<str:id>/test-runs/<str:run_id>/messages', TestRunMessage.as_view()),
     path('/<str:id>/steps/<str:step_id>/dry-run', StepDryRun.as_view()),
     path('/<str:id>/test-pre-exercise-prompt', TestPreExercisePrompt.as_view()),
     path('/<str:id>/tokens', ExerciseTokens.as_view()),

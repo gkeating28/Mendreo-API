@@ -249,6 +249,65 @@ class TestRun(SmartAPIView):
         )
 
 
+class TestRunMessage(SmartAPIView):
+    """Send one turn on a flagged test run. Runs in this request."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id, run_id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        from ..session.models import Session
+        from ..utils.authoring_run import from_suggested_response, post_authoring_message
+
+        session = (
+            Session.objects.select_related("exercise", "consumer")
+            .filter(
+                id=run_id,
+                authoring_test=True,
+                exercise__authoring_snapshot=True,
+                exercise__authoring_source_id=exercise.id,
+            )
+            .first()
+        )
+        if session is None:
+            return self.not_found()
+        if session.completed or session.state == Constants.SESSION_STATE_COMPLETED:
+            return self.respond_with(
+                "Not allowed to send messages for past sessions.",
+                key="session",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                payload = post_authoring_message(
+                    session,
+                    request.data.get("text") if isinstance(request.data, dict) else "",
+                    from_suggested_response(request.data),
+                )
+        except ValueError as exc:
+            return self.respond_with(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_with(
+                f"Dry run failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+
 class DuplicateExerciseView(SmartAPIView):
     permission_classes = [IsAdminPermission]
 

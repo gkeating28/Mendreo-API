@@ -56,6 +56,86 @@ def is_authoring_test(session) -> bool:
     return bool(getattr(session, "authoring_test", False))
 
 
+def model_failure_reason(message) -> str | None:
+    """Why this agent reply is a failed model call, or None when it is real."""
+    if message is None:
+        return "no opening message"
+    if (getattr(message, "text", None) or "") == _MODEL_FAILURE_TEXT:
+        return getattr(message, "reasoning", None) or "model failed"
+    return None
+
+
+def post_authoring_message(session, text, from_suggested_response):
+    """Run one test-run turn in this request.
+
+    Ready, not yet, and finish chips use consume_chip. A typed reply while
+    waiting for readiness uses the same confirm-or-retreat rule as the app.
+    Everything else goes through the agent, in process.
+    """
+    from ..agent.models import Agent
+    from ..message.models import Message
+    from ..participant.models import Participant
+    from .MessageFlow import apply_agent_response
+    from .SessionStateMachine import (
+        build_session_state,
+        consume_chip,
+        handle_typed_while_awaiting,
+    )
+
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Enter a message.")
+
+    sender = Participant.objects.filter(
+        session=session,
+        consumer=session.consumer,
+    ).first()
+    if sender is None:
+        raise ValueError("This test run has no participant.")
+
+    user_message = Message.objects.create(session=session, sender=sender, text=text)
+    outcome = consume_chip(user_message, from_suggested_response)
+    if outcome is None and not from_suggested_response:
+        outcome = handle_typed_while_awaiting(user_message)
+
+    if outcome is not None:
+        reply = outcome.message
+        state = outcome.session_state
+    else:
+        agent_message = Agent.get_response(user_message=user_message, session=session)
+        reason = model_failure_reason(agent_message)
+        if reason:
+            raise RuntimeError(reason)
+        reply = apply_agent_response(user_message, agent_message)
+        session.refresh_from_db()
+        state = build_session_state(session)
+
+    return {
+        "text": reply.text,
+        "suggested_responses": list(reply.suggested_responses or []),
+        "suggested_responses_kind": reply.suggested_responses_kind,
+        "question_kind": reply.question_kind,
+        "resources": reply.resources,
+        "session_state": state,
+        "user_message": {
+            "id": user_message.id,
+            "text": user_message.text,
+            "created_at": user_message.created_at,
+        },
+    }
+
+
+def from_suggested_response(data) -> bool:
+    if not isinstance(data, dict):
+        return False
+    value = data.get("from_suggested_response")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)
+
+
 def write_authoring_snapshot(source, payload):
     """Copy the form onto a new hidden exercise.
 
@@ -114,10 +194,9 @@ def start_authoring_test(snapshot, consumer):
     SessionStep.create(session, snapshot)
     Participant.create_participants(session)
     opening = _run_session_greeting(session)
-    if opening is None:
-        raise RuntimeError("no opening message")
-    if (opening.text or "") == _MODEL_FAILURE_TEXT:
-        raise RuntimeError(opening.reasoning or "model failed")
+    reason = model_failure_reason(opening)
+    if reason:
+        raise RuntimeError(reason)
     session.refresh_from_db()
     return session, opening, build_session_state(session)
 
@@ -144,6 +223,7 @@ def _exercise_attrs(source, payload, step_specs):
         "reference_material": value("reference_material"),
         "featured": False,
         "authoring_snapshot": True,
+        "authoring_source": source,
         "framework_label": value("framework_label"),
         "sensitive_fields_allowed": value("sensitive_fields_allowed", []),
         "depth_check": bool(value("depth_check", False)),
