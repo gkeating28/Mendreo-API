@@ -246,7 +246,7 @@ def valid_exercise_flexible_thinking():
         "icon_background_color": "tan",
         "status": Constants.EXERCISE_STATUS_PUBLISHED,
         "use_when": "When a difficult automatic thought is circling.",
-        "pre_exercise_enabled": False,
+        "check_in_enabled": False,
         "description": """
             I. Guiding Principles
                 - Tone: Adopt a peer-to-peer, supportive, and determined tone. Your persona is like a knowledgeable and caring coach. It should be consistent with the home screen bot.
