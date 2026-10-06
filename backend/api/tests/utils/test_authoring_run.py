@@ -21,11 +21,18 @@ from ...progress.services import (
 )
 from ...question.models import Question
 from ...run.services import completed_runs_queryset
-from ...session.models import Session, SessionMetric
+from ...session.models import Session, SessionMetric, SessionStep
+from ...setting.models import Setting
+from ...step.models import Step
 from ...summary.models import Summary
 from ...utils import Constants, DateUtils
 from ...utils.Agent import ExerciseStateResponse
-from ...utils.authoring_run import write_authoring_snapshot
+from ...utils.authoring_run import (
+    AuthoringDeleteRefused,
+    delete_authoring_run,
+    sweep_authoring_test_runs,
+    write_authoring_snapshot,
+)
 from ...utils.form_answers import record_onboarding_knowledge, save_form_answer
 from ...utils.prompt_blocks import render_session_context
 from ...utils.risk import apply_turn_risk
@@ -34,6 +41,7 @@ from ...utils.session_close import close_idle_sessions
 from ..TestCase import TestCase
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
+from ..utils.manager.Auth import create_admin, get_access_token
 
 
 def _ai_payload(*_args, **_kwargs):
@@ -1018,5 +1026,222 @@ class AuthoringMessageTests(AuthoringRunTestCase):
         session = Session.objects.get(id=session_id)
         self.assertEqual(session.current_step_no, 1)
         self.assertFalse(session.completed)
+
+
+class AuthoringCleanupTests(AuthoringRunTestCase):
+    """Delete, replace, and the idle sweeper only touch flagged runs."""
+
+    def _start(self, exercise, token=None):
+        response = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            {"consumer_id": self.consumer_one.user_id},
+            token or self.admin_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        return response
+
+    def _flagged(self, exercise, when=None, with_message=True):
+        snapshot = write_authoring_snapshot(exercise, {})
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=snapshot,
+            authoring_test=True,
+            authoring_admin=self.admin_one,
+            current_step_no=1,
+            total_steps_no=snapshot.steps.count(),
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        if with_message:
+            _user, agent = Participant.create_participants(session)
+            message = Message.objects.create(session=session, sender=agent, text="hi")
+            if when is not None:
+                Message.objects.filter(id=message.id).update(created_at=when)
+            session.last_message = message
+            session.save(update_fields=["last_message", "updated_at"])
+        elif when is not None:
+            Session.objects.filter(id=session.id).update(updated_at=when)
+        return session, snapshot
+
+    def test_delete_removes_the_run_and_leaves_real_data(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        snapshot_id = started.json["snapshot_exercise_id"]
+        self.assertTrue(Message.objects.filter(session_id=session_id).exists())
+        self.assertTrue(SessionStep.objects.filter(session_id=session_id).exists())
+        self.assertTrue(Participant.objects.filter(session_id=session_id).exists())
+        self.assertTrue(Step.objects.filter(exercise_id=snapshot_id).exists())
+
+        real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            current_step_no=1,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        field = KnowledgeField.objects.create(
+            key=f"kept_{exercise.id}",
+            label="Kept",
+            category="Worry",
+            active=True,
+        )
+        entry = KnowledgeEntry.objects.create(
+            consumer=self.consumer_one,
+            field=field,
+            value="kept",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_EXERCISE,
+            session_id=session_id,
+        )
+        metric = SessionMetric.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            session=real,
+            key="mood",
+            value=1,
+            source=Constants.SESSION_METRIC_SOURCE_FORM,
+            recorded_at=timezone.now(),
+        )
+        summaries_before = Summary.objects.count()
+        exercise_summaries_before = ExerciseSummary.objects.count()
+
+        response = self._delete(
+            f"/exercises/{exercise.id}/test-runs/{session_id}",
+            self.admin_one_access_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Session.all_objects.filter(id=session_id).exists())
+        self.assertFalse(Message.all_objects.filter(session_id=session_id).exists())
+        self.assertFalse(SessionStep.all_objects.filter(session_id=session_id).exists())
+        self.assertFalse(Participant.all_objects.filter(session_id=session_id).exists())
+        self.assertFalse(Question.all_objects.filter(exercise_id=snapshot_id).exists())
+        self.assertFalse(Step.all_objects.filter(exercise_id=snapshot_id).exists())
+        self.assertFalse(Exercise.all_objects.filter(id=snapshot_id).exists())
+
+        self.assertTrue(Session.objects.filter(id=real.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.completions_no, 4)
+        entry.refresh_from_db()
+        self.assertEqual(entry.value, "kept")
+        self.assertIsNone(entry.session_id)
+        self.assertTrue(SessionMetric.objects.filter(id=metric.id).exists())
+        self.assertEqual(Summary.objects.count(), summaries_before)
+        self.assertEqual(ExerciseSummary.objects.count(), exercise_summaries_before)
+
+    def test_starting_a_run_replaces_that_admins_previous_run(self):
+        exercise = self._draft()
+        first = self._start(exercise)
+        first_id = first.json["session_id"]
+
+        self._model.stop()
+        try:
+            with patch("api.utils.Agent.get_response", side_effect=RuntimeError("model down")):
+                failed = self._post(
+                    f"/exercises/{exercise.id}/test-runs",
+                    {"consumer_id": self.consumer_one.user_id},
+                    self.admin_one_access_token,
+                )
+        finally:
+            self._model.start()
+        self.assertEqual(failed.status_code, status.HTTP_502_BAD_GATEWAY, failed.json)
+        self.assertTrue(Session.objects.filter(id=first_id).exists())
+
+        other = create_admin(email="authoring-other@example.com")
+        other_token = get_access_token(other.user)
+        theirs = self._start(exercise, token=other_token)
+        second = self._start(exercise)
+
+        self.assertFalse(Session.all_objects.filter(id=first_id).exists())
+        self.assertFalse(
+            Exercise.all_objects.filter(id=first.json["snapshot_exercise_id"]).exists()
+        )
+        self.assertTrue(Session.objects.filter(id=theirs.json["session_id"]).exists())
+        self.assertTrue(Session.objects.filter(id=second.json["session_id"]).exists())
+        self.assertEqual(
+            list(
+                Session.objects.filter(
+                    authoring_test=True,
+                    authoring_admin=self.admin_one,
+                ).values_list("id", flat=True)
+            ),
+            [second.json["session_id"]],
+        )
+
+    def test_sweeper_deletes_an_old_run_and_leaves_a_recent_one(self):
+        exercise = self._draft()
+        old_at = timezone.now() - timedelta(hours=3)
+        old_session, old_snapshot = self._flagged(exercise, when=old_at)
+        recent_session, recent_snapshot = self._flagged(exercise)
+        quiet_session, quiet_snapshot = self._flagged(exercise, when=old_at, with_message=False)
+        real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            current_step_no=1,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        _user, agent = Participant.create_participants(real)
+        real_message = Message.objects.create(session=real, sender=agent, text="real")
+        Message.objects.filter(id=real_message.id).update(created_at=old_at)
+        real.last_message = real_message
+        real.save(update_fields=["last_message", "updated_at"])
+
+        setting = Setting.get_or_create_authoring_test_idle_minutes()
+        setting.value = "10000"
+        setting.save()
+        with patch("api.utils.session_close.close_session") as close:
+            self.assertEqual(sweep_authoring_test_runs(), 0)
+        self.assertFalse(close.called)
+        self.assertTrue(Session.objects.filter(id=old_session.id).exists())
+        self.assertTrue(Session.objects.filter(id=recent_session.id).exists())
+
+        setting.value = str(Constants.AUTHORING_TEST_IDLE_MINUTES)
+        setting.save()
+        with patch("api.utils.session_close.close_session") as close:
+            deleted = sweep_authoring_test_runs()
+        self.assertFalse(close.called)
+        self.assertGreaterEqual(deleted, 2)
+        self.assertFalse(Session.all_objects.filter(id=old_session.id).exists())
+        self.assertFalse(Exercise.all_objects.filter(id=old_snapshot.id).exists())
+        self.assertFalse(Session.all_objects.filter(id=quiet_session.id).exists())
+        self.assertFalse(Exercise.all_objects.filter(id=quiet_snapshot.id).exists())
+        self.assertTrue(Session.objects.filter(id=recent_session.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=recent_snapshot.id).exists())
+        real.refresh_from_db()
+        self.assertIsNone(real.closed_at)
+        self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
+
+    def test_non_test_session_is_refused(self):
+        exercise = self._draft()
+        real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            current_step_no=1,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        with self.assertRaises(AuthoringDeleteRefused):
+            delete_authoring_run(real)
+        self.assertTrue(Session.objects.filter(id=real.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
+
+        response = self._delete(
+            f"/exercises/{exercise.id}/test-runs/{real.id}",
+            self.admin_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        flagged_on_real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=True,
+            current_step_no=1,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        with self.assertRaises(AuthoringDeleteRefused):
+            delete_authoring_run(flagged_on_real)
+        self.assertTrue(Session.objects.filter(id=flagged_on_real.id).exists())
+        self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
 
 

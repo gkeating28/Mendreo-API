@@ -52,8 +52,94 @@ _QUESTION_DEFAULTS = {
 }
 
 
+class AuthoringDeleteRefused(Exception):
+    """The row is not a test run or a snapshot, so it stays."""
+
+
 def is_authoring_test(session) -> bool:
     return bool(getattr(session, "authoring_test", False))
+
+
+def delete_authoring_run(session):
+    """Hard-delete one test run and its snapshot.
+
+    Refuses a real session or a real exercise. Knowledge rows that point
+    at the session are left in place.
+    """
+    from ..session.models import Session
+
+    if not getattr(session, "authoring_test", False):
+        raise AuthoringDeleteRefused("Not a test run.")
+    snapshot = getattr(session, "exercise", None)
+    if snapshot is None or not getattr(snapshot, "authoring_snapshot", False):
+        raise AuthoringDeleteRefused("Not a snapshot.")
+
+    session_id = session.id
+    snapshot_id = snapshot.id
+    with transaction.atomic():
+        Session.objects.filter(pk=session_id, authoring_test=True).update(
+            last_message=None,
+            last_asset=None,
+        )
+        deleted, _ = Session.objects.filter(pk=session_id, authoring_test=True).hard_delete()
+        if not deleted:
+            raise AuthoringDeleteRefused("Not a test run.")
+        Exercise.objects.filter(pk=snapshot_id, authoring_snapshot=True).hard_delete()
+
+
+def delete_admin_authoring_runs(admin, exercise):
+    """Remove this admin's earlier test runs of this exercise."""
+    from ..session.models import Session
+
+    if admin is None or exercise is None:
+        return
+    previous = list(
+        Session.objects.filter(
+            authoring_test=True,
+            authoring_admin=admin,
+            exercise__authoring_snapshot=True,
+            exercise__authoring_source_id=exercise.id,
+        ).select_related("exercise")
+    )
+    for session in previous:
+        delete_authoring_run(session)
+
+
+def sweep_authoring_test_runs() -> int:
+    """Hard-delete flagged runs that have been idle past the setting.
+
+    Does not call close_session. A real session is not in this query.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Q
+    from django.utils import timezone
+
+    from ..session.models import Session
+    from ..setting.models import Setting
+
+    minutes = Setting.get_authoring_test_idle_minutes()
+    cutoff = timezone.now() - timedelta(minutes=minutes)
+    idle = Session.objects.filter(authoring_test=True).filter(
+        Q(last_message__created_at__lt=cutoff)
+        | Q(last_message__isnull=True, updated_at__lt=cutoff)
+    ).select_related("exercise")
+    deleted = 0
+    for session in list(idle):
+        try:
+            delete_authoring_run(session)
+        except AuthoringDeleteRefused:
+            continue
+        deleted += 1
+    orphans = Exercise.objects.filter(
+        authoring_snapshot=True,
+        updated_at__lt=cutoff,
+        sessions__isnull=True,
+    )
+    for snapshot in list(orphans):
+        Exercise.objects.filter(pk=snapshot.pk, authoring_snapshot=True).hard_delete()
+        deleted += 1
+    return deleted
 
 
 def model_failure_reason(message) -> str | None:
@@ -166,7 +252,7 @@ def write_authoring_snapshot(source, payload):
     return snapshot
 
 
-def start_authoring_test(snapshot, consumer):
+def start_authoring_test(snapshot, consumer, admin=None):
     """Open a flagged session on the snapshot, at step 1.
 
     Creates the session directly. Session.get_or_create would abandon
@@ -185,6 +271,7 @@ def start_authoring_test(snapshot, consumer):
         consumer=consumer,
         exercise=snapshot,
         authoring_test=True,
+        authoring_admin=admin,
         completed=False,
         abandoned=False,
         current_step_no=1,
