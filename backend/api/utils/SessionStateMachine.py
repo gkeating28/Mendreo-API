@@ -446,10 +446,22 @@ def _confirm(
                 "updated_at",
             ]
         )
-        greeting = request_session_greeting(
-            session,
-            synthetic_text=opening_turn(step_no + 1),
-        )
+        if getattr(session, "authoring_test", False):
+            from .AIWorkerClient import _run_session_greeting
+            from .authoring_run import model_failure_reason
+
+            greeting = _run_session_greeting(
+                session,
+                synthetic_text=opening_turn(step_no + 1),
+            )
+            reason = model_failure_reason(greeting)
+            if reason:
+                raise RuntimeError(reason)
+        else:
+            greeting = request_session_greeting(
+                session,
+                synthetic_text=opening_turn(step_no + 1),
+            )
 
     card = {"title": title, "label": label or ""}
     display = greeting or user_message

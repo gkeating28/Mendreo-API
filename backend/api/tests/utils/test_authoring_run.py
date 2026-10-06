@@ -388,9 +388,7 @@ def _fake_opening(session, consumer_message):
     )
 
 
-class AuthoringSnapshotTests(BaseTest):
-    """Snapshot writer and POST /exercises/<id>/test-runs."""
-
+class AuthoringRunTestCase(BaseTest):
     def endpoint(self):
         return "exercises"
 
@@ -402,7 +400,7 @@ class AuthoringSnapshotTests(BaseTest):
         self._model = patch("api.utils.Agent.get_response", side_effect=_fake_opening)
         self.resend = self._resend.start()
         self._ask.start()
-        self._model.start()
+        self.model = self._model.start()
         try:
             super().setUp()
         except Exception:
@@ -434,6 +432,10 @@ class AuthoringSnapshotTests(BaseTest):
             ]
         )
         return exercise
+
+
+class AuthoringSnapshotTests(AuthoringRunTestCase):
+    """Snapshot writer and POST /exercises/<id>/test-runs."""
 
     def test_unsaved_step_instruction_is_what_the_snapshot_stores(self):
         exercise = self._draft()
@@ -484,6 +486,7 @@ class AuthoringSnapshotTests(BaseTest):
         paused.refresh_from_db()
 
         self.assertTrue(snapshot.authoring_snapshot)
+        self.assertEqual(snapshot.authoring_source_id, exercise.id)
         self.assertNotEqual(snapshot.id, exercise.id)
         self.assertEqual(snapshot.status, Constants.EXERCISE_STATUS_DRAFT)
         self.assertEqual(snapshot.completions_no, 0)
@@ -688,4 +691,332 @@ class AuthoringSnapshotTests(BaseTest):
         self.assertFalse(Session.all_objects.filter(authoring_test=True).exists())
         exercise.refresh_from_db()
         self.assertEqual(exercise.completions_no, 4)
+
+
+def _agent_turn(text, goal=False, asks=False, reasoning="test"):
+    return ExerciseStateResponse(
+        text=text,
+        reasoning=reasoning,
+        suggested_responses=[],
+        question_kind="none",
+        step_goal_met=goal,
+        asks_readiness=asks,
+        risk_level="none",
+    )
+
+
+def _script(turns):
+    pending = list(turns)
+
+    def _fake(session, consumer_message):
+        if not pending:
+            raise AssertionError("The model was called more times than the script allows.")
+        return (pending.pop(0), {}, None, None)
+
+    return _fake
+
+
+class AuthoringMessageTests(AuthoringRunTestCase):
+    """POST /exercises/<id>/test-runs/<run_id>/messages."""
+
+    def _start(self, exercise, steps=None):
+        body = {"consumer_id": self.consumer_one.user_id}
+        if steps is not None:
+            body["steps"] = steps
+        response = self._post(
+            f"/exercises/{exercise.id}/test-runs",
+            body,
+            self.admin_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        return response
+
+    def _message(self, exercise, session_id, text, from_suggested_response=False, token=None):
+        body = {"text": text}
+        if from_suggested_response:
+            body["from_suggested_response"] = True
+        return self._post(
+            f"/exercises/{exercise.id}/test-runs/{session_id}/messages",
+            body,
+            token or self.admin_one_access_token,
+        )
+
+    def _awaiting(self, session_id, finish=False):
+        session = Session.objects.get(id=session_id)
+        session.state = Constants.SESSION_STATE_AWAITING_READY
+        session.save(update_fields=["state", "updated_at"])
+        message = session.last_message
+        if finish:
+            message.suggested_responses = [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET]
+            message.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FINISH
+        else:
+            message.suggested_responses = [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET]
+            message.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_READY
+        message.question_kind = Constants.QUESTION_KIND_READINESS
+        message.save(
+            update_fields=[
+                "suggested_responses",
+                "suggested_responses_kind",
+                "question_kind",
+                "updated_at",
+            ]
+        )
+        return session
+
+    def test_typed_reply_stays_on_the_step(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+
+        with patch(
+            "api.utils.Agent.get_response",
+            side_effect=_script([_agent_turn("Tell me the thought.")]),
+        ):
+            response = self._message(exercise, session_id, "I keep thinking I will fail.")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["text"], "Tell me the thought.")
+        self.assertEqual(response.json["suggested_responses"], [])
+        self.assertEqual(response.json["question_kind"], Constants.QUESTION_KIND_NONE)
+        self.assertEqual(response.json["user_message"]["text"], "I keep thinking I will fail.")
+        self.assertEqual(response.json["session_state"]["phase"], Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(response.json["session_state"]["current_step_no"], 1)
+        self.assertNotIn("completion_card", response.json["session_state"])
+
+        saved = Message.objects.get(id=response.json["user_message"]["id"])
+        self.assertEqual(saved.sender.consumer_id, self.consumer_one.user_id)
+        session = Session.objects.get(id=session_id)
+        self.assertFalse(session.completed)
+
+    def test_ready_chip_advances_a_step(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        self._awaiting(session_id)
+        before = self.model.call_count
+
+        with patch(
+            "api.utils.Agent.get_response",
+            side_effect=_script([_agent_turn("On to step 2.")]),
+        ) as chat:
+            response = self._message(
+                exercise,
+                session_id,
+                Constants.CHIP_READY_YES,
+                from_suggested_response=True,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(chat.call_count, 1)
+        self.assertEqual(self.model.call_count, before)
+        self.assertEqual(response.json["text"], "On to step 2.")
+        self.assertEqual(response.json["user_message"]["text"], Constants.CHIP_READY_YES)
+        self.assertEqual(response.json["session_state"]["phase"], Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(response.json["session_state"]["current_step_no"], 2)
+        self.assertIn("completion_card", response.json["session_state"])
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.completions_no, 4)
+
+    def test_finish_chip_completes_the_run(self):
+        exercise = self._draft()
+        step = exercise.steps.order_by("order").first()
+        started = self._start(exercise, steps=[{"id": step.id, "order": 0}])
+        session_id = started.json["session_id"]
+        self._awaiting(session_id, finish=True)
+        before = self.model.call_count
+
+        response = self._message(
+            exercise,
+            session_id,
+            Constants.CHIP_FINISH,
+            from_suggested_response=True,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(self.model.call_count, before)
+        self.assertEqual(response.json["user_message"]["text"], Constants.CHIP_FINISH)
+        self.assertEqual(response.json["session_state"]["phase"], Constants.SESSION_STATE_COMPLETED)
+        self.assertEqual(response.json["session_state"]["current_step_no"], 2)
+        self.assertIn("completion_card", response.json["session_state"])
+
+        session = Session.objects.get(id=session_id)
+        self.assertTrue(session.completed)
+        self.assertIsNotNone(session.completed_at)
+        self.assertIsNone(session.closed_at)
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.completions_no, 4)
+        snapshot = Exercise.objects.get(id=started.json["snapshot_exercise_id"])
+        self.assertEqual(snapshot.completions_no, 0)
+
+    def test_two_step_run_leaves_real_data_unchanged(self):
+        exercise = self._draft()
+        steps = list(exercise.steps.order_by("order")[:2])
+        metrics_before = SessionMetric.objects.count()
+        knowledge_before = KnowledgeEntry.objects.count()
+        summaries_before = Summary.objects.count()
+        exercise_summaries_before = ExerciseSummary.objects.count()
+        mail_before = self.resend.call_count
+        paused = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=False,
+            abandoned=False,
+            current_step_no=2,
+            total_steps_no=exercise.steps.count(),
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+
+        self._model.stop()
+        try:
+            with (
+                patch(
+                    "api.utils.Agent.get_response",
+                    side_effect=_script([
+                        _agent_turn("Welcome to step 1."),
+                        _agent_turn("Ready to move on?", goal=True, asks=True),
+                        _agent_turn("Here is step 2."),
+                        _agent_turn("Ready to finish?", goal=True, asks=True),
+                    ]),
+                ),
+                patch("api.tasks.notify_trust_and_safety.delay_on_commit") as notify,
+            ):
+                started = self._start(
+                    exercise,
+                    steps=[
+                        {"id": steps[0].id, "order": 0},
+                        {"id": steps[1].id, "order": 1},
+                    ],
+                )
+                session_id = started.json["session_id"]
+                first = self._message(exercise, session_id, "The thought is that I will fail.")
+                ready = self._message(
+                    exercise,
+                    session_id,
+                    Constants.CHIP_READY_YES,
+                    from_suggested_response=True,
+                )
+                second = self._message(exercise, session_id, "A fairer thought is that I can prepare.")
+                finished = self._message(
+                    exercise,
+                    session_id,
+                    Constants.CHIP_FINISH,
+                    from_suggested_response=True,
+                )
+        finally:
+            self._model.start()
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK, first.json)
+        self.assertEqual(first.json["session_state"]["phase"], Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(first.json["session_state"]["current_step_no"], 1)
+        self.assertEqual(first.json["session_state"]["pending_action"], "ready")
+
+        self.assertEqual(ready.status_code, status.HTTP_200_OK, ready.json)
+        self.assertEqual(ready.json["text"], "Here is step 2.")
+        self.assertEqual(ready.json["session_state"]["current_step_no"], 2)
+        self.assertEqual(ready.json["session_state"]["phase"], Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIn("completion_card", ready.json["session_state"])
+
+        self.assertEqual(second.status_code, status.HTTP_200_OK, second.json)
+        self.assertEqual(second.json["session_state"]["phase"], Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(second.json["session_state"]["pending_action"], "finish")
+
+        self.assertEqual(finished.status_code, status.HTTP_200_OK, finished.json)
+        self.assertEqual(finished.json["session_state"]["phase"], Constants.SESSION_STATE_COMPLETED)
+        self.assertEqual(finished.json["session_state"]["current_step_no"], 3)
+        self.assertIn("completion_card", finished.json["session_state"])
+        self.assertEqual(
+            [step["status"] for step in finished.json["session_state"]["steps"]],
+            ["completed", "completed"],
+        )
+        self.assertFalse(notify.called)
+
+        session = Session.objects.get(id=session_id)
+        self.assertTrue(session.completed)
+        self.assertIsNone(session.closed_at)
+        exercise.refresh_from_db()
+        paused.refresh_from_db()
+        self.assertEqual(exercise.completions_no, 4)
+        self.assertFalse(paused.abandoned)
+        self.assertEqual(paused.current_step_no, 2)
+        self.assertEqual(SessionMetric.objects.count(), metrics_before)
+        self.assertEqual(KnowledgeEntry.objects.count(), knowledge_before)
+        self.assertEqual(Summary.objects.count(), summaries_before)
+        self.assertEqual(ExerciseSummary.objects.count(), exercise_summaries_before)
+        self.assertEqual(self.resend.call_count, mail_before)
+        self.assertEqual(
+            Exercise.objects.get(id=started.json["snapshot_exercise_id"]).completions_no,
+            0,
+        )
+
+    def test_wrong_session_and_a_finished_run_are_rejected(self):
+        exercise = self._draft()
+        other = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        real = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            authoring_test=False,
+            completed=False,
+            current_step_no=1,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+
+        consumer = self._message(
+            exercise,
+            session_id,
+            "Hello",
+            token=self.consumer_one_access_token,
+        )
+        self.assertEqual(consumer.status_code, status.HTTP_403_FORBIDDEN)
+
+        missing = self._message(exercise, real.id, "Hello")
+        self.assertEqual(missing.status_code, status.HTTP_404_NOT_FOUND)
+
+        other_exercise = self._message(other, session_id, "Hello")
+        self.assertEqual(other_exercise.status_code, status.HTTP_404_NOT_FOUND)
+
+        empty = self._message(exercise, session_id, "  ")
+        self.assertEqual(empty.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(empty.json["detail"], "Enter a message.")
+
+        session = Session.objects.get(id=session_id)
+        session.completed = True
+        session.save(update_fields=["completed", "updated_at"])
+        again = self._message(exercise, session_id, "Hello again")
+        self.assertEqual(again.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            again.json["session"],
+            "Not allowed to send messages for past sessions.",
+        )
+
+    def test_message_model_failure_rolls_the_turn_back(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        before = Message.objects.filter(session_id=session_id).count()
+        sorry = _agent_turn(
+            "Sorry, I had an issue understanding your message, "
+            "can you repeat it or rephrase it for me please?",
+            reasoning="model down",
+        )
+
+        self._model.stop()
+        try:
+            with patch(
+                "api.utils.Agent.get_response",
+                return_value=(sorry, {}, None, None),
+            ):
+                response = self._message(exercise, session_id, "Hello")
+        finally:
+            self._model.start()
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY, response.json)
+        self.assertIn("model down", response.json["detail"])
+        self.assertEqual(Message.objects.filter(session_id=session_id).count(), before)
+        session = Session.objects.get(id=session_id)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.completed)
+
 
