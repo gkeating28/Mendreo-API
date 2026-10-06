@@ -187,6 +187,68 @@ class StepDryRun(SmartAPIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
+class TestRun(SmartAPIView):
+    """Start a flagged test run from the exercise form, including unsaved edits."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+
+        consumer_id = request.data.get("consumer_id") if isinstance(request.data, dict) else None
+        if not consumer_id:
+            return self.respond_with(
+                "Choose a user to dry-run against.",
+                key="consumer_id",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from ..consumer.models import Consumer
+        from ..utils.authoring_run import start_authoring_test, write_authoring_snapshot
+
+        consumer = Consumer.objects.select_related("user").filter(pk=consumer_id).first()
+        if consumer is None:
+            return self.respond_with(
+                "Consumer not found",
+                key="consumer_id",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            with transaction.atomic():
+                snapshot = write_authoring_snapshot(exercise, request.data)
+                session, opening, session_state = start_authoring_test(snapshot, consumer)
+        except ValueError as exc:
+            return self.respond_with(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_with(
+                f"Dry run failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "opening_message": opening.text,
+                "session_state": session_state,
+                "session_id": session.id,
+                "snapshot_exercise_id": snapshot.id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class DuplicateExerciseView(SmartAPIView):
     permission_classes = [IsAdminPermission]
 
