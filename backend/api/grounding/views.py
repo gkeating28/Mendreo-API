@@ -149,7 +149,7 @@ def _index_response(view, source: KnowledgeSource, *, published_now: bool):
         logging.getLogger(__name__).exception(
             "knowledge source %s was not indexed", source.id
         )
-        reason = str(error).splitlines()[0][:180] or "unknown error"
+        reason = str(error).splitlines()[0][:300] or "unknown error"
         message = f"Indexing failed: {reason}"
         if published_now:
             message = f"The source was published, but indexing failed: {reason}"
