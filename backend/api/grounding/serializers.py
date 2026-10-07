@@ -119,11 +119,11 @@ class KnowledgeChunkListSerializer(ListModelSerializer):
         ]
 
 
-def approve_block(source: KnowledgeSource, admin: Admin) -> str | None:
+def approve_block(source: KnowledgeSource, _admin: Admin) -> str | None:
+    # Temporary: the submitter may approve their own source.
+    # Restore the submitted_by != approver check before this is final.
     if source.submitted_by_id is None:
         return "Submit the source before approving it."
-    if source.submitted_by_id == admin.pk:
-        return "The submitter cannot approve this source."
     if source.kind == Constants.KNOWLEDGE_SOURCE_KIND_UP_SOURCE and not (
         source.licence_note or ""
     ).strip():

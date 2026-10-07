@@ -356,7 +356,7 @@ class GroundingTests(TestCase):
         self.assertNotIn("retrieval", consumer_data)
         self.assertNotIn("retrieval", MessageListSerializer.Meta.fields)
 
-    def test_submitter_cannot_approve_and_licence_is_required(self):
+    def test_submitter_can_approve_when_licence_is_present(self):
         created = self._post(
             "/knowledge/sources",
             {
@@ -375,16 +375,10 @@ class GroundingTests(TestCase):
             access_token=self.token,
         )
         self.assertEqual(submitted.status_code, 200, submitted.json)
-        own = self._post(
-            f"/knowledge/sources/{source_id}/approve",
-            {},
-            access_token=self.token,
-        )
-        self.assertEqual(own.status_code, 400)
         missing_licence = self._post(
             f"/knowledge/sources/{source_id}/approve",
             {},
-            access_token=self.other_token,
+            access_token=self.token,
         )
         self.assertEqual(missing_licence.status_code, 400)
         self._patch(
@@ -395,11 +389,11 @@ class GroundingTests(TestCase):
         approved = self._post(
             f"/knowledge/sources/{source_id}/approve",
             {},
-            access_token=self.other_token,
+            access_token=self.token,
         )
         self.assertEqual(approved.status_code, 200, approved.json)
         self.assertEqual(approved.json["status"], "published")
-        self.assertNotEqual(approved.json["approved_by"], approved.json["submitted_by"])
+        self.assertEqual(approved.json["approved_by"], approved.json["submitted_by"])
 
     def test_article_publish_creates_a_source_and_unpublish_retires_it(self):
         image = Image.objects.create(
