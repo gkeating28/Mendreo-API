@@ -56,13 +56,13 @@ def _owner(post):
 
 
 def _enqueue(source_id: str) -> None:
-    """Index the article in this request. A failure here must not block publish."""
+    """Queue indexing. A failure here must not block publish."""
     import logging
 
-    from .indexing import index_now
+    from .indexing import queue_index
 
     try:
-        index_now(source_id)
+        queue_index(source_id)
     except Exception:
         logging.getLogger(__name__).exception(
             "article source %s was not indexed", source_id

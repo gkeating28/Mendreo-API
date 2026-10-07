@@ -123,14 +123,20 @@ def run_eval(provider=None):
     name="index_knowledge_source",
     ignore_result=True,
     base=TransactionAwareTask,
-    soft_time_limit=300,
-    time_limit=360,
+    soft_time_limit=900,
+    time_limit=960,
 )
 def index_knowledge_source(source_id):
-    from .grounding.indexing import index_source
+    from .grounding.indexing import index_source, mark_index
 
     logger.info("Start > index_knowledge_source %s", source_id)
-    count = index_source(source_id)
+    mark_index(source_id, "running", "")
+    try:
+        count = index_source(source_id)
+    except Exception as exc:
+        mark_index(source_id, "failed", str(exc).splitlines()[0])
+        logger.exception("index_knowledge_source %s failed", source_id)
+        raise
     logger.info("End > index_knowledge_source %s chunks=%s", source_id, count)
     return count
 

@@ -21,6 +21,8 @@ class KnowledgeSource(SmartModel):
         default=Constants.KNOWLEDGE_SOURCE_STATUS_DRAFT,
     )
     version = models.PositiveIntegerField(default=1)
+    index_status = models.CharField(max_length=16, default="idle")
+    index_error = models.TextField(blank=True, default="")
 
     file = models.ForeignKey(
         "api.File",
