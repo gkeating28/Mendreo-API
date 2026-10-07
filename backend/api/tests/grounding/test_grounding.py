@@ -306,6 +306,19 @@ class GroundingTests(TestCase):
         self.assertIn("do not name the source document", enabled)
         self.assertIn("<REFERENCE>", enabled)
 
+    def test_settings_or_cache_failure_leaves_retrieval_off(self):
+        consumer = Auth.create_consumer()
+        session = Session.objects.create(consumer=consumer)
+        with patch(
+            "api.setting.models.Setting.get_ai_retrieval_enabled",
+            side_effect=ConnectionError("cache down"),
+        ), self.assertLogs("api.grounding.retrieval", level="ERROR") as logs:
+            enabled = stamp_retrieval_enabled(session)
+        self.assertFalse(enabled)
+        self.assertTrue(any("leaving retrieval off" in line for line in logs.output))
+        session.refresh_from_db()
+        self.assertFalse(session.cached_prompt_meta.get("retrieval_enabled"))
+
     def test_short_query_is_prefixed_and_high_risk_skips_search(self):
         consumer = Auth.create_consumer()
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")

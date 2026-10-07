@@ -27,11 +27,23 @@ def session_retrieval_enabled(session) -> bool:
 
 
 def stamp_retrieval_enabled(session) -> bool:
-    """Resolve the flag once, when the session starts."""
+    """Resolve the flag once, when the session starts.
+
+    A settings or cache failure is logged and retrieval stays off, so
+    session create still succeeds. ``Session.get_or_create`` calls this
+    too, which is how a new exercise run is stamped.
+    """
     from ..setting.models import Setting
 
     meta = dict(session.cached_prompt_meta or {})
-    enabled = Setting.get_ai_retrieval_enabled()
+    try:
+        enabled = bool(Setting.get_ai_retrieval_enabled())
+    except Exception:
+        logger.exception(
+            "retrieval flag lookup failed for session=%s; leaving retrieval off",
+            getattr(session, "id", None),
+        )
+        enabled = False
     meta["retrieval_enabled"] = enabled
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
