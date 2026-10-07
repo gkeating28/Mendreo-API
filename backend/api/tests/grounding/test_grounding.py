@@ -90,19 +90,47 @@ class EmbeddingModelTests(SimpleTestCase):
         sleep.assert_called_once()
         clear_embedder()
 
-    @patch("api.grounding.embeddings._google_embed")
-    def test_quota_errors_are_not_retried(self, embed):
+    @patch("api.grounding.embeddings.time.sleep")
+    @patch("api.grounding.embeddings._embed_client")
+    def test_a_per_minute_limit_is_retried(self, client_factory, sleep):
         from ...grounding.embeddings import clear_embedder, embed_texts
 
         clear_embedder()
-        embed.side_effect = RuntimeError(
+        limited = RuntimeError(
+            "429 RESOURCE_EXHAUSTED. Quota exceeded for requests per minute. Please retry in 20s."
+        )
+        ok = Mock(embeddings=[Mock(values=[0.2] * 768)])
+        client = Mock()
+        client.models.embed_content.side_effect = [limited, ok]
+        client_factory.return_value = client
+
+        vectors = embed_texts(["Avoidance keeps the cycle going."])
+
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(client.models.embed_content.call_count, 2)
+        sleep.assert_called()
+        clear_embedder()
+
+    @patch("api.grounding.embeddings.time.sleep")
+    @patch("api.grounding.embeddings._embed_client")
+    def test_a_billing_quota_error_keeps_googles_message(self, client_factory, sleep):
+        from ...grounding.embeddings import clear_embedder, embed_texts
+
+        clear_embedder()
+        client = Mock()
+        client.models.embed_content.side_effect = RuntimeError(
             "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': "
             "'You exceeded your current quota, please check your plan and billing details.'}}"
         )
+        client_factory.return_value = client
+
         with self.assertRaises(RuntimeError) as caught:
             embed_texts(["Avoidance"])
-        self.assertEqual(embed.call_count, 1)
-        self.assertIn("quota is used up", str(caught.exception))
+
+        self.assertEqual(client.models.embed_content.call_count, 1)
+        self.assertIn("billing details", str(caught.exception))
+        self.assertNotIn("enable billing", str(caught.exception).lower())
+        sleep.assert_not_called()
         clear_embedder()
 
 
