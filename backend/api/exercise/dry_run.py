@@ -105,6 +105,9 @@ def dry_run_step(exercise, step, consumer, transcript: str | None = None, step_f
             subject="Dry run",
         )
         SessionStep.create(session, exercise)
+        from ..grounding.retrieval import stamp_retrieval_enabled
+
+        stamp_retrieval_enabled(session)
         prompt = _prepare_prompt(session, steps=rows, create_summary=False)
         if transcript:
             prompt = f"{prompt}\n\nTranscript so far:\n{transcript}"

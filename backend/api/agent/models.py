@@ -209,6 +209,9 @@ class Agent(SmartModel):
         )
 
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
+        retrieval = getattr(session, "_pending_retrieval", None) or None
+        if hasattr(session, "_pending_retrieval"):
+            del session._pending_retrieval
         agent_message = Message.objects.create(
             usage=usage,
             asset=asset,
@@ -222,6 +225,7 @@ class Agent(SmartModel):
             question_kind=question_kind,
             probe_count=probe_count,
             resources=resources,
+            retrieval=retrieval,
         )
 
         if session.exercise_id:

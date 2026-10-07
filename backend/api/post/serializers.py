@@ -46,6 +46,11 @@ class PostCreateSerializer(CreateModelSerializer):
 
         return attrs
 
+    def post_create(self, model, nested_relations):
+        from ..grounding.posts import sync_post_source
+
+        sync_post_source(model)
+
 
 class PostEditSerializer(EditModelSerializer):
 
@@ -75,6 +80,11 @@ class PostEditSerializer(EditModelSerializer):
         attrs = field_validation(self, attrs)
 
         return attrs
+
+    def post_update(self, model, nested_relations):
+        from ..grounding.posts import sync_post_source
+
+        sync_post_source(model)
 
 
 class PostListSerializer(ListModelSerializer):

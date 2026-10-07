@@ -35,6 +35,20 @@ def run_eval(provider=None) -> dict:
     failed = 0
     details = []
     for case in EvalCase.objects.filter(active=True).order_by("name"):
+        if case.kind == Constants.EVAL_CASE_KIND_GROUNDING:
+            details.append(
+                {
+                    "id": case.id,
+                    "name": case.name,
+                    "kind": case.kind,
+                    "passed": None,
+                    "skipped": True,
+                    "observed": {
+                        "reason": "grounding cases are scored by the spike runner",
+                    },
+                }
+            )
+            continue
         outcome = _run_case(case, provider)
         details.append(outcome)
         if outcome["passed"]:

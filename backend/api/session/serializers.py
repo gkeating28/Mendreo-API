@@ -173,6 +173,9 @@ class SessionDetailSerializer(SessionListSerializer):
         if user is not None and getattr(user, "type", None) == Constants.USER_TYPE_ADMIN:
             data["prompt_version"] = instance.prompt_version_id
             data["cached_prompt_meta"] = instance.cached_prompt_meta
+            from ..grounding.retrieval import session_retrieval_summary
+
+            data["retrieval"] = session_retrieval_summary(instance)
         return data
 
     def get_exercise(self, session):

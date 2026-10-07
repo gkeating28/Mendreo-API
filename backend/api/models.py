@@ -10,6 +10,7 @@ from .ai_provider.models import AiProvider, AiProviderAuditLog
 from .question.models import Question  # noqa: F401
 from .consumer.models import Consumer  # noqa: F401
 from .knowledge.models import KnowledgeField, KnowledgeQuestion, KnowledgeEntry
+from .grounding.models import KnowledgeSource, KnowledgeChunk  # noqa: F401
 from .mood.models import MoodEntry  # noqa: F401
 from .progress.models import ScaleSubmission, UserObservation  # noqa: F401
 from .run.models import ExerciseReflection  # noqa: F401

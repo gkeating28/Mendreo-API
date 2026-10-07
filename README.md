@@ -79,7 +79,7 @@ cd backend
 ../.venv/bin/python manage.py test api.tests
 ```
 
-CI uses PostGIS Postgres and GitHub environment secrets (see `.github/workflows/django.yml`).
+CI uses Postgres 15 with pgvector and GitHub environment secrets (see `.github/workflows/django.yml`).
 
 ## Production deployment (hybrid)
 

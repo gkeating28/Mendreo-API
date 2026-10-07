@@ -177,6 +177,9 @@ class Session(SmartModel):
 
         create_kwargs["state"] = initial_state(exercise, run_pre_exercise)
         session = Session.objects.create(**create_kwargs)
+        from ..grounding.retrieval import stamp_retrieval_enabled
+
+        stamp_retrieval_enabled(session)
 
         if exercise:
             SessionStep.create(session, exercise)
@@ -213,6 +216,9 @@ class Session(SmartModel):
             exercise=None,
             completed=None,
         )
+        from ..grounding.retrieval import stamp_retrieval_enabled
+
+        stamp_retrieval_enabled(session)
         Participant.create_participants(session=session)
         from ..knowledge.followup import maybe_start_onboarding_followup
         maybe_start_onboarding_followup(session)

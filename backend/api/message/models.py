@@ -21,6 +21,7 @@ class Message(SmartModel):
     completion_label = models.TextField(null=True)
 
     usage = models.JSONField(null=True)
+    retrieval = models.JSONField(null=True, blank=True)
 
     resources = models.JSONField(null=True, blank=True)
     suggested_responses_kind = EnumField(
