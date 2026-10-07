@@ -1,12 +1,12 @@
 """Embedding and chunking locks.
 
-``text-embedding-004`` at 768 dimensions is provisional until the grounding
-spike records the model that separated relevant from irrelevant chunks.
+``gemini-embedding-001`` truncated to 768 dimensions matches the stored
+vector column. ``text-embedding-004`` was shut down on 14 January 2026.
 Changing the dimension needs a new migration. Retrieval stays behind
 ``AI_RETRIEVAL_ENABLED``, which defaults off.
 """
 
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
 
 CHUNK_TARGET_TOKENS = 500

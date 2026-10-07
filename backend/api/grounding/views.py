@@ -145,13 +145,14 @@ def _index_response(view, source: KnowledgeSource, *, published_now: bool):
 
     try:
         count = index_now(source.id)
-    except Exception:
+    except Exception as error:
         logging.getLogger(__name__).exception(
             "knowledge source %s was not indexed", source.id
         )
-        message = "Indexing failed. Try again."
+        reason = str(error).splitlines()[0][:180] or "unknown error"
+        message = f"Indexing failed: {reason}"
         if published_now:
-            message = "The source was published, but indexing failed. Try publishing it again."
+            message = f"The source was published, but indexing failed: {reason}"
         return view.respond_with(message, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     if count <= 0:
         message = "There was no text to index."

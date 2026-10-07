@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.cache import cache
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 from django.utils import timezone
 
 from ...agent.models import Agent
@@ -13,7 +13,7 @@ from ...exercise.models import Exercise
 from ...file.models import File
 from ...grounding.constants import EMBEDDING_DIMENSIONS
 from ...grounding.embeddings import clear_embedder, set_embedder
-from ...grounding.indexing import index_now, index_source
+from ...grounding.indexing import index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
 from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
@@ -51,26 +51,26 @@ def _embed(texts):
     return vectors
 
 
-class IndexNowTests(SimpleTestCase):
-    @override_settings(
-        DEPLOYMENT_TARGET="vercel",
-        AI_WORKER_URL="https://worker.example/",
-        INTERNAL_API_SECRET="secret",
-        AI_WORKER_TIMEOUT=12,
-    )
-    @patch("httpx.post")
-    def test_publish_on_vercel_indexes_through_the_worker(self, post):
-        post.return_value = Mock(
-            raise_for_status=Mock(),
-            json=Mock(return_value={"chunks": 4}),
-        )
-        self.assertEqual(index_now("ksrc_1"), 4)
-        self.assertEqual(
-            post.call_args.args[0],
-            "https://worker.example/internal/knowledge/index",
-        )
-        self.assertEqual(post.call_args.kwargs["json"], {"source_id": "ksrc_1"})
-        self.assertEqual(post.call_args.kwargs["headers"]["X-Internal-Secret"], "secret")
+class EmbeddingModelTests(SimpleTestCase):
+    @patch("api.grounding.embeddings._embed_client")
+    def test_embeddings_request_768_dimensions_from_gemini(self, client_factory):
+        from ...grounding.constants import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+        from ...grounding.embeddings import clear_embedder, embed_texts
+
+        clear_embedder()
+        embedding = Mock(values=[0.2] * EMBEDDING_DIMENSIONS)
+        client = Mock()
+        client.models.embed_content.return_value = Mock(embeddings=[embedding])
+        client_factory.return_value = client
+
+        vectors = embed_texts(["Avoidance keeps the cycle going."])
+
+        kwargs = client.models.embed_content.call_args.kwargs
+        self.assertEqual(kwargs["model"], EMBEDDING_MODEL)
+        self.assertEqual(kwargs["model"], "gemini-embedding-001")
+        self.assertEqual(kwargs["config"].output_dimensionality, 768)
+        self.assertEqual(len(vectors[0]), 768)
+        clear_embedder()
 
 
 class GroundingTests(TestCase):

@@ -59,29 +59,39 @@ def _embed_with_retry(texts: list[str]) -> list[list[float]]:
 
 
 def _google_embed(texts: list[str]) -> list[list[float]]:
-    from ..ai_provider.models import AiProvider
-    from ..utils import Constants
-    from ..utils.AiProviderFactory import build_google_genai_client
+    from google.genai import types
 
-    provider = (
-        AiProvider.objects.filter(provider=Constants.AI_PROVIDER_GOOGLE, enabled=True)
-        .order_by("-is_default", "created_at")
-        .first()
-    )
-    if provider is None:
-        raise RuntimeError("No enabled Google provider for embeddings")
-    client = build_google_genai_client(provider)
+    client = _embed_client()
     vectors: list[list[float]] = []
     batch_size = 64
     for start in range(0, len(texts), batch_size):
         batch = texts[start : start + batch_size]
-        response = client.models.embed_content(model=EMBEDDING_MODEL, contents=batch)
+        response = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=batch,
+            config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+        )
         embeddings = list(response.embeddings or [])
         if len(embeddings) != len(batch):
             raise RuntimeError("embedding batch size mismatch")
         for item in embeddings:
             vectors.append(list(item.values))
     return vectors
+
+
+def _embed_client():
+    """Use a decryptable provider key, or the GOOGLE_API_KEY on this process."""
+    from ..utils import Constants
+    from ..utils.AiProviderFactory import build_google_genai_client, ensure_providers_ready
+
+    candidates = [
+        provider
+        for provider in ensure_providers_ready()
+        if provider.provider == Constants.AI_PROVIDER_GOOGLE
+    ]
+    if not candidates:
+        raise RuntimeError("No enabled Google provider for embeddings")
+    return build_google_genai_client(candidates[0])
 
 
 def _l2_normalize(values: list[float]) -> list[float]:
