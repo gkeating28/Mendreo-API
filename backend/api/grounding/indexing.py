@@ -15,11 +15,27 @@ logger = logging.getLogger(__name__)
 
 
 def index_now(source_id: str) -> int:
-    """Index in this request, before the response is sent.
+    """Index before the response is sent, using the AI providers table key.
 
-    The API process has the database, the file, and GOOGLE_API_KEY, so it
-    does not hand the work to a background queue or a separate worker route.
+    Vercel cannot decrypt that key: it has no AI_SECRETS_MASTER_KEY, so a
+    local embed would fall through to the GOOGLE_API_KEY env var. The worker
+    can decrypt the Google provider row, so Vercel waits on that process.
     """
+    from django.conf import settings
+
+    worker = (getattr(settings, "AI_WORKER_URL", "") or "").rstrip("/")
+    secret = getattr(settings, "INTERNAL_API_SECRET", "") or ""
+    if getattr(settings, "DEPLOYMENT_TARGET", "") == "vercel" and worker and secret:
+        import httpx
+
+        response = httpx.post(
+            f"{worker}/internal/knowledge/index",
+            json={"source_id": source_id},
+            headers={"X-Internal-Secret": secret},
+            timeout=270,
+        )
+        response.raise_for_status()
+        return int(response.json()["chunks"])
     return index_source(source_id)
 
 
