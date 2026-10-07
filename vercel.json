@@ -4,7 +4,7 @@
   "buildCommand": "cd backend && python manage.py migrate --noinput && python manage.py collectstatic --noinput",
   "functions": {
     "backend/mendreo/wsgi.py": {
-      "maxDuration": 120,
+      "maxDuration": 300,
       "memory": 1024
     }
   },

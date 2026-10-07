@@ -72,6 +72,39 @@ class EmbeddingModelTests(SimpleTestCase):
         self.assertEqual(len(vectors[0]), 768)
         clear_embedder()
 
+    @patch("api.grounding.embeddings.time.sleep")
+    @patch("api.grounding.embeddings._embed_client")
+    def test_a_long_guide_is_embedded_in_paced_batches(self, client_factory, sleep):
+        from ...grounding.embeddings import clear_embedder, embed_texts
+
+        clear_embedder()
+        client = Mock()
+        client.models.embed_content.side_effect = lambda **_kwargs: Mock(
+            embeddings=[Mock(values=[0.2] * 768) for _ in range(10)]
+        )
+        client_factory.return_value = client
+
+        embed_texts(["chunk"] * 20)
+
+        self.assertEqual(client.models.embed_content.call_count, 2)
+        sleep.assert_called_once()
+        clear_embedder()
+
+    @patch("api.grounding.embeddings._google_embed")
+    def test_quota_errors_are_not_retried(self, embed):
+        from ...grounding.embeddings import clear_embedder, embed_texts
+
+        clear_embedder()
+        embed.side_effect = RuntimeError(
+            "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': "
+            "'You exceeded your current quota, please check your plan and billing details.'}}"
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            embed_texts(["Avoidance"])
+        self.assertEqual(embed.call_count, 1)
+        self.assertIn("quota is used up", str(caught.exception))
+        clear_embedder()
+
 
 class GroundingTests(TestCase):
     def setUp(self):
