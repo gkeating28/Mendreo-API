@@ -52,6 +52,23 @@ class SessionGreeting(APIView):
         return Response({"agent_message_id": agent_message.id}, status=status.HTTP_200_OK)
 
 
+class IndexKnowledgeSource(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        require_internal_secret(request)
+        source_id = request.data.get("source_id")
+        if not source_id:
+            return Response(
+                {"detail": "source_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from ..grounding.indexing import index_source
+
+        return Response({"chunks": index_source(source_id)})
+
+
 class CheckSubscriptionsCron(APIView):
     authentication_classes = []
     permission_classes = []

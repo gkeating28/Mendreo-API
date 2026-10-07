@@ -56,6 +56,14 @@ def _owner(post):
 
 
 def _enqueue(source_id: str) -> None:
-    from ..tasks import index_knowledge_source
+    """Index the article in this request. A failure here must not block publish."""
+    import logging
 
-    index_knowledge_source.delay_on_commit(source_id)
+    from .indexing import index_now
+
+    try:
+        index_now(source_id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "article source %s was not indexed", source_id
+        )

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from ..utils import QueryParams
 from ..utils.Permissions import IsAdminPermission
 from ..utils.Views import SmartAPIView, SmartDetailAPIView, SmartPaginationAPIView
+from .indexing import index_now
 from .models import KnowledgeChunk, KnowledgeSource
 from .search import search_chunks
 from .serializers import (
@@ -78,10 +79,7 @@ class SourceApprove(SmartAPIView):
         if reason:
             return self.respond_with(reason, status_code=status.HTTP_400_BAD_REQUEST)
         mark_approved(source, request.user.admin)
-        from ..tasks import index_knowledge_source
-
-        index_knowledge_source.delay_on_commit(source.id)
-        return Response(KnowledgeSourceDetailSerializer(source).data)
+        return _index_response(self, source, published_now=True)
 
 
 class SourceReindex(SmartAPIView):
@@ -101,10 +99,7 @@ class SourceReindex(SmartAPIView):
                 "Only a published source can be re-indexed.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-        from ..tasks import index_knowledge_source
-
-        index_knowledge_source.delay_on_commit(source.id)
-        return Response(KnowledgeSourceDetailSerializer(source).data)
+        return _index_response(self, source, published_now=False)
 
 
 class SourceChunks(SmartAPIView):
@@ -142,6 +137,31 @@ class SourceSearch(SmartAPIView):
         exercise_id = request.data.get("exercise_id") or None
         selected, below = search_chunks(query, exercise_id)
         return Response({"chunks": selected, "below_threshold": below})
+
+
+def _index_response(view, source: KnowledgeSource, *, published_now: bool):
+    """Run the index in this request and tell the caller how many chunks landed."""
+    import logging
+
+    try:
+        count = index_now(source.id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "knowledge source %s was not indexed", source.id
+        )
+        message = "Indexing failed. Try again."
+        if published_now:
+            message = "The source was published, but indexing failed. Try publishing it again."
+        return view.respond_with(message, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if count <= 0:
+        message = "There was no text to index."
+        if published_now:
+            message = "The source was published, but there was no text to index."
+        return view.respond_with(message, status_code=status.HTTP_400_BAD_REQUEST)
+    source.refresh_from_db()
+    data = KnowledgeSourceDetailSerializer(source).data
+    data["indexed_chunks"] = count
+    return Response(data)
 
 
 def _has_verb(view, verb: str) -> bool:
