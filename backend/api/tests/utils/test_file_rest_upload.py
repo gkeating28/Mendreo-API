@@ -45,3 +45,23 @@ class RestSignedUploadTests(SimpleTestCase):
             with mock.patch.object(Api, "SUPABASE_STORAGE_BUCKET", "Mendreo_Space_Public"):
                 with mock.patch.object(Api, "SUPABASE_ANON_KEY", "anon"):
                     self.assertTrue(FileUtils.exists("/admins/u/images/a.jpg"))
+
+    @mock.patch.object(FileUtils, "_rest_enabled", return_value=True)
+    @mock.patch("api.utils.File.requests.get")
+    def test_download_text_reads_the_upload_bucket(self, mock_get, _rest):
+        mock_get.return_value = mock.Mock(
+            status_code=200,
+            content=b"# Avoidance\n",
+            raise_for_status=mock.Mock(),
+        )
+        with mock.patch.object(Api, "SUPABASE_STORAGE_URL", "https://example.supabase.co"):
+            with mock.patch.object(Api, "SUPABASE_STORAGE_BUCKET", "Mendreo_Space_Public"):
+                with mock.patch.object(Api, "SUPABASE_ANON_KEY", "anon"):
+                    text = FileUtils.download_text(
+                        "/admins/u/files/guide.md"
+                    )
+
+        self.assertEqual(text, "# Avoidance\n")
+        mock_get.assert_called_once()
+        url = mock_get.call_args.args[0]
+        self.assertIn("/storage/v1/object/Mendreo_Space_Public/admins/u/files/guide.md", url)

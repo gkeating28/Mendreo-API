@@ -67,9 +67,9 @@ def read_source_text(source: KnowledgeSource) -> str:
         key = (source.file.url or "").lstrip("/")
         if not key:
             return ""
-        from ..utils.S3 import download_text
+        from ..utils.File import download_text
 
-        return download_text(key) or ""
+        return download_text(source.file.url) or ""
     return ""
 
 

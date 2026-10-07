@@ -205,6 +205,46 @@ def delete(file_url):
         print(f"Failed to delete file '{file_url}' from bucket '{Api.SUPABASE_STORAGE_BUCKET}'.")
 
 
+def download_text(file_url: str) -> str:
+    """Read a platform upload from the same bucket the upload was written to."""
+    key = _get_key(file_url or "")
+    if not key:
+        return ""
+    raw = _download_bytes(key)
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("Uploaded file %s is not utf-8 text", key)
+        return ""
+
+
+def _download_bytes(key: str) -> bytes:
+    if _rest_enabled():
+        try:
+            url = (
+                f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
+                f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+            )
+            response = requests.get(url, headers=_storage_headers(), timeout=60)
+            if response.status_code == 404:
+                return b""
+            response.raise_for_status()
+            return response.content
+        except Exception as error:
+            logger.warning("REST download failed, falling back to S3: %s", error)
+
+    try:
+        obj = s3.get_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=key)
+        return obj["Body"].read()
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "NotFound"):
+            return b""
+        raise
+
+
 def exists(file_url):
     key = _get_key(file_url)
 
