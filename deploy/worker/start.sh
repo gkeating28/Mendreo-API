@@ -28,15 +28,14 @@ fi
 LISTEN_PORT="${PORT:-8080}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 echo "worker: starting Gunicorn (${WORKERS} worker(s)) on [::]:${LISTEN_PORT} (dual-stack: also accepts IPv4)"
-# Timeout must cover AI chat (Gemini up to GEMINI_HTTP_TIMEOUT_MS, typically
-# 90s) plus DB/storage work. Vercel waits AI_WORKER_TIMEOUT (default 120s) on
-# the legacy sync path. Default 150s so legitimate turns are not SIGKILL'd
-# mid-Gemini; stuck workers are still recycled via --max-requests.
+# Timeout must cover AI chat and a paced knowledge index. Vercel waits up to
+# 270s for /internal/knowledge/index. Stuck workers are still recycled via
+# --max-requests.
 MENDREO_SKIP_CELERY_IMPORT=1 gunicorn mendreo.wsgi \
   --bind "[::]:${LISTEN_PORT}" \
   --workers "${WORKERS}" \
   --preload \
-  --timeout "${GUNICORN_TIMEOUT:-150}" \
+  --timeout "${GUNICORN_TIMEOUT:-300}" \
   --graceful-timeout 10 \
   --max-requests 500 \
   --max-requests-jitter 100 \

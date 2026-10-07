@@ -95,18 +95,26 @@ def _google_embed(texts: list[str]) -> list[list[float]]:
 
 
 def _embed_client():
-    """Use a decryptable provider key, or the GOOGLE_API_KEY on this process."""
+    """Use the Google row in AI providers. Do not substitute GOOGLE_API_KEY."""
+    from ..ai_provider.models import AiProvider
     from ..utils import Constants
-    from ..utils.AiProviderFactory import build_google_genai_client, ensure_providers_ready
+    from ..utils.AiProviderFactory import build_google_genai_client
 
-    candidates = [
-        provider
-        for provider in ensure_providers_ready()
-        if provider.provider == Constants.AI_PROVIDER_GOOGLE
-    ]
-    if not candidates:
+    provider = (
+        AiProvider.objects.filter(provider=Constants.AI_PROVIDER_GOOGLE, enabled=True)
+        .order_by("-is_default", "created_at")
+        .first()
+    )
+    if provider is None:
         raise RuntimeError("No enabled Google provider for embeddings")
-    return build_google_genai_client(candidates[0])
+    try:
+        provider.get_api_key()
+    except Exception as exc:
+        raise RuntimeError(
+            "The Google key in AI providers could not be decrypted. "
+            "Indexing has to run where AI_SECRETS_MASTER_KEY is set."
+        ) from exc
+    return build_google_genai_client(provider)
 
 
 def _l2_normalize(values: list[float]) -> list[float]:

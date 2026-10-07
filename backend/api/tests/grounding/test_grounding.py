@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.cache import cache
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 
 from ...agent.models import Agent
@@ -13,7 +13,7 @@ from ...exercise.models import Exercise
 from ...file.models import File
 from ...grounding.constants import EMBEDDING_DIMENSIONS
 from ...grounding.embeddings import clear_embedder, set_embedder
-from ...grounding.indexing import index_source
+from ...grounding.indexing import index_now, index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
 from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
@@ -104,6 +104,28 @@ class EmbeddingModelTests(SimpleTestCase):
         self.assertEqual(embed.call_count, 1)
         self.assertIn("quota is used up", str(caught.exception))
         clear_embedder()
+
+    @override_settings(
+        DEPLOYMENT_TARGET="vercel",
+        AI_WORKER_URL="https://worker.example/",
+        INTERNAL_API_SECRET="secret",
+    )
+    @patch("httpx.post")
+    def test_vercel_indexes_on_the_worker_so_the_provider_key_decrypts(self, post):
+        post.return_value = Mock(
+            raise_for_status=Mock(),
+            json=Mock(return_value={"chunks": 4}),
+        )
+        self.assertEqual(index_now("ksrc_1"), 4)
+        self.assertEqual(
+            post.call_args.args[0],
+            "https://worker.example/internal/knowledge/index",
+        )
+        self.assertEqual(post.call_args.kwargs["json"], {"source_id": "ksrc_1"})
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["X-Internal-Secret"],
+            "secret",
+        )
 
 
 class GroundingTests(TestCase):
