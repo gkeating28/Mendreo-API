@@ -366,6 +366,21 @@ class GroundingTests(TestCase):
         session.refresh_from_db()
         self.assertFalse(session.cached_prompt_meta.get("retrieval_enabled"))
 
+    def test_stamp_save_failure_leaves_retrieval_off(self):
+        from django.db import OperationalError
+
+        consumer = Auth.create_consumer()
+        session = Session.objects.create(consumer=consumer)
+        with patch.object(
+            Session,
+            "save",
+            side_effect=OperationalError("stamp write failed"),
+        ), self.assertLogs("api.grounding.retrieval", level="ERROR") as logs:
+            enabled = stamp_retrieval_enabled(session)
+        self.assertFalse(enabled)
+        self.assertFalse(session.cached_prompt_meta.get("retrieval_enabled"))
+        self.assertTrue(any("stamp save failed" in line for line in logs.output))
+
     def test_short_query_is_prefixed_and_high_risk_skips_search(self):
         consumer = Auth.create_consumer()
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
