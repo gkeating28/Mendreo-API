@@ -1,7 +1,8 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.core.cache import cache
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 
 from ...agent.models import Agent
@@ -12,7 +13,7 @@ from ...exercise.models import Exercise
 from ...file.models import File
 from ...grounding.constants import EMBEDDING_DIMENSIONS
 from ...grounding.embeddings import clear_embedder, set_embedder
-from ...grounding.indexing import index_source
+from ...grounding.indexing import index_now, index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
 from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
@@ -48,6 +49,28 @@ def _embed(texts):
         else:
             vectors.append(_vector(1))
     return vectors
+
+
+class IndexNowTests(SimpleTestCase):
+    @override_settings(
+        DEPLOYMENT_TARGET="vercel",
+        AI_WORKER_URL="https://worker.example/",
+        INTERNAL_API_SECRET="secret",
+        AI_WORKER_TIMEOUT=12,
+    )
+    @patch("httpx.post")
+    def test_publish_on_vercel_indexes_through_the_worker(self, post):
+        post.return_value = Mock(
+            raise_for_status=Mock(),
+            json=Mock(return_value={"chunks": 4}),
+        )
+        self.assertEqual(index_now("ksrc_1"), 4)
+        self.assertEqual(
+            post.call_args.args[0],
+            "https://worker.example/internal/knowledge/index",
+        )
+        self.assertEqual(post.call_args.kwargs["json"], {"source_id": "ksrc_1"})
+        self.assertEqual(post.call_args.kwargs["headers"]["X-Internal-Secret"], "secret")
 
 
 class GroundingTests(TestCase):
@@ -395,6 +418,34 @@ class GroundingTests(TestCase):
         self.assertEqual(approved.status_code, 200, approved.json)
         self.assertEqual(approved.json["status"], "published")
         self.assertEqual(approved.json["approved_by"], approved.json["submitted_by"])
+        self.assertEqual(approved.json["indexed_chunks"], 1)
+        self.assertEqual(
+            KnowledgeChunk.objects.filter(source_id=source_id, active=True).count(),
+            1,
+        )
+
+    def test_approve_reports_when_the_source_has_no_text(self):
+        created = self._post(
+            "/knowledge/sources",
+            {"title": "Empty", "kind": "guidance", "body": " "},
+            access_token=self.token,
+        )
+        self.assertEqual(created.status_code, 201, created.json)
+        source_id = created.json["id"]
+        submitted = self._post(
+            f"/knowledge/sources/{source_id}/submit",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.json)
+        approved = self._post(
+            f"/knowledge/sources/{source_id}/approve",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(approved.status_code, 400, approved.json)
+        self.assertIn("no text", approved.json["detail"])
+        self.assertFalse(KnowledgeChunk.objects.filter(source_id=source_id).exists())
 
     def test_public_admin_upload_can_be_attached_to_a_source(self):
         uploaded = File.objects.create(

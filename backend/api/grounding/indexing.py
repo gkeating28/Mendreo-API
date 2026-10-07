@@ -14,6 +14,31 @@ from .models import KnowledgeChunk, KnowledgeSource
 logger = logging.getLogger(__name__)
 
 
+def index_now(source_id: str) -> int:
+    """Index before the request returns.
+
+    On Vercel the embedding key lives on the worker, so this calls that
+    process over HTTP and waits. Everywhere else it indexes in-process.
+    There is no background queue for the admin UI to poll.
+    """
+    from django.conf import settings
+
+    worker = (getattr(settings, "AI_WORKER_URL", "") or "").rstrip("/")
+    secret = getattr(settings, "INTERNAL_API_SECRET", "") or ""
+    if worker and secret and getattr(settings, "DEPLOYMENT_TARGET", "") == "vercel":
+        import httpx
+
+        response = httpx.post(
+            f"{worker}/internal/knowledge/index",
+            json={"source_id": source_id},
+            headers={"X-Internal-Secret": secret},
+            timeout=settings.AI_WORKER_TIMEOUT,
+        )
+        response.raise_for_status()
+        return int(response.json()["chunks"])
+    return index_source(source_id)
+
+
 def index_source(source_id: str) -> int:
     source = KnowledgeSource.objects.filter(id=source_id).first()
     if source is None or not _indexable(source):
