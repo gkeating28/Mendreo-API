@@ -1,3 +1,7 @@
+import importlib
+
+from django.apps import apps
+from django.db import connection
 from rest_framework import status
 
 from ...participant.models import Participant
@@ -28,10 +32,21 @@ class CreateTest(TestCase):
         session = Session.objects.get(id=response.json["id"])
         self.assertEqual(session.consumer_id, self.consumer.user_id)
         self.assertIsNone(session.exercise_id)
+        self.assertFalse(session.authoring_test)
         self.assertEqual(
             Participant.objects.filter(session=session).count(),
             2,
         )
+
+    def test_authoring_test_migration_tolerates_existing_column(self):
+        migration = importlib.import_module(
+            "api.migrations.0080_session_authoring_test"
+        )
+        with connection.schema_editor() as schema_editor:
+            migration.add_authoring_test(apps, schema_editor)
+
+        session = Session.objects.create(consumer=self.consumer)
+        self.assertFalse(session.authoring_test)
 
     def test_second_post_creates_another_session(self):
         first = self._post("/sessions", {}, access_token=self.access_token)
