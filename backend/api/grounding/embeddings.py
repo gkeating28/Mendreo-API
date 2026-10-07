@@ -8,7 +8,9 @@ import re
 import time
 from collections.abc import Callable
 
-from .constants import EMBED_TEXTS_PER_MINUTE, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+import httpx
+
+from .constants import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -85,36 +87,39 @@ def _retry_delay(exc: Exception, attempt: int) -> float:
 
 
 def _google_embed(texts: list[str]) -> list[list[float]]:
-    client = _embed_client()
-    vectors: list[list[float]] = []
-    # Small batches. Gemini counts every text toward the per-minute quota,
-    # so a whole guide sent at once returns 429.
-    batch_size = 10
-    interval = 60 / EMBED_TEXTS_PER_MINUTE
-    for index, start in enumerate(range(0, len(texts), batch_size)):
-        if index:
-            time.sleep(batch_size * interval)
-        batch = texts[start : start + batch_size]
-        vectors.extend(_embed_batch(client, batch))
-    return vectors
+    api_key = _embed_api_key()
+    return [_embed_one(api_key, text) for text in texts]
 
 
-def _embed_batch(client, batch: list[str]) -> list[list[float]]:
-    """Retry a per-minute 429. A billing-quota 429 is returned as Google wrote it."""
-    from google.genai import types
+def _embed_one(api_key: str, text: str) -> list[float]:
+    """One embedContent call.
 
+    google-genai's embed_content always posts to batchEmbedContents for an
+    AI Studio key. That quota is separate from the Gemini Embedding RPM
+    shown in AI Studio. embedContent is the call that RPM covers.
+    """
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{EMBEDDING_MODEL}:embedContent"
+    )
     last: Exception | None = None
     for attempt in range(6):
         try:
-            response = client.models.embed_content(
-                model=EMBEDDING_MODEL,
-                contents=batch,
-                config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+            response = httpx.post(
+                url,
+                headers={"x-goog-api-key": api_key},
+                json={
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": EMBEDDING_DIMENSIONS,
+                },
+                timeout=60,
             )
-            embeddings = list(response.embeddings or [])
-            if len(embeddings) != len(batch):
-                raise RuntimeError("embedding batch size mismatch")
-            return [list(item.values) for item in embeddings]
+            if response.status_code >= 400:
+                raise RuntimeError(f"{response.status_code} {response.text[:800]}")
+            values = (response.json().get("embedding") or {}).get("values")
+            if not isinstance(values, list):
+                raise RuntimeError("embedding response has no values")
+            return [float(item) for item in values]
         except Exception as exc:
             last = exc
             if _billing_quota(exc) or not _rate_limited(exc):
@@ -128,15 +133,14 @@ def _embed_batch(client, batch: list[str]) -> list[list[float]]:
             )
             time.sleep(delay)
     assert last is not None
-    detail = str(last).splitlines()[0][:300]
+    detail = " ".join(str(last).split())[:500]
     raise EmbeddingRateLimit(f"Google is rate-limiting embeddings. {detail}") from last
 
 
-def _embed_client():
+def _embed_api_key() -> str:
     """Use the Google row in AI providers. Do not substitute GOOGLE_API_KEY."""
     from ..ai_provider.models import AiProvider
     from ..utils import Constants
-    from ..utils.AiProviderFactory import build_google_genai_client
 
     provider = (
         AiProvider.objects.filter(provider=Constants.AI_PROVIDER_GOOGLE, enabled=True)
@@ -146,13 +150,15 @@ def _embed_client():
     if provider is None:
         raise RuntimeError("No enabled Google provider for embeddings")
     try:
-        provider.get_api_key()
+        api_key = provider.get_api_key()
     except Exception as exc:
         raise RuntimeError(
             "The Google key in AI providers could not be decrypted. "
             "Indexing has to run where AI_SECRETS_MASTER_KEY is set."
         ) from exc
-    return build_google_genai_client(provider)
+    if not api_key:
+        raise RuntimeError("The Google key in AI providers is empty")
+    return api_key
 
 
 def _l2_normalize(values: list[float]) -> list[float]:

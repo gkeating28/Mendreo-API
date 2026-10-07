@@ -24,8 +24,7 @@ def mark_index(source_id: str, status: str, error: str = "") -> None:
     if source is None:
         return
     source.index_status = status
-    text = (error or "").strip()
-    source.index_error = text.splitlines()[0][:300] if text else ""
+    source.index_error = " ".join((error or "").split())[:500]
     source.save(update_fields=["index_status", "index_error", "updated_at"])
 
 
