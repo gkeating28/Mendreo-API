@@ -120,6 +120,22 @@ def run_eval(provider=None):
 
 
 @shared_task(
+    name="index_knowledge_source",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=300,
+    time_limit=360,
+)
+def index_knowledge_source(source_id):
+    from .grounding.indexing import index_source
+
+    logger.info("Start > index_knowledge_source %s", source_id)
+    count = index_source(source_id)
+    logger.info("End > index_knowledge_source %s chunks=%s", source_id, count)
+    return count
+
+
+@shared_task(
     base=PeriodicTask,
     run_every=crontab(minute=0, hour=1),  # 1:00 AM
     name='update_daily_summaries',

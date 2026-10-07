@@ -56,6 +56,11 @@ class Setting(SmartModel):
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_risk_keywords()
         Setting.get_or_create_trust_and_safety_email()
+        Setting.get_or_create_ai_retrieval_enabled()
+        Setting.get_or_create_retrieval_min_similarity()
+        Setting.get_or_create_retrieval_max_chunks()
+        Setting.get_or_create_retrieval_max_tokens()
+        Setting.get_or_create_retrieval_context_min_words()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -306,6 +311,98 @@ class Setting(SmartModel):
             Setting.get_or_create_trust_and_safety_email,
         )
         return (raw or "").strip()
+
+    @staticmethod
+    def get_or_create_ai_retrieval_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_ai_retrieval_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
+            Setting.get_or_create_ai_retrieval_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_retrieval_min_similarity():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RETRIEVAL_MIN_SIMILARITY,
+            defaults={"value": str(Constants.RETRIEVAL_MIN_SIMILARITY_DEFAULT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_retrieval_min_similarity() -> float:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RETRIEVAL_MIN_SIMILARITY,
+            Setting.get_or_create_retrieval_min_similarity,
+        )
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return Constants.RETRIEVAL_MIN_SIMILARITY_DEFAULT
+
+    @staticmethod
+    def get_or_create_retrieval_max_chunks():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RETRIEVAL_MAX_CHUNKS,
+            defaults={"value": str(Constants.RETRIEVAL_MAX_CHUNKS_DEFAULT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_retrieval_max_chunks() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RETRIEVAL_MAX_CHUNKS,
+            Setting.get_or_create_retrieval_max_chunks,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.RETRIEVAL_MAX_CHUNKS_DEFAULT
+
+    @staticmethod
+    def get_or_create_retrieval_max_tokens():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RETRIEVAL_MAX_TOKENS,
+            defaults={"value": str(Constants.RETRIEVAL_MAX_TOKENS_DEFAULT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_retrieval_max_tokens() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RETRIEVAL_MAX_TOKENS,
+            Setting.get_or_create_retrieval_max_tokens,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.RETRIEVAL_MAX_TOKENS_DEFAULT
+
+    @staticmethod
+    def get_or_create_retrieval_context_min_words():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RETRIEVAL_CONTEXT_MIN_WORDS,
+            defaults={"value": str(Constants.RETRIEVAL_CONTEXT_MIN_WORDS_DEFAULT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_retrieval_context_min_words() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RETRIEVAL_CONTEXT_MIN_WORDS,
+            Setting.get_or_create_retrieval_context_min_words,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.RETRIEVAL_CONTEXT_MIN_WORDS_DEFAULT
 
     @staticmethod
     def get_observations_max_length() -> int:

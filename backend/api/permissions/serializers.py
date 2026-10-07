@@ -25,6 +25,7 @@ class PermissionsValidateSerializer(ValidateModelSerializer):
         valid_resources = [
             "users", "sessions", "signups", "feedback",
             "exercises", "assets", "questions", "roles", "pii", "knowledge",
+            "knowledge_sources",
         ]
 
         for key, permissions in attrs.items():
@@ -34,11 +35,15 @@ class PermissionsValidateSerializer(ValidateModelSerializer):
             if not isinstance(permissions, list):
                 continue
 
+            allowed = permission_values
+            if key == "knowledge_sources":
+                allowed = Constants.KNOWLEDGE_SOURCES_PERMISSIONS
+
             for permission in permissions:
-                if permission not in permission_values:
+                if permission not in allowed:
                     raise serializers.ValidationError({
                         "permissions": {
-                            key: f"'{permission}' value is not permitted, must be one of {permission_values}"
+                            key: f"'{permission}' value is not permitted, must be one of {allowed}"
                         }
                     })
 

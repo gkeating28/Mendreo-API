@@ -44,6 +44,7 @@ urlpatterns = [
     path('knowledge-fields', include('api.knowledge.field_urls')),
     path('knowledge-questions', include('api.knowledge.question_urls')),
     path('knowledge-entries', include('api.knowledge.entry_urls')),
+    path('knowledge/', include('api.grounding.urls')),
 
     path('progress', include('api.progress.urls')),
     path('runs', include('api.run.urls')),

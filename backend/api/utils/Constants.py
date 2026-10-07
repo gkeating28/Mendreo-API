@@ -228,6 +228,16 @@ THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
 SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
+SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
+SETTING_KEY_RETRIEVAL_MIN_SIMILARITY = "retrieval_min_similarity"
+SETTING_KEY_RETRIEVAL_MAX_CHUNKS = "retrieval_max_chunks"
+SETTING_KEY_RETRIEVAL_MAX_TOKENS = "retrieval_max_tokens"
+SETTING_KEY_RETRIEVAL_CONTEXT_MIN_WORDS = "retrieval_context_min_words"
+
+RETRIEVAL_MIN_SIMILARITY_DEFAULT = 0.5
+RETRIEVAL_MAX_CHUNKS_DEFAULT = 4
+RETRIEVAL_MAX_TOKENS_DEFAULT = 1500
+RETRIEVAL_CONTEXT_MIN_WORDS_DEFAULT = 8
 
 DEFAULT_GENERIC_ANSWERS = ["fine", "ok", "not sure", "good", "bad"]
 DEFAULT_RISK_KEYWORDS = {
@@ -253,6 +263,7 @@ EVAL_CASE_KIND_RISK = "risk"
 EVAL_CASE_KIND_SENSITIVE = "sensitive"
 EVAL_CASE_KIND_FAILOVER = "failover"
 EVAL_CASE_KIND_DEPTH = "depth"
+EVAL_CASE_KIND_GROUNDING = "grounding"
 EVAL_CASE_KINDS = [
     EVAL_CASE_KIND_TRIAGE,
     EVAL_CASE_KIND_EXERCISE,
@@ -260,6 +271,7 @@ EVAL_CASE_KINDS = [
     EVAL_CASE_KIND_SENSITIVE,
     EVAL_CASE_KIND_FAILOVER,
     EVAL_CASE_KIND_DEPTH,
+    EVAL_CASE_KIND_GROUNDING,
 ]
 
 SESSION_METRIC_SOURCE_FORM = "form"
@@ -403,6 +415,13 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
           of the asset in order to engage with the user about the specifics of the asset.
 """
 
+RETRIEVAL_PROGRAMMING_INSTRUCTION = (
+    "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
+    "related to the user's message. Use it when it helps you explain how or why the approach "
+    "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
+    "more than a sentence, do not name the source document and do not use it to diagnose."
+)
+
 PROMPT_STEP = """<STEP>
                 <TITLE>
                     {step_title}
@@ -457,6 +476,7 @@ PERMISSION_VIEW = "view"
 PERMISSION_CREATE = "create"
 PERMISSION_EDIT = "edit"
 PERMISSION_DELETE = "delete"
+PERMISSION_APPROVE = "approve"
 
 ALL_PERMISSIONS = [
     PERMISSION_VIEW,
@@ -482,6 +502,35 @@ QUESTIONS_PERMISSIONS = [PERMISSION_VIEW, PERMISSION_CREATE, PERMISSION_EDIT, PE
 ROLES_PERMISSIONS = [PERMISSION_VIEW, PERMISSION_CREATE, PERMISSION_EDIT, PERMISSION_DELETE]
 PII_PERMISSIONS = [PERMISSION_VIEW]
 KNOWLEDGE_PERMISSIONS = [PERMISSION_VIEW, PERMISSION_CREATE, PERMISSION_EDIT, PERMISSION_DELETE]
+KNOWLEDGE_SOURCES_PERMISSIONS = [
+    PERMISSION_VIEW,
+    PERMISSION_CREATE,
+    PERMISSION_EDIT,
+    PERMISSION_DELETE,
+    PERMISSION_APPROVE,
+]
+
+KNOWLEDGE_SOURCE_KIND_UP_SOURCE = "up_source"
+KNOWLEDGE_SOURCE_KIND_GUIDANCE = "guidance"
+KNOWLEDGE_SOURCE_KIND_POST = "post"
+KNOWLEDGE_SOURCE_KIND_EXERCISE_REFERENCE = "exercise_reference"
+KNOWLEDGE_SOURCE_KINDS = [
+    KNOWLEDGE_SOURCE_KIND_UP_SOURCE,
+    KNOWLEDGE_SOURCE_KIND_GUIDANCE,
+    KNOWLEDGE_SOURCE_KIND_POST,
+    KNOWLEDGE_SOURCE_KIND_EXERCISE_REFERENCE,
+]
+
+KNOWLEDGE_SOURCE_STATUS_DRAFT = "draft"
+KNOWLEDGE_SOURCE_STATUS_IN_REVIEW = "in_review"
+KNOWLEDGE_SOURCE_STATUS_PUBLISHED = "published"
+KNOWLEDGE_SOURCE_STATUS_RETIRED = "retired"
+KNOWLEDGE_SOURCE_STATUSES = [
+    KNOWLEDGE_SOURCE_STATUS_DRAFT,
+    KNOWLEDGE_SOURCE_STATUS_IN_REVIEW,
+    KNOWLEDGE_SOURCE_STATUS_PUBLISHED,
+    KNOWLEDGE_SOURCE_STATUS_RETIRED,
+]
 
 # Knowledge field value types (open question #7 deferred — start with text-compatible set)
 KNOWLEDGE_VALUE_TYPE_TEXT = "text"
@@ -705,6 +754,7 @@ SUPER_ADMIN_PERMISSIONS = {
     "roles": ["view", "create", "edit", "delete"],
     "pii": ["view"],
     "knowledge": ["view", "create", "edit", "delete"],
+    "knowledge_sources": ["view", "create", "edit", "delete", "approve"],
 }
 
 ADMIN_PERMISSIONS = {
@@ -718,6 +768,7 @@ ADMIN_PERMISSIONS = {
     "roles": [],
     "pii": [],
     "knowledge": ["view", "create", "edit"],
+    "knowledge_sources": ["view", "create", "edit"],
 }
 
 VIEWER_PERMISSIONS = {
@@ -731,5 +782,6 @@ VIEWER_PERMISSIONS = {
     "roles": [],
     "pii": [],
     "knowledge": ["view"],
+    "knowledge_sources": ["view"],
 }
 

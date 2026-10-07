@@ -333,9 +333,14 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
         from .history import build_history
         from .turn_hint import user_prompt_with_hint
+        from ..grounding.retrieval import augment_user_prompt
 
         result = agent.run_sync(
-            user_prompt=user_prompt_with_hint(session, consumer_message),
+            user_prompt=augment_user_prompt(
+                session,
+                consumer_message,
+                user_prompt_with_hint(session, consumer_message),
+            ),
             deps=dependencies,
             message_history=build_history(
                 session, exclude_message_id=getattr(consumer_message, "id", None)
@@ -352,6 +357,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     except Exception as e:
         timer_end = time.perf_counter()
+        session._pending_retrieval = None
         logger.exception(
             "Agent.get_response failed for session=%s message=%s",
             getattr(session, "id", None),
@@ -654,6 +660,9 @@ def update_session(session_ai_prompt, session):
 
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
+    from ..grounding.retrieval import session_retrieval_enabled
+
+    retrieval_on = session_retrieval_enabled(session)
     cached = session.cached_prompt
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
@@ -666,7 +675,17 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_shape = "<SESSION_CONTEXT>" not in cached
         stale_phase = meta.get("prompt_phase") != prompt_phase
         stale_machine = meta.get("state_machine") != _state_machine_enabled()
-        if not any((stale_placeholders, stale_click, stale_shape, stale_phase, stale_machine)):
+        stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
+        if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
+            stale_retrieval = True
+        if not any((
+            stale_placeholders,
+            stale_click,
+            stale_shape,
+            stale_phase,
+            stale_machine,
+            stale_retrieval,
+        )):
             return cached
         session.cached_prompt = None
 
@@ -779,6 +798,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
         user_name=user_name,
     )
+    if retrieval_on:
+        programming_instructions = (
+            programming_instructions.rstrip()
+            + "\n\n"
+            + Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION
+            + "\n"
+        )
 
     prompt = template.format(
         notes=notes,
@@ -802,6 +828,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
     meta["state_machine"] = _state_machine_enabled()
+    meta["retrieval_instruction"] = retrieval_on
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
