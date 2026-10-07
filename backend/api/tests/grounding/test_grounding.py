@@ -9,6 +9,7 @@ from ...ai_provider.models import AiProvider
 from ...eval.models import EvalCase
 from ...eval.runner import run_eval
 from ...exercise.models import Exercise
+from ...file.models import File
 from ...grounding.constants import EMBEDDING_DIMENSIONS
 from ...grounding.embeddings import clear_embedder, set_embedder
 from ...grounding.indexing import index_source
@@ -394,6 +395,41 @@ class GroundingTests(TestCase):
         self.assertEqual(approved.status_code, 200, approved.json)
         self.assertEqual(approved.json["status"], "published")
         self.assertEqual(approved.json["approved_by"], approved.json["submitted_by"])
+
+    def test_public_admin_upload_can_be_attached_to_a_source(self):
+        uploaded = File.objects.create(
+            name="UP Therapist Guide - main.md",
+            extension="md",
+            url=f"/admins/{self.admin.user_id}/files/abc.md",
+            uploaded=True,
+            created_by=self.admin.user,
+        )
+        with (
+            patch("api.utils.File._download_bytes", return_value=b"# Guide\n") as download,
+            patch("api.utils.File.upload", return_value=None) as upload,
+            patch("api.utils.File.delete") as delete,
+        ):
+            created = self._post(
+                "/knowledge/sources",
+                {
+                    "title": "UP Therapist Guide",
+                    "kind": "up_source",
+                    "file": uploaded.id,
+                    "licence_note": "Internal sample for the spike.",
+                },
+                access_token=self.token,
+            )
+
+        self.assertEqual(created.status_code, 201, created.json)
+        uploaded.refresh_from_db()
+        self.assertEqual(
+            uploaded.url,
+            f"/knowledge/{self.admin.user_id}/abc.md",
+        )
+        download.assert_called_once()
+        upload.assert_called_once()
+        delete.assert_called_once_with(f"/admins/{self.admin.user_id}/files/abc.md")
+        self.assertEqual(created.json["file"], uploaded.id)
 
     def test_article_publish_creates_a_source_and_unpublish_retires_it(self):
         image = Image.objects.create(
