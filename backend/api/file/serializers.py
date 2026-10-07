@@ -11,12 +11,14 @@ import os
 
 
 class FileUploadSerializer(CreateModelSerializer):
+    purpose = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = File
-        fields = ["name", "duration", "size", "created_by"]
+        fields = ["name", "duration", "size", "created_by", "purpose"]
 
     def validate(self, attrs):
+        purpose = (attrs.pop("purpose", None) or "").strip()
         _, extension = os.path.splitext(attrs["name"])
         extension = extension.replace('.', '')
 
@@ -27,7 +29,13 @@ class FileUploadSerializer(CreateModelSerializer):
 
         user = attrs.get("created_by")
 
-        if user.type == Constants.USER_TYPE_CONSUMER:
+        if purpose == "knowledge":
+            if user.type != Constants.USER_TYPE_ADMIN:
+                self.raise_validation_error("purpose", "Only an admin can upload a knowledge file")
+            url = f"/knowledge/{user.id}/{uid}.{extension}"
+        elif purpose:
+            self.raise_validation_error("purpose", "Unknown purpose")
+        elif user.type == Constants.USER_TYPE_CONSUMER:
             url = f"/consumers/{user.id}/files/{uid}.{extension}"
         elif user.type == Constants.USER_TYPE_ADMIN:
             url = f"/admins/{user.id}/files/{uid}.{extension}"

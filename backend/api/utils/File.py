@@ -80,7 +80,7 @@ def upload(data, full_path, content_type=None, public=True):
 
     try:
         params = {
-            "Bucket": Api.SUPABASE_STORAGE_BUCKET,
+            "Bucket": bucket_for_key(key),
             "Key": key,
             "Body": data,
         }
@@ -108,6 +108,17 @@ def get_image_extension(file):
         return "jpg"
 
 
+KNOWLEDGE_FOLDER = "knowledge"
+
+
+def bucket_for_key(path: str) -> str:
+    """Knowledge sources live in the private bucket. Other uploads stay public."""
+    key = _get_key(path or "")
+    if key.startswith(f"{KNOWLEDGE_FOLDER}/"):
+        return Api.SUPABASE_STORAGE_PRIVATE_BUCKET or Api.SUPABASE_STORAGE_BUCKET
+    return Api.SUPABASE_STORAGE_BUCKET
+
+
 def get_upload_link(path, content_type=None):
     """Return (upload_url, content_type) for a browser PUT.
 
@@ -118,21 +129,22 @@ def get_upload_link(path, content_type=None):
         content_type = content_type_for_path(path)
 
     key = _get_key(path)
+    bucket = bucket_for_key(key)
 
     if _rest_enabled():
         try:
-            return _rest_signed_upload_link(key), content_type
+            return _rest_signed_upload_link(key, bucket), content_type
         except Exception as error:
             logger.warning("REST signed upload URL failed, falling back to S3: %s", error)
 
-    return _s3_presigned_upload_link(key, content_type), content_type
+    return _s3_presigned_upload_link(key, content_type, bucket), content_type
 
 
-def _rest_signed_upload_link(key: str) -> str:
+def _rest_signed_upload_link(key: str, bucket: str) -> str:
     """Create a time-limited Supabase Storage signed upload URL."""
     url = (
         f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/upload/sign/"
-        f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+        f"{bucket}/{key}"
     )
     response = requests.post(url, headers=_storage_headers(), timeout=30)
     response.raise_for_status()
@@ -151,9 +163,9 @@ def _rest_signed_upload_link(key: str) -> str:
     return f"{Api.SUPABASE_STORAGE_URL}/storage/v1{relative}"
 
 
-def _s3_presigned_upload_link(key: str, content_type: str) -> str:
+def _s3_presigned_upload_link(key: str, content_type: str, bucket: str) -> str:
     params = {
-        "Bucket": Api.SUPABASE_STORAGE_BUCKET,
+        "Bucket": bucket,
         "Key": key,
         "ContentType": content_type,
     }
@@ -165,9 +177,10 @@ def _s3_presigned_upload_link(key: str, content_type: str) -> str:
 
 
 def _rest_upload(key: str, data, content_type=None):
+    bucket = bucket_for_key(key)
     url = (
         f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
-        f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+        f"{bucket}/{key}"
     )
     headers = _storage_headers()
     if content_type:
@@ -182,12 +195,13 @@ def delete(file_url):
         return
 
     key = _get_key(file_url)
+    bucket = bucket_for_key(key)
 
     if _rest_enabled():
         try:
             url = (
                 f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
-                f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+                f"{bucket}/{key}"
             )
             response = requests.delete(url, headers=_storage_headers(), timeout=30)
             if response.status_code in (200, 404):
@@ -197,16 +211,57 @@ def delete(file_url):
         except Exception as error:
             logger.warning("REST delete failed, falling back to S3: %s", error)
 
-    response = s3.delete_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=key)
+    response = s3.delete_object(Bucket=bucket, Key=key)
 
     if response["ResponseMetadata"]["HTTPStatusCode"] == 204:
-        print(f"File '{file_url}' deleted successfully from bucket '{Api.SUPABASE_STORAGE_BUCKET}'.")
+        print(f"File '{file_url}' deleted successfully from bucket '{bucket}'.")
     else:
-        print(f"Failed to delete file '{file_url}' from bucket '{Api.SUPABASE_STORAGE_BUCKET}'.")
+        print(f"Failed to delete file '{file_url}' from bucket '{bucket}'.")
+
+
+def download_text(file_url: str) -> str:
+    """Read a platform upload from the same bucket the upload was written to."""
+    key = _get_key(file_url or "")
+    if not key:
+        return ""
+    raw = _download_bytes(key, bucket_for_key(key))
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("Uploaded file %s is not utf-8 text", key)
+        return ""
+
+
+def _download_bytes(key: str, bucket: str) -> bytes:
+    if _rest_enabled():
+        try:
+            url = (
+                f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
+                f"{bucket}/{key}"
+            )
+            response = requests.get(url, headers=_storage_headers(), timeout=60)
+            if response.status_code == 404:
+                return b""
+            response.raise_for_status()
+            return response.content
+        except Exception as error:
+            logger.warning("REST download failed, falling back to S3: %s", error)
+
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        return obj["Body"].read()
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "NotFound"):
+            return b""
+        raise
 
 
 def exists(file_url):
     key = _get_key(file_url)
+    bucket = bucket_for_key(key)
 
     # Short timeout: upload confirm should not block the API for long.
     timeout = 5
@@ -215,17 +270,19 @@ def exists(file_url):
         try:
             auth_url = (
                 f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/"
-                f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+                f"{bucket}/{key}"
             )
             head = requests.head(auth_url, headers=_storage_headers(), timeout=timeout)
             if head.status_code == 200:
                 return True
             if head.status_code in (400, 404):
                 return False
+            if bucket != Api.SUPABASE_STORAGE_BUCKET:
+                return False
             # Some gateways reject HEAD; try public info endpoint.
             info_url = (
                 f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/info/public/"
-                f"{Api.SUPABASE_STORAGE_BUCKET}/{key}"
+                f"{bucket}/{key}"
             )
             info = requests.get(info_url, headers=_storage_headers(), timeout=timeout)
             return info.status_code == 200
@@ -233,7 +290,7 @@ def exists(file_url):
             logger.warning("REST exists check failed, falling back to S3: %s", error)
 
     try:
-        s3.head_object(Bucket=Api.SUPABASE_STORAGE_BUCKET, Key=key)
+        s3.head_object(Bucket=bucket, Key=key)
         return True
     except ClientError:
         return False

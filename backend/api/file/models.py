@@ -43,4 +43,7 @@ class File(SmartModel):
 
         # self.url is a storage key with a leading slash, e.g.
         # "/consumers/<id>/files/<uuid>.pdf".
+        # Knowledge files are in the private bucket and have no public URL.
+        if self.url.lstrip("/").startswith("knowledge/"):
+            return self.url
         return f"{Api.SUPABASE_STORAGE_URL}/storage/v1/object/public/{Api.SUPABASE_STORAGE_BUCKET}{self.url}"
