@@ -30,6 +30,9 @@ class KnowledgeSourceCreateSerializer(CreateModelSerializer):
             "tags",
         ]
 
+    def validate_file(self, file):
+        return _require_knowledge_folder(file)
+
     def validate_kind(self, value):
         if value not in Constants.KNOWLEDGE_SOURCE_KINDS:
             raise serializers.ValidationError("Unknown source kind.")
@@ -65,6 +68,9 @@ class KnowledgeSourceEditSerializer(EditModelSerializer):
             "tags",
             "status",
         ]
+
+    def validate_file(self, file):
+        return _require_knowledge_folder(file)
 
     def validate_status(self, value):
         if value == Constants.KNOWLEDGE_SOURCE_STATUS_PUBLISHED:
@@ -117,6 +123,17 @@ class KnowledgeChunkListSerializer(ListModelSerializer):
             "token_count",
             "active",
         ]
+
+
+def _require_knowledge_folder(file):
+    if file is None:
+        return file
+    key = (file.url or "").lstrip("/")
+    if not key.startswith("knowledge/"):
+        raise serializers.ValidationError(
+            "Upload the file with purpose knowledge so it is stored in the private knowledge folder."
+        )
+    return file
 
 
 def approve_block(source: KnowledgeSource, _admin: Admin) -> str | None:

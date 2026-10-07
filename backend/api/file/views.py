@@ -33,8 +33,7 @@ class Create(SmartAPIView):
         file.token = shortuuid.uuid()
         file.save()
 
-        parts = file.url.partition("/files/")
-        filename = parts[2]
+        filename = file.url.rstrip("/").split("/")[-1]
 
         data = {
             "pre_signed_url": pre_signed_url,
