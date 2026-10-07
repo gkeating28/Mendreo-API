@@ -570,6 +570,22 @@ ONBOARDING_FOLLOWUP_CONSENTS = [
     ONBOARDING_FOLLOWUP_CONSENT_DECLINED,
 ]
 
+# Account consent shown before the product. Bump CONSENT_VERSION when any
+# sentence changes so a previous acceptance no longer counts.
+CONSENT_VERSION = "1"
+CONSENT_AGE_STATEMENT = "I confirm that I am 18 or over."
+CONSENT_LIMITATIONS_STATEMENT = "I understand what Mendreo provides and its limitations."
+CONSENT_MARKETING_STATEMENT = (
+    "I'd like to receive emails from Mendreo about wellbeing content, "
+    "new features, offers and other updates."
+)
+CONSENT_ERROR_AGE = "You must confirm that you are 18 or over."
+CONSENT_ERROR_LIMITATIONS = (
+    "You must confirm that you understand what Mendreo provides and its limitations."
+)
+CONSENT_ERROR_VERSION = "This consent form is out of date. Refresh and try again."
+CONSENT_REQUIRED_DETAIL = "consent_required"
+
 SETTING_KEY_REFRESH_ONBOARDING_CADENCE_DAYS = "refresh_onboarding_cadence_days"
 DEFAULT_REFRESH_ONBOARDING_CADENCE_DAYS = 30
 

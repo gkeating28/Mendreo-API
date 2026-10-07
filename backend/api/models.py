@@ -14,3 +14,4 @@ from .mood.models import MoodEntry  # noqa: F401
 from .progress.models import ScaleSubmission, UserObservation  # noqa: F401
 from .run.models import ExerciseReflection  # noqa: F401
 from .voice.models import VoiceGrant  # noqa: F401
+from .consent.models import ConsumerConsent, ConsumerMarketingOptIn  # noqa: F401
