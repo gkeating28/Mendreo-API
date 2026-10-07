@@ -47,6 +47,7 @@ from ..tasks import send_mail
 
 class Login(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = []
 
     def post(self, request):
@@ -91,6 +92,7 @@ class Login(SmartAPIView):
 
 class Logout(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -131,6 +133,7 @@ class Logout(SmartAPIView):
 # https://github.com/davesque/django-rest-framework-simplejwt/issues/25
 class Refresh(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = []
 
     def post(self, request):
@@ -170,6 +173,7 @@ class Refresh(SmartAPIView):
 
 class RequestPasswordReset(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = []
 
     def post(self, request):
@@ -202,6 +206,7 @@ class RequestPasswordReset(SmartAPIView):
 
 class ResetPassword(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = []
 
     def post(self, request):
@@ -268,6 +273,7 @@ class Info(APIView):
 
 class RequestVerifyEmail(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -288,6 +294,7 @@ class RequestVerifyEmail(SmartAPIView):
 
 class VerifyEmail(SmartAPIView):
 
+    consent_exempt = True
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -319,6 +326,8 @@ class VerifyEmail(SmartAPIView):
 
 
 class FacebookCode(SmartAPIView):
+
+    consent_exempt = True
 
     def get(self, request):
         access_token = QueryParams.get_str(request, "access_token")

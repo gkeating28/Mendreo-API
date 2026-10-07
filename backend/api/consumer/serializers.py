@@ -124,18 +124,24 @@ class ConsumerAdminEditSerializer(ConsumerEditSerializer):
 
 class ConsumerListSerializer(ListModelSerializer):
     user = serializers.SerializerMethodField()
+    consent_required = serializers.SerializerMethodField()
 
     class Meta:
         model = Consumer
         fields = [
             "user",
             "onboarded",
-            "date_of_birth"
+            "date_of_birth",
+            "consent_required",
         ]
 
     def get_user(self, obj):
         serializer = UserListSerializer(obj.user, context=self.context)
         return serializer.data
+
+    def get_consent_required(self, obj):
+        from ..consent.access import has_current_consent
+        return not has_current_consent(obj)
 
     @classmethod
     def get_select_related_fields(cls):
