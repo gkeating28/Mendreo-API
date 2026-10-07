@@ -210,6 +210,24 @@ def create_admin(email=None, data=None, object_response: bool = True) -> Admin |
     )
 
 
+def _grant_current_consent(consumer):
+    from django.utils import timezone
+    from ....consent.models import ConsumerConsent
+    from ....utils.Constants import CONSENT_VERSION
+
+    now = timezone.now()
+    ConsumerConsent.objects.update_or_create(
+        consumer=consumer,
+        version=CONSENT_VERSION,
+        defaults={
+            "age_confirmed": True,
+            "age_confirmed_at": now,
+            "limitations_acknowledged": True,
+            "limitations_acknowledged_at": now,
+        },
+    )
+
+
 def create_consumer(email=None, data=None, object_response: bool = True) -> Consumer | Response:
     if not data:
         data = Data.valid_consumer_data()
@@ -222,7 +240,10 @@ def create_consumer(email=None, data=None, object_response: bool = True) -> Cons
     if email:
         data["user"]["email"] = email
 
+    consumer = Consumer.objects.get(user_id=response.json["consumer"]["user"]["id"])
+    _grant_current_consent(consumer)
+
     if not object_response:
         return response
 
-    return Consumer.objects.get(user_id=response.json["consumer"]["user"]["id"])
+    return consumer
