@@ -14,12 +14,14 @@ from .models import KnowledgeChunk, KnowledgeSource
 logger = logging.getLogger(__name__)
 
 
-def index_now(source_id: str) -> int:
-    """Index before the response is sent, using the AI providers table key.
+def index_now(source_id: str) -> int | None:
+    """Start indexing with the AI providers table key.
 
-    Vercel cannot decrypt that key: it has no AI_SECRETS_MASTER_KEY, so a
-    local embed would fall through to the GOOGLE_API_KEY env var. The worker
-    can decrypt the Google provider row, so Vercel waits on that process.
+    Vercel cannot decrypt that key: it has no AI_SECRETS_MASTER_KEY. The
+    worker can, so Vercel asks the worker to index. The worker answers
+    immediately and keeps embedding after the HTTP call. Holding this
+    request open runs into the platform limit, the browser reports
+    "Failed to fetch", and the chunks — written only at the end — are lost.
     """
     from django.conf import settings
 
@@ -32,11 +34,28 @@ def index_now(source_id: str) -> int:
             f"{worker}/internal/knowledge/index",
             json={"source_id": source_id},
             headers={"X-Internal-Secret": secret},
-            timeout=270,
+            timeout=30,
         )
         response.raise_for_status()
-        return int(response.json()["chunks"])
+        payload = response.json()
+        if payload.get("accepted"):
+            return None
+        return int(payload["chunks"])
     return index_source(source_id)
+
+
+def start_index(source_id: str) -> None:
+    """Embed after the response is sent, so the request timeout cannot cut it off."""
+    import threading
+
+    def _run() -> None:
+        try:
+            count = index_source(source_id)
+            logger.info("knowledge source %s indexed chunks=%s", source_id, count)
+        except Exception:
+            logger.exception("knowledge source %s background index failed", source_id)
+
+    threading.Thread(target=_run, name=f"index-{source_id}", daemon=True).start()
 
 
 def index_source(source_id: str) -> int:

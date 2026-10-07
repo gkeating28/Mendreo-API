@@ -154,6 +154,15 @@ def _index_response(view, source: KnowledgeSource, *, published_now: bool):
         if published_now:
             message = f"The source was published, but indexing failed: {reason}"
         return view.respond_with(message, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if count is None:
+        source.refresh_from_db()
+        data = KnowledgeSourceDetailSerializer(source).data
+        data["indexing"] = True
+        data["detail"] = (
+            "Indexing is running. It takes about 3 minutes. "
+            "Refresh this source to see the chunks."
+        )
+        return Response(data)
     if count <= 0:
         message = "There was no text to index."
         if published_now:

@@ -114,9 +114,10 @@ class EmbeddingModelTests(SimpleTestCase):
     def test_vercel_indexes_on_the_worker_so_the_provider_key_decrypts(self, post):
         post.return_value = Mock(
             raise_for_status=Mock(),
-            json=Mock(return_value={"chunks": 4}),
+            json=Mock(return_value={"accepted": True}),
         )
-        self.assertEqual(index_now("ksrc_1"), 4)
+        self.assertIsNone(index_now("ksrc_1"))
+        self.assertEqual(post.call_args.kwargs["timeout"], 30)
         self.assertEqual(
             post.call_args.args[0],
             "https://worker.example/internal/knowledge/index",
@@ -126,6 +127,22 @@ class EmbeddingModelTests(SimpleTestCase):
             post.call_args.kwargs["headers"]["X-Internal-Secret"],
             "secret",
         )
+
+    def test_start_index_keeps_going_after_the_caller_returns(self):
+        import threading
+
+        from ...grounding.indexing import start_index
+
+        done = threading.Event()
+
+        def _fake(source_id):
+            self.assertEqual(source_id, "ksrc_1")
+            done.set()
+            return 2
+
+        with patch("api.grounding.indexing.index_source", side_effect=_fake):
+            start_index("ksrc_1")
+            self.assertTrue(done.wait(2))
 
 
 class GroundingTests(TestCase):
@@ -179,6 +196,40 @@ class GroundingTests(TestCase):
         }
         payload.update(kwargs)
         return KnowledgeSource.objects.create(**payload)
+
+    @patch("api.grounding.views.index_now", return_value=None)
+    def test_reindex_returns_while_indexing_continues(self, _index_now):
+        source = self._source()
+        response = self._post(
+            f"/knowledge/sources/{source.id}/reindex",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertTrue(response.json["indexing"])
+        self.assertIn("Refresh this source", response.json["detail"])
+        self.assertNotIn("indexed_chunks", response.json)
+
+    @override_settings(INTERNAL_API_SECRET="secret")
+    def test_internal_index_accepts_before_embedding_finishes(self):
+        import threading
+
+        done = threading.Event()
+
+        def _fake(source_id):
+            done.set()
+            return 1
+
+        with patch("api.grounding.indexing.index_source", side_effect=_fake):
+            response = self.client.post(
+                "/internal/knowledge/index",
+                data={"source_id": "ksrc_1"},
+                content_type="application/json",
+                HTTP_X_INTERNAL_SECRET="secret",
+            )
+        self.assertEqual(response.status_code, 202, response.content)
+        self.assertTrue(response.json()["accepted"])
+        self.assertTrue(done.wait(2))
 
     def test_reindex_swaps_version_and_failed_embed_keeps_the_previous(self):
         source = self._source()
