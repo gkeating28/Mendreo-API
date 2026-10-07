@@ -13,7 +13,7 @@ from ...exercise.models import Exercise
 from ...file.models import File
 from ...grounding.constants import EMBEDDING_DIMENSIONS
 from ...grounding.embeddings import clear_embedder, set_embedder
-from ...grounding.indexing import index_now, index_source
+from ...grounding.indexing import index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
 from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
@@ -105,45 +105,6 @@ class EmbeddingModelTests(SimpleTestCase):
         self.assertIn("quota is used up", str(caught.exception))
         clear_embedder()
 
-    @override_settings(
-        DEPLOYMENT_TARGET="vercel",
-        AI_WORKER_URL="https://worker.example/",
-        INTERNAL_API_SECRET="secret",
-    )
-    @patch("httpx.post")
-    def test_vercel_indexes_on_the_worker_so_the_provider_key_decrypts(self, post):
-        post.return_value = Mock(
-            raise_for_status=Mock(),
-            json=Mock(return_value={"accepted": True}),
-        )
-        self.assertIsNone(index_now("ksrc_1"))
-        self.assertEqual(post.call_args.kwargs["timeout"], 30)
-        self.assertEqual(
-            post.call_args.args[0],
-            "https://worker.example/internal/knowledge/index",
-        )
-        self.assertEqual(post.call_args.kwargs["json"], {"source_id": "ksrc_1"})
-        self.assertEqual(
-            post.call_args.kwargs["headers"]["X-Internal-Secret"],
-            "secret",
-        )
-
-    def test_start_index_keeps_going_after_the_caller_returns(self):
-        import threading
-
-        from ...grounding.indexing import start_index
-
-        done = threading.Event()
-
-        def _fake(source_id):
-            self.assertEqual(source_id, "ksrc_1")
-            done.set()
-            return 2
-
-        with patch("api.grounding.indexing.index_source", side_effect=_fake):
-            start_index("ksrc_1")
-            self.assertTrue(done.wait(2))
-
 
 class GroundingTests(TestCase):
     def setUp(self):
@@ -197,8 +158,9 @@ class GroundingTests(TestCase):
         payload.update(kwargs)
         return KnowledgeSource.objects.create(**payload)
 
-    @patch("api.grounding.views.index_now", return_value=None)
-    def test_reindex_returns_while_indexing_continues(self, _index_now):
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=False)
+    @patch("api.tasks.index_knowledge_source.delay")
+    def test_reindex_returns_immediately_and_queues_the_job(self, delay):
         source = self._source()
         response = self._post(
             f"/knowledge/sources/{source.id}/reindex",
@@ -206,30 +168,27 @@ class GroundingTests(TestCase):
             access_token=self.token,
         )
         self.assertEqual(response.status_code, 200, response.json)
-        self.assertTrue(response.json["indexing"])
-        self.assertIn("Refresh this source", response.json["detail"])
+        self.assertEqual(response.json["index_status"], "queued")
+        self.assertIn("leave this page", response.json["detail"].lower())
         self.assertNotIn("indexed_chunks", response.json)
+        delay.assert_called_once_with(source.id)
+        self.assertEqual(
+            KnowledgeChunk.objects.filter(source=source).count(),
+            0,
+        )
 
-    @override_settings(INTERNAL_API_SECRET="secret")
-    def test_internal_index_accepts_before_embedding_finishes(self):
-        import threading
-
-        done = threading.Event()
-
-        def _fake(source_id):
-            done.set()
-            return 1
-
-        with patch("api.grounding.indexing.index_source", side_effect=_fake):
-            response = self.client.post(
-                "/internal/knowledge/index",
-                data={"source_id": "ksrc_1"},
-                content_type="application/json",
-                HTTP_X_INTERNAL_SECRET="secret",
-            )
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=False, INTERNAL_API_SECRET="secret")
+    @patch("api.tasks.index_knowledge_source.delay")
+    def test_internal_index_queues_instead_of_embedding(self, delay):
+        response = self.client.post(
+            "/internal/knowledge/index",
+            data={"source_id": "ksrc_1"},
+            content_type="application/json",
+            HTTP_X_INTERNAL_SECRET="secret",
+        )
         self.assertEqual(response.status_code, 202, response.content)
         self.assertTrue(response.json()["accepted"])
-        self.assertTrue(done.wait(2))
+        delay.assert_called_once_with("ksrc_1")
 
     def test_reindex_swaps_version_and_failed_embed_keeps_the_previous(self):
         source = self._source()

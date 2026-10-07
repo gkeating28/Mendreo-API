@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from ..utils import QueryParams
 from ..utils.Permissions import IsAdminPermission
 from ..utils.Views import SmartAPIView, SmartDetailAPIView, SmartPaginationAPIView
-from .indexing import index_now
+from .indexing import queue_index
 from .models import KnowledgeChunk, KnowledgeSource
 from .search import search_chunks
 from .serializers import (
@@ -140,11 +140,11 @@ class SourceSearch(SmartAPIView):
 
 
 def _index_response(view, source: KnowledgeSource, *, published_now: bool):
-    """Run the index in this request and tell the caller how many chunks landed."""
+    """Queue indexing and answer immediately. The worker finishes the embed."""
     import logging
 
     try:
-        count = index_now(source.id)
+        count = queue_index(source.id)
     except Exception as error:
         logging.getLogger(__name__).exception(
             "knowledge source %s was not indexed", source.id
@@ -154,18 +154,17 @@ def _index_response(view, source: KnowledgeSource, *, published_now: bool):
         if published_now:
             message = f"The source was published, but indexing failed: {reason}"
         return view.respond_with(message, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    source.refresh_from_db()
     if count is None:
-        source.refresh_from_db()
         data = KnowledgeSourceDetailSerializer(source).data
-        data["indexing"] = True
         data["detail"] = (
-            "Indexing is running. It takes about 3 minutes. "
-            "Refresh this source to see the chunks."
+            "Indexing has started. It takes about 3 minutes. "
+            "You can leave this page. Refresh the source to see the chunks."
         )
         return Response(data)
     if count <= 0:
-        message = "There was no text to index."
-        if published_now:
+        message = source.index_error or "There was no text to index."
+        if published_now and not source.index_error:
             message = "The source was published, but there was no text to index."
         return view.respond_with(message, status_code=status.HTTP_400_BAD_REQUEST)
     source.refresh_from_db()

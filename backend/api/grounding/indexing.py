@@ -13,69 +13,67 @@ from .models import KnowledgeChunk, KnowledgeSource
 
 logger = logging.getLogger(__name__)
 
+INDEX_QUEUED = "queued"
+INDEX_RUNNING = "running"
+INDEX_READY = "ready"
+INDEX_FAILED = "failed"
 
-def index_now(source_id: str) -> int | None:
-    """Start indexing with the AI providers table key.
 
-    Vercel cannot decrypt that key: it has no AI_SECRETS_MASTER_KEY. The
-    worker can, so Vercel asks the worker to index. The worker answers
-    immediately and keeps embedding after the HTTP call. Holding this
-    request open runs into the platform limit, the browser reports
-    "Failed to fetch", and the chunks — written only at the end — are lost.
+def mark_index(source_id: str, status: str, error: str = "") -> None:
+    source = KnowledgeSource.objects.filter(id=source_id).first()
+    if source is None:
+        return
+    source.index_status = status
+    text = (error or "").strip()
+    source.index_error = text.splitlines()[0][:300] if text else ""
+    source.save(update_fields=["index_status", "index_error", "updated_at"])
+
+
+def queue_index(source_id: str) -> int | None:
+    """Hand indexing to the Celery worker and return.
+
+    The browser must not wait. A long embed dies at the platform limit and
+    the page shows "Failed to fetch", with no chunks saved. On Vercel the
+    task is pushed to Redis and the worker embeds with the AI providers key.
+    In tests the task runs here and the chunk count comes back.
     """
     from django.conf import settings
 
-    worker = (getattr(settings, "AI_WORKER_URL", "") or "").rstrip("/")
-    secret = getattr(settings, "INTERNAL_API_SECRET", "") or ""
-    if getattr(settings, "DEPLOYMENT_TARGET", "") == "vercel" and worker and secret:
-        import httpx
+    from ..tasks import index_knowledge_source
 
-        response = httpx.post(
-            f"{worker}/internal/knowledge/index",
-            json={"source_id": source_id},
-            headers={"X-Internal-Secret": secret},
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if payload.get("accepted"):
-            return None
-        return int(payload["chunks"])
-    return index_source(source_id)
-
-
-def start_index(source_id: str) -> None:
-    """Embed after the response is sent, so the request timeout cannot cut it off."""
-    import threading
-
-    def _run() -> None:
-        try:
-            count = index_source(source_id)
-            logger.info("knowledge source %s indexed chunks=%s", source_id, count)
-        except Exception:
-            logger.exception("knowledge source %s background index failed", source_id)
-
-    threading.Thread(target=_run, name=f"index-{source_id}", daemon=True).start()
+    if KnowledgeSource.objects.filter(id=source_id).exists():
+        mark_index(source_id, INDEX_QUEUED, "")
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        return index_knowledge_source(source_id)
+    index_knowledge_source.delay(source_id)
+    return None
 
 
 def index_source(source_id: str) -> int:
     source = KnowledgeSource.objects.filter(id=source_id).first()
-    if source is None or not _indexable(source):
+    if source is None:
+        return 0
+    if not _indexable(source):
+        mark_index(source_id, INDEX_FAILED, "This source cannot be indexed.")
         return 0
     text = read_source_text(source)
     if not text.strip():
         logger.info("knowledge source %s has no text; previous chunks stay active", source_id)
+        mark_index(source_id, INDEX_FAILED, "There was no text to index.")
         return 0
     pieces = chunk_markdown(text)
     if not pieces:
+        mark_index(source_id, INDEX_FAILED, "There was no text to index.")
         return 0
     vectors = embed_texts([piece.text for piece in pieces])
     with transaction.atomic():
         locked = KnowledgeSource.objects.select_for_update().get(id=source_id)
         if not _indexable(locked):
+            mark_index(source_id, INDEX_FAILED, "This source cannot be indexed.")
             return 0
         if read_source_text(locked) != text:
             logger.info("knowledge source %s changed during embedding; nothing written", source_id)
+            mark_index(source_id, INDEX_FAILED, "The source changed during indexing.")
             return 0
         has_active = KnowledgeChunk.objects.filter(source=locked, active=True).exists()
         version = locked.version + 1 if has_active else locked.version
@@ -95,9 +93,13 @@ def index_source(source_id: str) -> int:
                 for index, piece in enumerate(pieces)
             ]
         )
+        locked.index_status = INDEX_READY
+        locked.index_error = ""
+        update_fields = ["index_status", "index_error", "updated_at"]
         if locked.version != version:
             locked.version = version
-            locked.save(update_fields=["version", "updated_at"])
+            update_fields.insert(0, "version")
+        locked.save(update_fields=update_fields)
     return len(pieces)
 
 

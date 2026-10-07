@@ -64,9 +64,9 @@ class IndexKnowledgeSource(APIView):
                 {"detail": "source_id is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from ..grounding.indexing import start_index
+        from ..grounding.indexing import queue_index
 
-        start_index(source_id)
+        queue_index(source_id)
         return Response({"accepted": True}, status=status.HTTP_202_ACCEPTED)
 
 

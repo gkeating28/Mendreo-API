@@ -28,9 +28,8 @@ fi
 LISTEN_PORT="${PORT:-8080}"
 WORKERS="${WEB_CONCURRENCY:-2}"
 echo "worker: starting Gunicorn (${WORKERS} worker(s)) on [::]:${LISTEN_PORT} (dual-stack: also accepts IPv4)"
-# Timeout covers AI chat. Knowledge indexing returns immediately and keeps
-# embedding in the process, so this limit does not have to cover a whole guide.
-# Stuck workers are still recycled via --max-requests.
+# Timeout covers AI chat. Knowledge indexing is a Celery task, not this
+# request. Stuck workers are still recycled via --max-requests.
 MENDREO_SKIP_CELERY_IMPORT=1 gunicorn mendreo.wsgi \
   --bind "[::]:${LISTEN_PORT}" \
   --workers "${WORKERS}" \

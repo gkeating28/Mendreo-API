@@ -90,6 +90,8 @@ class KnowledgeSourceListSerializer(ListModelSerializer):
             "kind",
             "status",
             "version",
+            "index_status",
+            "index_error",
             "licence_note",
             "clinical_owner",
             "submitted_by",
