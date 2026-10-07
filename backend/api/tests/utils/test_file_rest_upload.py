@@ -89,3 +89,62 @@ class RestSignedUploadTests(SimpleTestCase):
         self.assertEqual(text, "# Avoidance\n")
         url = mock_get.call_args.args[0]
         self.assertIn("/storage/v1/object/Mendreo_Space/knowledge/u/guide.md", url)
+
+
+class RelocateKnowledgeFileTests(SimpleTestCase):
+    def _file(self, url):
+        uploaded = mock.Mock()
+        uploaded.url = url
+        uploaded.created_by_id = "usr_1"
+        return uploaded
+
+    @mock.patch.object(FileUtils, "delete")
+    @mock.patch.object(FileUtils, "upload", return_value=None)
+    @mock.patch.object(FileUtils, "_download_bytes", return_value=b"# Guide\n")
+    def test_public_admin_upload_is_copied_into_the_private_folder(
+        self, download, upload, delete
+    ):
+        uploaded = self._file("/admins/usr_1/files/abc.md")
+        with mock.patch.object(Api, "SUPABASE_STORAGE_BUCKET", "Mendreo_Space_Public"):
+            with mock.patch.object(Api, "SUPABASE_STORAGE_PRIVATE_BUCKET", "Mendreo_Space"):
+                FileUtils.relocate_to_knowledge_folder(uploaded)
+
+        download.assert_called_once_with("admins/usr_1/files/abc.md", "Mendreo_Space_Public")
+        upload.assert_called_once_with(
+            b"# Guide\n",
+            "knowledge/usr_1/abc.md",
+            content_type="text/markdown",
+        )
+        self.assertEqual(uploaded.url, "/knowledge/usr_1/abc.md")
+        uploaded.save.assert_called_once_with(update_fields=["url", "updated_at"])
+        delete.assert_called_once_with("/admins/usr_1/files/abc.md")
+
+    @mock.patch.object(FileUtils, "_download_bytes")
+    def test_knowledge_key_is_left_in_place(self, download):
+        uploaded = self._file("/knowledge/usr_1/abc.md")
+        FileUtils.relocate_to_knowledge_folder(uploaded)
+        download.assert_not_called()
+        uploaded.save.assert_not_called()
+        self.assertEqual(uploaded.url, "/knowledge/usr_1/abc.md")
+
+    @mock.patch.object(FileUtils, "delete")
+    @mock.patch.object(FileUtils, "upload")
+    @mock.patch.object(FileUtils, "_download_bytes", return_value=b"")
+    def test_missing_bytes_do_not_rewrite_the_file(self, _download, upload, delete):
+        uploaded = self._file("/admins/usr_1/files/abc.md")
+        with self.assertRaises(FileUtils.KnowledgeFileMissing):
+            FileUtils.relocate_to_knowledge_folder(uploaded)
+        upload.assert_not_called()
+        delete.assert_not_called()
+        uploaded.save.assert_not_called()
+
+    @mock.patch.object(FileUtils, "delete")
+    @mock.patch.object(FileUtils, "upload", return_value="Upload error: denied")
+    @mock.patch.object(FileUtils, "_download_bytes", return_value=b"# Guide\n")
+    def test_failed_copy_keeps_the_public_object(self, _download, _upload, delete):
+        uploaded = self._file("/admins/usr_1/files/abc.md")
+        with self.assertRaises(FileUtils.KnowledgeFileMissing):
+            FileUtils.relocate_to_knowledge_folder(uploaded)
+        delete.assert_not_called()
+        uploaded.save.assert_not_called()
+        self.assertEqual(uploaded.url, "/admins/usr_1/files/abc.md")

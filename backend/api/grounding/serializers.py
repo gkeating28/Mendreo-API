@@ -4,6 +4,7 @@ from rest_framework import serializers
 from ..admin.models import Admin
 from ..tag.models import Tag
 from ..utils import Constants
+from ..utils.File import KnowledgeFileMissing, relocate_to_knowledge_folder
 from ..utils.Serializers import CreateModelSerializer, EditModelSerializer, ListModelSerializer
 from .indexing import duplicates_reference_material
 from .models import KnowledgeChunk, KnowledgeSource
@@ -31,7 +32,7 @@ class KnowledgeSourceCreateSerializer(CreateModelSerializer):
         ]
 
     def validate_file(self, file):
-        return _require_knowledge_folder(file)
+        return _accept_uploaded_file(file)
 
     def validate_kind(self, value):
         if value not in Constants.KNOWLEDGE_SOURCE_KINDS:
@@ -70,7 +71,7 @@ class KnowledgeSourceEditSerializer(EditModelSerializer):
         ]
 
     def validate_file(self, file):
-        return _require_knowledge_folder(file)
+        return _accept_uploaded_file(file)
 
     def validate_status(self, value):
         if value == Constants.KNOWLEDGE_SOURCE_STATUS_PUBLISHED:
@@ -125,14 +126,19 @@ class KnowledgeChunkListSerializer(ListModelSerializer):
         ]
 
 
-def _require_knowledge_folder(file):
+def _accept_uploaded_file(file):
+    """Keep the admin upload flow working and store the bytes privately.
+
+    POST /files still writes the public admins/consumers/debug folders the
+    storage policies allow. Attaching that file to a knowledge source copies
+    it into the private knowledge folder before the source is saved.
+    """
     if file is None:
         return file
-    key = (file.url or "").lstrip("/")
-    if not key.startswith("knowledge/"):
-        raise serializers.ValidationError(
-            "Upload the file with purpose knowledge so it is stored in the private knowledge folder."
-        )
+    try:
+        relocate_to_knowledge_folder(file)
+    except KnowledgeFileMissing as error:
+        raise serializers.ValidationError(str(error)) from error
     return file
 
 

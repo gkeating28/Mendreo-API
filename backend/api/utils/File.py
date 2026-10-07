@@ -41,6 +41,7 @@ _EXTENSION_CONTENT_TYPES = {
     "wav": "audio/wav",
     "pdf": "application/pdf",
     "txt": "text/plain",
+    "md": "text/markdown",
     "json": "application/json",
 }
 
@@ -109,6 +110,10 @@ def get_image_extension(file):
 
 
 KNOWLEDGE_FOLDER = "knowledge"
+
+
+class KnowledgeFileMissing(Exception):
+    """The uploaded object cannot be copied into the private knowledge folder."""
 
 
 def bucket_for_key(path: str) -> str:
@@ -217,6 +222,53 @@ def delete(file_url):
         print(f"File '{file_url}' deleted successfully from bucket '{bucket}'.")
     else:
         print(f"Failed to delete file '{file_url}' from bucket '{bucket}'.")
+
+
+def relocate_to_knowledge_folder(file) -> None:
+    """Copy a public admin upload into the private knowledge folder.
+
+    The admin UI uploads through POST /files, which stores
+    /admins/<id>/files/<uuid>.<ext> in the public bucket. Licensed source
+    text cannot stay there. When a knowledge source is saved, copy those
+    bytes to knowledge/<owner>/<uuid>.<ext>, point the File row at that
+    key, then delete the public object. Files already in knowledge/ are
+    left as they are. Other uploads (video, images, podcasts) are not
+    moved unless a knowledge source is attached to them.
+    """
+    key = _get_key(getattr(file, "url", None) or "")
+    if not key or key.startswith(f"{KNOWLEDGE_FOLDER}/"):
+        return
+
+    owner = getattr(file, "created_by_id", None) or "shared"
+    filename = key.rsplit("/", 1)[-1]
+    dest_key = f"{KNOWLEDGE_FOLDER}/{owner}/{filename}"
+
+    data = _download_bytes(key, bucket_for_key(key))
+    if not data:
+        raise KnowledgeFileMissing(
+            "This file has no stored bytes yet. Finish the upload, then attach it again."
+        )
+
+    result = upload(data, dest_key, content_type=content_type_for_path(dest_key))
+    if isinstance(result, str) and result.startswith("Upload error"):
+        logger.error("Knowledge file copy failed for %s: %s", key, result)
+        raise KnowledgeFileMissing(
+            "The file could not be copied into the private knowledge folder."
+        )
+
+    old_url = file.url
+    file.url = f"/{dest_key}"
+    file.save(update_fields=["url", "updated_at"])
+
+    try:
+        delete(old_url)
+    except Exception as error:
+        logger.warning(
+            "Knowledge file %s was copied to %s but the public object was not deleted: %s",
+            old_url,
+            dest_key,
+            error,
+        )
 
 
 def download_text(file_url: str) -> str:
