@@ -51,83 +51,92 @@ def _embed(texts):
     return vectors
 
 
+def _embed_response(status_code, body):
+    response = Mock()
+    response.status_code = status_code
+    response.text = body if isinstance(body, str) else ""
+    response.json.return_value = body if isinstance(body, dict) else {}
+    return response
+
+
 class EmbeddingModelTests(SimpleTestCase):
-    @patch("api.grounding.embeddings._embed_client")
-    def test_embeddings_request_768_dimensions_from_gemini(self, client_factory):
-        from ...grounding.constants import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
+    @patch("api.grounding.embeddings.httpx.post")
+    @patch("api.grounding.embeddings._embed_api_key", return_value="test-key")
+    def test_embeddings_use_embed_content_at_768_dimensions(self, _api_key, post):
         from ...grounding.embeddings import clear_embedder, embed_texts
 
         clear_embedder()
-        embedding = Mock(values=[0.2] * EMBEDDING_DIMENSIONS)
-        client = Mock()
-        client.models.embed_content.return_value = Mock(embeddings=[embedding])
-        client_factory.return_value = client
+        post.return_value = _embed_response(
+            200, {"embedding": {"values": [0.2] * 768}}
+        )
 
         vectors = embed_texts(["Avoidance keeps the cycle going."])
 
-        kwargs = client.models.embed_content.call_args.kwargs
-        self.assertEqual(kwargs["model"], EMBEDDING_MODEL)
-        self.assertEqual(kwargs["model"], "gemini-embedding-001")
-        self.assertEqual(kwargs["config"].output_dimensionality, 768)
         self.assertEqual(len(vectors[0]), 768)
+        url = post.call_args.args[0]
+        self.assertIn("gemini-embedding-001:embedContent", url)
+        self.assertNotIn("batchEmbedContents", url)
+        self.assertEqual(post.call_args.kwargs["json"]["outputDimensionality"], 768)
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["x-goog-api-key"],
+            "test-key",
+        )
         clear_embedder()
 
-    @patch("api.grounding.embeddings.time.sleep")
-    @patch("api.grounding.embeddings._embed_client")
-    def test_a_long_guide_is_embedded_in_paced_batches(self, client_factory, sleep):
+    @patch("api.grounding.embeddings.httpx.post")
+    @patch("api.grounding.embeddings._embed_api_key", return_value="test-key")
+    def test_each_chunk_is_its_own_embed_content_call(self, _api_key, post):
         from ...grounding.embeddings import clear_embedder, embed_texts
 
         clear_embedder()
-        client = Mock()
-        client.models.embed_content.side_effect = lambda **_kwargs: Mock(
-            embeddings=[Mock(values=[0.2] * 768) for _ in range(10)]
+        post.return_value = _embed_response(
+            200, {"embedding": {"values": [0.2] * 768}}
         )
-        client_factory.return_value = client
 
         embed_texts(["chunk"] * 20)
 
-        self.assertEqual(client.models.embed_content.call_count, 2)
-        sleep.assert_called_once()
+        self.assertEqual(post.call_count, 20)
         clear_embedder()
 
     @patch("api.grounding.embeddings.time.sleep")
-    @patch("api.grounding.embeddings._embed_client")
-    def test_a_per_minute_limit_is_retried(self, client_factory, sleep):
+    @patch("api.grounding.embeddings.httpx.post")
+    @patch("api.grounding.embeddings._embed_api_key", return_value="test-key")
+    def test_a_per_minute_limit_is_retried(self, _api_key, post, sleep):
         from ...grounding.embeddings import clear_embedder, embed_texts
 
         clear_embedder()
-        limited = RuntimeError(
-            "429 RESOURCE_EXHAUSTED. Quota exceeded for requests per minute. Please retry in 20s."
-        )
-        ok = Mock(embeddings=[Mock(values=[0.2] * 768)])
-        client = Mock()
-        client.models.embed_content.side_effect = [limited, ok]
-        client_factory.return_value = client
+        post.side_effect = [
+            _embed_response(
+                429,
+                "429 RESOURCE_EXHAUSTED. Quota exceeded for requests per minute. Please retry in 20s.",
+            ),
+            _embed_response(200, {"embedding": {"values": [0.2] * 768}}),
+        ]
 
         vectors = embed_texts(["Avoidance keeps the cycle going."])
 
         self.assertEqual(len(vectors), 1)
-        self.assertEqual(client.models.embed_content.call_count, 2)
+        self.assertEqual(post.call_count, 2)
         sleep.assert_called()
         clear_embedder()
 
     @patch("api.grounding.embeddings.time.sleep")
-    @patch("api.grounding.embeddings._embed_client")
-    def test_a_billing_quota_error_keeps_googles_message(self, client_factory, sleep):
+    @patch("api.grounding.embeddings.httpx.post")
+    @patch("api.grounding.embeddings._embed_api_key", return_value="test-key")
+    def test_a_billing_quota_error_keeps_googles_message(self, _api_key, post, sleep):
         from ...grounding.embeddings import clear_embedder, embed_texts
 
         clear_embedder()
-        client = Mock()
-        client.models.embed_content.side_effect = RuntimeError(
+        post.return_value = _embed_response(
+            429,
             "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': "
-            "'You exceeded your current quota, please check your plan and billing details.'}}"
+            "'You exceeded your current quota, please check your plan and billing details.'}}",
         )
-        client_factory.return_value = client
 
         with self.assertRaises(RuntimeError) as caught:
             embed_texts(["Avoidance"])
 
-        self.assertEqual(client.models.embed_content.call_count, 1)
+        self.assertEqual(post.call_count, 1)
         self.assertIn("billing details", str(caught.exception))
         self.assertNotIn("enable billing", str(caught.exception).lower())
         sleep.assert_not_called()

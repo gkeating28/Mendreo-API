@@ -134,7 +134,7 @@ def index_knowledge_source(source_id):
     try:
         count = index_source(source_id)
     except Exception as exc:
-        mark_index(source_id, "failed", str(exc).splitlines()[0])
+        mark_index(source_id, "failed", str(exc))
         logger.exception("index_knowledge_source %s failed", source_id)
         raise
     logger.info("End > index_knowledge_source %s chunks=%s", source_id, count)

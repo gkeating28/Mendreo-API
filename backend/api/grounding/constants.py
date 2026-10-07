@@ -8,9 +8,6 @@ Changing the dimension needs a new migration. Retrieval stays behind
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
-# Each text in a batch counts as one Gemini request. A billed key still has a
-# per-minute cap, so a long guide is paced instead of sent at once.
-EMBED_TEXTS_PER_MINUTE = 60
 
 CHUNK_TARGET_TOKENS = 500
 CHUNK_HARD_TOKENS = 800
