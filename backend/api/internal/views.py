@@ -64,9 +64,10 @@ class IndexKnowledgeSource(APIView):
                 {"detail": "source_id is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from ..grounding.indexing import index_source
+        from ..grounding.indexing import start_index
 
-        return Response({"chunks": index_source(source_id)})
+        start_index(source_id)
+        return Response({"accepted": True}, status=status.HTTP_202_ACCEPTED)
 
 
 class CheckSubscriptionsCron(APIView):
