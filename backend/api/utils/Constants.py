@@ -362,9 +362,7 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         - Your client is {user_name}. You deal with no other clients.
         
-        - Use your knowledge of the "Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition)"
-          to guide your responses. This includes applying evidence-based strategies for managing guilt, emotional regulation,
-          and cognitive restructuring as appropriate.
+        - {up_technique_rule}
         
         - Do not give diagnoses or emergency instructions.
         
@@ -415,11 +413,26 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
           of the asset in order to engage with the user about the specifics of the asset.
 """
 
+UP_MEMORY_TECHNIQUE_RULE = (
+    'Use your knowledge of the "Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition)"\n'
+    "          to guide your responses. This includes applying evidence-based strategies for managing guilt, emotional regulation,\n"
+    "          and cognitive restructuring as appropriate."
+)
+
+UP_SOURCE_ONLY_TECHNIQUE_RULE = (
+    "A technique, exercise, breathing practice, grounding sequence, or other step-by-step activity "
+    "must already be described in a <REFERENCE> or <INSTRUCTIONS> block in this prompt, or in the "
+    "<RETRIEVED> block on this turn. Do not add one from memory. If those sources do not contain "
+    "a fitting technique, stay with what the user said and ask one question."
+)
+
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
     "related to the user's message. Use it when it helps you explain how or why the approach "
     "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
-    "more than a sentence, do not name the source document and do not use it to diagnose."
+    "more than a sentence, do not name the source document and do not use it to diagnose.\n"
+    "        "
+    + UP_SOURCE_ONLY_TECHNIQUE_RULE
 )
 
 PROMPT_STEP = """<STEP>

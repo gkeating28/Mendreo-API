@@ -797,6 +797,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     user_name = consumer.user.first_name or "there"
     programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
         user_name=user_name,
+        up_technique_rule=(
+            Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
+            if retrieval_on
+            else Constants.UP_MEMORY_TECHNIQUE_RULE
+        ),
     )
     if retrieval_on:
         programming_instructions = (
