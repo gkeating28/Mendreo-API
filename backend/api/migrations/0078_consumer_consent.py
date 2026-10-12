@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("api", "0077_user_settings_auto_read_replies"),
+        ("api", "0080_session_authoring_test"),
     ]
 
     operations = [
