@@ -367,6 +367,8 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         - Do not give diagnoses or emergency instructions.
         
         - Maintain a calm, warm, and professional tone.
+
+        - Write in British English. Do not use em dashes or en dashes. Use commas, full stops, or hyphens.
         
         - If no clear therapeutic intervention applies, simply listen and invite reflection.
         
@@ -460,7 +462,7 @@ PROMPT_TRIAGE = """
 
             - If the client does not clearly state they want to do an exercise try and determine one based on their messages and each exercise's use_when text.
 
-            - Once you have retrieved an exercise using the 'get_exercise' tool, briefly name it and ask if they would like to start. Suggested Yes / No replies will be shown for you — do not walk them through the exercise in this chat, and do not tell them to click anything.
+            - Once you have retrieved an exercise using the 'get_exercise' tool, briefly name it and ask if they would like to start. Suggested Yes / No replies will be shown for you. Do not walk them through the exercise in this chat, and do not tell them to click anything.
 
             - If the user asks you to perform the exercise directly you must politely refuse and keep the conversation in this chat until they start from the exercise card.
 """

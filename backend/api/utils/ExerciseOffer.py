@@ -55,7 +55,7 @@ def already_invites_exercise_start(text: str | None) -> bool:
 
 def with_offer_question(text: str | None, exercise) -> str:
     ask = (
-        f"There's an exercise that fits what you're describing — {exercise.title}. "
+        f"There's an exercise that fits what you're describing: {exercise.title}. "
         "Would you like to start an exercise? Yes or no."
     )
     body = (text or "").strip()
@@ -244,7 +244,7 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
             session=session,
             sender=agent_participant,
             text=(
-                f"Okay — I'll leave {title} here until you want it. "
+                f"Okay. I'll leave {title} here until you want it. "
                 "Tap the card whenever you're ready."
             ),
             reasoning="Exercise offer declined",
