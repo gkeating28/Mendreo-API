@@ -11,6 +11,7 @@ from ...question.models import Question
 from ...session.models import Session, SessionMetric
 from ...setting.models import Setting
 from ...utils import Constants
+from ...utils.Agent import GeneralResponse
 from ...utils.history import build_history
 from ...utils.risk import apply_turn_risk
 from ...utils.turn_hint import (
@@ -74,6 +75,14 @@ class Wp3Tests(TestCase):
         self.assertIn(
             "sentence starters the user completes",
             Constants.PROMPT_PROGRAMMING_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "Write in British English",
+            Constants.PROMPT_PROGRAMMING_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "1-4 words",
+            GeneralResponse.model_fields["suggested_responses"].description,
         )
         open_question = _Previous(Constants.QUESTION_KIND_OPEN, 0)
         self.assertEqual(turn_hint_text(open_question, "yes"), FOLLOW_UP_HINT)

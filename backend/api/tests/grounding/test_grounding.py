@@ -332,6 +332,13 @@ class GroundingTests(TestCase):
         )
         general = Session.objects.create(consumer=consumer)
         general_prompt = _prepare_prompt(general)
+        self.assertIn("Write in British English", general_prompt)
+        general.cached_prompt = general_prompt.replace(
+            "Write in British English", "Write in English"
+        )
+        general.save(update_fields=["cached_prompt", "updated_at"])
+        rebuilt = _prepare_prompt(general)
+        self.assertIn("Write in British English", rebuilt)
         self.assertIn("evidence-based strategies", general_prompt)
         self.assertNotIn("Do not add one from memory", general_prompt)
         self.assertNotIn("do not name the source document", general_prompt)

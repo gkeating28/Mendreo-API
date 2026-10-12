@@ -62,7 +62,7 @@ class GeneralResponse(BaseModel):
     )
     suggested_responses: Optional[List] = Field(
         description=(
-            "Optional. Up to 3 tap-to-send replies in the client's own voice, each 1–4 words. "
+            "Optional. Up to 3 tap-to-send replies in the client's own voice, each 1-4 words. "
             "These are answers the client would send back, never your question restated. "
             "If `text` asks something, chips must answer it "
             '(e.g. text: "When would evenings or weekends work?" → ["Tonight", "This weekend"]). '
@@ -678,6 +678,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
         if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
             stale_retrieval = True
+        stale_style = "Write in British English" not in cached
         if not any((
             stale_placeholders,
             stale_click,
@@ -685,6 +686,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_phase,
             stale_machine,
             stale_retrieval,
+            stale_style,
         )):
             return cached
         session.cached_prompt = None
@@ -1005,7 +1007,7 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=
                 "Do not set is_step_complete in that message. "
                 "Only set is_step_complete after they confirm (yes/ok). "
                 "'Move on' or 'ready to proceed' in this step's instructions means continue "
-                "THIS step — it is not permission to complete it."
+                "THIS step. It is not permission to complete it."
             )
         else:
             completion_criteria += (
