@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import CursorPagination, PageNumberPagination
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 
 from django.db import transaction
 
@@ -15,8 +15,22 @@ from ..utils.Permissions import IsAdminPermission
 class SmartAPIView(APIView):
     role_permission = False
     query_params = QueryParams
+    # Signed-in consumers are blocked until they accept the current consent
+    # text. Set this on views the consent screen, login, and email
+    # verification need.
+    consent_exempt = False
 
     permission_classes = [IsAdminPermission]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.consent_exempt or not self.is_consumer_request():
+            return
+        from ..consent.access import has_current_consent
+        from .Constants import CONSENT_REQUIRED_DETAIL
+
+        if not has_current_consent(self.get_consumer_from_request()):
+            raise PermissionDenied(CONSENT_REQUIRED_DETAIL)
 
     def not_found(self, text="Object not found"):
 

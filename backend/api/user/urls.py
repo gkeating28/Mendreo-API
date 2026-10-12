@@ -12,6 +12,7 @@ from .views import (
     VerifyEmail,
     FacebookCode
 )
+from ..consent.views import Consent
 
 urlpatterns = [
     path('/login', Login.as_view()),
@@ -25,4 +26,5 @@ urlpatterns = [
     path('/reset-password', ResetPassword.as_view()),
     path("/request-verify-email", RequestVerifyEmail.as_view()),
     path("/verify-email", VerifyEmail.as_view()),
+    path("/consent", Consent.as_view()),
 ]
