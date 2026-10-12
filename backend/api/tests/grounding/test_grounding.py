@@ -330,9 +330,17 @@ class GroundingTests(TestCase):
             completed=False,
             total_steps_no=exercise.steps_no,
         )
+        general = Session.objects.create(consumer=consumer)
+        general_prompt = _prepare_prompt(general)
+        self.assertIn("evidence-based strategies", general_prompt)
+        self.assertNotIn("Do not add one from memory", general_prompt)
+        self.assertNotIn("do not name the source document", general_prompt)
+
         prompt = _prepare_prompt(session)
         self.assertIn("UNIQUE_NOTE_ALPHA", prompt)
         self.assertNotIn("do not name the source document", prompt)
+        self.assertIn("only as background", prompt)
+        self.assertNotIn("Do not add one from memory", prompt)
 
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
         session.refresh_from_db()
@@ -351,6 +359,9 @@ class GroundingTests(TestCase):
         enabled = _prepare_prompt(stamped)
         self.assertIn("UNIQUE_NOTE_ALPHA", enabled)
         self.assertIn("do not name the source document", enabled)
+        self.assertIn("Do not add one from memory", enabled)
+        self.assertNotIn("evidence-based strategies", enabled)
+        self.assertNotIn("only as background", enabled)
         self.assertIn("<REFERENCE>", enabled)
 
     def test_settings_or_cache_failure_leaves_retrieval_off(self):
