@@ -40,10 +40,6 @@ class Session(SmartModel):
     # Keep the row and its answers; do not surface it as in_progress.
     abandoned = models.BooleanField(default=False)
 
-    # Exercise-builder preview. Stays off the consumer's history and does not
-    # write knowledge, metrics, summaries, completions, or safety mail.
-    authoring_test = models.BooleanField(default=False, db_index=True)
-
     # Admin who started this preview. The session's consumer is the person
     # being tested against, which is a different account.
     authoring_admin = models.ForeignKey(
