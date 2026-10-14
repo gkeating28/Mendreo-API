@@ -333,6 +333,7 @@ class GroundingTests(TestCase):
         general = Session.objects.create(consumer=consumer)
         general_prompt = _prepare_prompt(general)
         self.assertIn("Write in British English", general_prompt)
+        self.assertIn("When the client asks about a fact listed here", general_prompt)
         general.cached_prompt = general_prompt.replace(
             "Write in British English", "Write in English"
         )

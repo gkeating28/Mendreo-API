@@ -25,6 +25,7 @@ from ..session.serializers import Session, SessionDetailSerializer
 
 from ..utils import DateUtils, Constants, S3 as S3Utils
 from .SuggestedResponses import sanitize_suggested_responses
+from .reply_style import normalise_reply
 from .completion import is_usable_completion_result, pick_completion_result_from_texts
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
@@ -380,10 +381,15 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         'response_time_in_sec': round(timer_end - timer_start, 3)
     }
 
+    response_data.text = normalise_reply(response_data.text)
     response_data.suggested_responses = sanitize_suggested_responses(
         response_data.suggested_responses,
         response_data.text,
     )
+    if response_data.suggested_responses:
+        response_data.suggested_responses = [
+            normalise_reply(chip) for chip in response_data.suggested_responses
+        ]
 
     return response_data, usage, dependencies.asset, dependencies.matched_exercise
 
@@ -682,7 +688,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
         if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
             stale_retrieval = True
-        stale_style = "Write in British English" not in cached
+        stale_style = (
+            "Write in British English" not in cached
+            or "When the client asks about a fact listed here" not in cached
+        )
         if not any((
             stale_placeholders,
             stale_click,
