@@ -1062,6 +1062,24 @@ class AuthoringMessageTests(AuthoringRunTestCase):
             "Not allowed to send messages for past sessions.",
         )
 
+    def test_other_admin_cannot_message_this_run(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        other = create_admin(email="authoring-other@example.com")
+        other_token = get_access_token(other.user)
+
+        denied = self._message(exercise, session_id, "Hello", token=other_token)
+        self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
+
+        with patch(
+            "api.utils.Agent.get_response",
+            side_effect=_script([_agent_turn("Tell me the thought.")]),
+        ):
+            own = self._message(exercise, session_id, "I keep thinking I will fail.")
+        self.assertEqual(own.status_code, status.HTTP_200_OK, own.json)
+        self.assertFalse(Session.objects.get(id=session_id).completed)
+
     def test_message_model_failure_rolls_the_turn_back(self):
         exercise = self._draft()
         started = self._start(exercise)
@@ -1332,5 +1350,28 @@ class AuthoringCleanupTests(AuthoringRunTestCase):
             delete_authoring_run(flagged_on_real)
         self.assertTrue(Session.objects.filter(id=flagged_on_real.id).exists())
         self.assertTrue(Exercise.objects.filter(id=exercise.id).exists())
+
+    def test_other_admin_cannot_delete_this_run(self):
+        exercise = self._draft()
+        started = self._start(exercise)
+        session_id = started.json["session_id"]
+        snapshot_id = started.json["snapshot_exercise_id"]
+        other = create_admin(email="authoring-other@example.com")
+        other_token = get_access_token(other.user)
+
+        denied = TestCase._delete(
+            f"/exercises/{exercise.id}/test-runs/{session_id}",
+            other_token,
+        )
+        self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Session.objects.filter(id=session_id).exists())
+        self.assertTrue(Exercise.objects.filter(id=snapshot_id).exists())
+
+        own = TestCase._delete(
+            f"/exercises/{exercise.id}/test-runs/{session_id}",
+            self.admin_one_access_token,
+        )
+        self.assertEqual(own.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Session.all_objects.filter(id=session_id).exists())
 
 

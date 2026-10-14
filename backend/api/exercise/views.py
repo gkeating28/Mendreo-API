@@ -277,6 +277,10 @@ class TestRunMessage(SmartAPIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        admin = self.get_admin_from_request()
+        if admin is None:
+            return self.not_found()
+
         from ..session.models import Session
         from ..utils.authoring_run import from_suggested_response, post_authoring_message
 
@@ -285,6 +289,7 @@ class TestRunMessage(SmartAPIView):
             .filter(
                 id=run_id,
                 authoring_test=True,
+                authoring_admin=admin,
                 exercise__authoring_snapshot=True,
                 exercise__authoring_source_id=exercise.id,
             )
@@ -336,6 +341,10 @@ class TestRunDetail(SmartAPIView):
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
+        admin = self.get_admin_from_request()
+        if admin is None:
+            return self.not_found()
+
         from ..session.models import Session
         from ..utils.authoring_run import AuthoringDeleteRefused, delete_authoring_run
 
@@ -344,6 +353,7 @@ class TestRunDetail(SmartAPIView):
             .filter(
                 id=run_id,
                 authoring_test=True,
+                authoring_admin=admin,
                 exercise__authoring_snapshot=True,
                 exercise__authoring_source_id=exercise.id,
             )
