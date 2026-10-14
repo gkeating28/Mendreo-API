@@ -104,6 +104,20 @@ def close_idle_sessions():
 
 
 @shared_task(
+    base=PeriodicTask,
+    run_every=timedelta(minutes=15),
+    name="sweep_authoring_test_runs",
+    ignore_result=True,
+)
+def sweep_authoring_test_runs():
+    from .utils.authoring_run import sweep_authoring_test_runs as _sweep
+
+    logger.info("Start > sweep_authoring_test_runs")
+    deleted = _sweep()
+    logger.info("End > sweep_authoring_test_runs deleted=%s", deleted)
+
+
+@shared_task(
     name="run_eval",
     ignore_result=True,
     base=TransactionAwareTask,

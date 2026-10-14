@@ -47,7 +47,7 @@ class ListCreate(SmartPaginationAPIView):
     def add_filters(self, query, request):
         # Serializers render nested steps/questions; prefetch to avoid N+1
         # (each extra query costs a full round-trip to the remote database).
-        query = query.prefetch_related("steps", "questions")
+        query = query.prefetch_related("steps", "questions").filter(authoring_snapshot=False)
 
         status_ = QueryParams.get_str(request, "status")
         search_term = QueryParams.get_str(request, "search_term")
@@ -97,6 +97,9 @@ class Detail(SmartDetailAPIView):
     admin_detail_serializer = ExerciseAdminDetailSerializer
 
     deletable = True
+
+    def add_filters(self, queryset, request):
+        return queryset.filter(authoring_snapshot=False)
 
     def has_permission(self, request, method):
         if method == "GET":
@@ -182,6 +185,187 @@ class StepDryRun(SmartAPIView):
                 status_code=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class TestRun(SmartAPIView):
+    """Start a flagged test run from the exercise form, including unsaved edits."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+
+        consumer_id = request.data.get("consumer_id") if isinstance(request.data, dict) else None
+        if not consumer_id:
+            return self.respond_with(
+                "Choose a user to dry-run against.",
+                key="consumer_id",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from ..consumer.models import Consumer
+        from ..utils.authoring_run import (
+            delete_admin_authoring_runs,
+            start_authoring_test,
+            write_authoring_snapshot,
+        )
+
+        consumer = Consumer.objects.select_related("user").filter(pk=consumer_id).first()
+        if consumer is None:
+            return self.respond_with(
+                "Consumer not found",
+                key="consumer_id",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        admin = self.get_admin_from_request()
+        try:
+            with transaction.atomic():
+                delete_admin_authoring_runs(admin, exercise)
+                snapshot = write_authoring_snapshot(exercise, request.data)
+                session, opening, session_state = start_authoring_test(
+                    snapshot, consumer, admin
+                )
+        except ValueError as exc:
+            return self.respond_with(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_with(
+                f"Dry run failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "opening_message": opening.text,
+                "session_state": session_state,
+                "session_id": session.id,
+                "snapshot_exercise_id": snapshot.id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class TestRunMessage(SmartAPIView):
+    """Send one turn on a flagged test run. Runs in this request."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def post(self, request, id, run_id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "POST")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        admin = self.get_admin_from_request()
+        if admin is None:
+            return self.not_found()
+
+        from ..session.models import Session
+        from ..utils.authoring_run import from_suggested_response, post_authoring_message
+
+        session = (
+            Session.objects.select_related("exercise", "consumer")
+            .filter(
+                id=run_id,
+                authoring_test=True,
+                authoring_admin=admin,
+                exercise__authoring_snapshot=True,
+                exercise__authoring_source_id=exercise.id,
+            )
+            .first()
+        )
+        if session is None:
+            return self.not_found()
+        if session.completed or session.state == Constants.SESSION_STATE_COMPLETED:
+            return self.respond_with(
+                "Not allowed to send messages for past sessions.",
+                key="session",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                payload = post_authoring_message(
+                    session,
+                    request.data.get("text") if isinstance(request.data, dict) else "",
+                    from_suggested_response(request.data),
+                )
+        except ValueError as exc:
+            return self.respond_with(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_with(
+                f"Dry run failed: {exc}",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class TestRunDetail(SmartAPIView):
+    """Hard-delete one flagged test run and its snapshot."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def delete(self, request, id, run_id):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "DELETE")
+
+        exercise = Exercise.objects.filter(id=id, authoring_snapshot=False).first()
+        if exercise is None:
+            return self.not_found()
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        admin = self.get_admin_from_request()
+        if admin is None:
+            return self.not_found()
+
+        from ..session.models import Session
+        from ..utils.authoring_run import AuthoringDeleteRefused, delete_authoring_run
+
+        session = (
+            Session.objects.select_related("exercise")
+            .filter(
+                id=run_id,
+                authoring_test=True,
+                authoring_admin=admin,
+                exercise__authoring_snapshot=True,
+                exercise__authoring_source_id=exercise.id,
+            )
+            .first()
+        )
+        if session is None:
+            return self.not_found()
+        try:
+            delete_authoring_run(session)
+        except AuthoringDeleteRefused:
+            return self.not_found()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DuplicateExerciseView(SmartAPIView):

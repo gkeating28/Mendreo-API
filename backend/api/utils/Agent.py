@@ -446,7 +446,11 @@ def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
         Args:
             exercise_id: ID of  the exercise
         """
-        exercise = Exercise.objects.filter(id=exercise_id, status=Constants.EXERCISE_STATUS_PUBLISHED).first()
+        exercise = Exercise.objects.filter(
+            id=exercise_id,
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+            authoring_snapshot=False,
+        ).first()
 
         if exercise:
             ctx.deps.matched_exercise = exercise
@@ -716,11 +720,15 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     exercise = session.exercise
 
     if exercise:
-        if create_summary:
+        if create_summary and not session.authoring_test:
             exercise_summary = ExerciseSummary.get_or_create(consumer, exercise)
             summary_notes = exercise_summary.detailed or ""
         else:
-            found = ExerciseSummary.objects.filter(consumer=consumer, exercise=exercise).first()
+            # A snapshot has no summary of its own. Read the source exercise's.
+            summary_exercise_id = getattr(exercise, "authoring_source_id", None) or exercise.id
+            found = ExerciseSummary.objects.filter(
+                consumer=consumer, exercise_id=summary_exercise_id
+            ).first()
             summary_notes = (found.detailed or "") if found else ""
         live_steps_no = (
             len(steps) if steps is not None else (exercise.steps.count() or exercise.steps_no)

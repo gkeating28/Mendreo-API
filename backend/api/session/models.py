@@ -40,6 +40,16 @@ class Session(SmartModel):
     # Keep the row and its answers; do not surface it as in_progress.
     abandoned = models.BooleanField(default=False)
 
+    # Admin who started this preview. The session's consumer is the person
+    # being tested against, which is a different account.
+    authoring_admin = models.ForeignKey(
+        "api.Admin",
+        related_name="authoring_test_runs",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
     current_step_no = models.PositiveIntegerField(null=True)
 
     cached_prompt = models.TextField(null=True)
@@ -121,6 +131,10 @@ class Session(SmartModel):
         self.completed = True
         if self.completed_at is None:
             self.completed_at = when or timezone.now()
+        # A test run is finished once the session is marked. close_session
+        # rates, extracts, and writes the exercise summary.
+        if getattr(self, "authoring_test", False):
+            return self
         from ..utils.session_close import close_session
 
         close_session(self, "completed")
@@ -137,6 +151,7 @@ class Session(SmartModel):
                 exercise=exercise,
                 completed=False,
                 abandoned=False,
+                authoring_test=False,
             )
             if force_new:
                 paused.update(abandoned=True)
@@ -151,6 +166,7 @@ class Session(SmartModel):
                 exercise=None,
                 created_at__gte=start,
                 created_at__lt=end,
+                authoring_test=False,
             ).order_by("-created_at").first()
 
             if session and not session.completed:
