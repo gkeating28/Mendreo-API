@@ -63,6 +63,14 @@ def _match_case(source: str, replacement: str) -> str:
     return replacement
 
 
+def reply_ends_mid_sentence(text: str | None) -> bool:
+    """True when a reply has words but no full stop, question mark, or exclamation mark."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return re.search(r"[.?!]['\u2019\u201d\")\]]*$", stripped) is None
+
+
 def normalise_reply(text: str | None) -> str | None:
     if not text:
         return text
