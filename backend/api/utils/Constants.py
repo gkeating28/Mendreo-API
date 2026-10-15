@@ -430,10 +430,12 @@ UP_MEMORY_TECHNIQUE_RULE = (
 )
 
 UP_SOURCE_ONLY_TECHNIQUE_RULE = (
-    "A technique, exercise, breathing practice, grounding sequence, or other step-by-step activity "
-    "must already be described in a <REFERENCE> or <INSTRUCTIONS> block in this prompt, or in the "
-    "<RETRIEVED> block on this turn. Do not add one from memory. If those sources do not contain "
-    "a fitting technique, stay with what the user said and ask one question."
+    "A technique, breathing practice, grounding sequence, or other step-by-step activity "
+    "must already be named in the current step's <INSTRUCTIONS> or <REFERENCE>. "
+    "Do not add one from memory, and do not take one from the <RETRIEVED> block. "
+    "Use <RETRIEVED> only to explain the activity those instructions already name. "
+    "If it describes a different exercise or activity, ignore it. "
+    "If the step instructions do not name a fitting activity, stay with what the user said and ask one question."
 )
 
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (

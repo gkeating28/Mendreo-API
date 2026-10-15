@@ -13,6 +13,10 @@ from .search import search_chunks
 logger = logging.getLogger(__name__)
 
 _BEGIN_STEP = re.compile(r"^begin step \d+$", re.IGNORECASE)
+_STEP_OPEN = re.compile(
+    r"^(?:Continue straight into step \d+\.|The exercise has already been introduced during the check-in\.)",
+    re.IGNORECASE,
+)
 _CHIPS = {
     Constants.CHIP_READY_YES,
     Constants.CHIP_NOT_YET,
@@ -148,7 +152,7 @@ def _skip(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return True
-    if stripped in _CHIPS or _BEGIN_STEP.match(stripped):
+    if stripped in _CHIPS or _BEGIN_STEP.match(stripped) or _STEP_OPEN.match(stripped):
         return True
     return risk_prescreen(stripped) == Constants.LIVE_RISK_LEVEL_HIGH
 
