@@ -368,6 +368,7 @@ class GroundingTests(TestCase):
         self.assertIn("UNIQUE_NOTE_ALPHA", enabled)
         self.assertIn("do not name the source document", enabled)
         self.assertIn("Do not add one from memory", enabled)
+        self.assertIn("do not take one from the <RETRIEVED> block", enabled)
         self.assertNotIn("evidence-based strategies", enabled)
         self.assertNotIn("only as background", enabled)
         self.assertIn("<REFERENCE>", enabled)
@@ -440,6 +441,14 @@ class GroundingTests(TestCase):
             Constants.CHIP_READY_YES,
         )
         self.assertNotIn("<RETRIEVED>", chip)
+        opener = (
+            "Continue straight into step 2. "
+            "Ask only the first question that step's instructions require. "
+            "Do not introduce the exercise."
+        )
+        opened = augment_user_prompt(session, SimpleNamespace(text=opener), opener)
+        self.assertEqual(opened, opener)
+        self.assertIsNone(session._pending_retrieval)
 
     def test_retrieval_turn_fails_over_without_putting_the_block_in_history(self):
         consumer = Auth.create_consumer()
