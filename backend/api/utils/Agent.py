@@ -25,7 +25,7 @@ from ..session.serializers import Session, SessionDetailSerializer
 
 from ..utils import DateUtils, Constants, S3 as S3Utils
 from .SuggestedResponses import sanitize_suggested_responses
-from .reply_style import normalise_reply
+from .reply_style import normalise_reply, reply_ends_mid_sentence
 from .completion import is_usable_completion_result, pick_completion_result_from_texts
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
@@ -47,7 +47,12 @@ class Dependencies:
 
 class GeneralResponse(BaseModel):
     text: str = Field(
-      description="""Required. A text based response to your client's question. Speak to the client in second person. Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'.""",
+      description=(
+          "Required. A text based response to your client's question. Speak to the client in second person. "
+          "Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'. "
+          "Never use the double-quote character in this text. When repeating the client's words, use single quotes or no quotes. "
+          "Always finish the sentence with a full stop or question mark."
+      ),
     )
     risk_level: str = Field(
         default="none",
@@ -361,8 +366,26 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     try:
         result, _provider = run_with_failover(_run)
-        usage = result.usage().__dict__
         response_data = result.output
+        if reply_ends_mid_sentence(getattr(response_data, "text", None)):
+            logger.warning(
+                "reply ended mid-sentence for session=%s message=%s; retrying once",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+            try:
+                retry, _provider = run_with_failover(_run)
+                retry_data = retry.output
+                if not reply_ends_mid_sentence(getattr(retry_data, "text", None)):
+                    result = retry
+                    response_data = retry_data
+            except Exception:
+                logger.exception(
+                    "mid-sentence retry failed for session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+        usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
     except Exception as e:
