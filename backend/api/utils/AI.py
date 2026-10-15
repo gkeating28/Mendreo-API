@@ -46,6 +46,9 @@ class AI:
         """
         Send a prompt to the configured default AI provider (with failover)
         and return structured output as a dict.
+
+        ``model`` is ignored. The provider that handles the call uses its
+        own ``default_model``.
         """
 
         def _run(provider) -> dict:

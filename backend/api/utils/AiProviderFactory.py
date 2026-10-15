@@ -59,11 +59,8 @@ class EnvBackedProvider:
     def get_api_key(self) -> str:
         return self._api_key
 
-    def resolve_model_name(self, requested_model: str | None) -> str:
-        if requested_model and AiProvider.model_belongs_to_provider(
-            requested_model, self.provider
-        ):
-            return requested_model
+    def resolve_model_name(self, requested_model: str | None = None) -> str:
+        del requested_model
         return self.default_model
 
 
@@ -244,7 +241,7 @@ def run_with_failover(
                     detail={
                         "failed_providers": [p.id for p in candidates[:index]],
                         "errors": errors,
-                        "model_name": model_name,
+                        "model_name": provider._resolved_model_name,  # noqa: SLF001
                     },
                 )
             return result, provider

@@ -308,8 +308,6 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     else:
         schema = GeneralResponse
 
-    model_name = consumer.agent.model
-
     dependencies = Dependencies(
         session=session,
         consumer=consumer,
@@ -320,7 +318,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     usage = {}
 
     def _run(provider):
-        pydantic_model, model_settings = build_pydantic_model(provider, model_name)
+        pydantic_model, model_settings = build_pydantic_model(provider)
         agent_kwargs = {
             "deps_type": Dependencies,
             "output_type": schema,
@@ -351,7 +349,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         return result
 
     try:
-        result, _provider = run_with_failover(_run, model_name=model_name)
+        result, _provider = run_with_failover(_run)
         usage = result.usage().__dict__
         response_data = result.output
         timer_end = time.perf_counter()

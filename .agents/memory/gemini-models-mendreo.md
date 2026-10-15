@@ -5,7 +5,7 @@ description: Latency benchmarks and thinking-config rules for the AI chat model;
 
 # Gemini model choice (benchmarked Jul 2026)
 
-Chat model lives in DB: `api_agent.model` (Agent "Mendreo") — one-row change, no deploy.
+Chat model lives on the AI provider row: `AiProvider.default_model`. `api_agent.model` is not sent. Change the provider row, no deploy.
 
 Measured end-to-end POST /messages (structured output + tools via pydantic_ai):
 - gemini-2.5-flash (thinking_budget=0): ~6s  ← kept

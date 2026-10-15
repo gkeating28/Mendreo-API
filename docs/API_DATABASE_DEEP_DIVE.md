@@ -370,7 +370,7 @@ external call is the LLM (Google) via pydantic-ai.
 Not an endpoint, but the engine behind §7 and summaries. Step-by-step coverage of every model call (chat, exercises, pre-exercise, nightly jobs, articles) is in [`AI_INTERACTIONS.md`](./AI_INTERACTIONS.md).
 
 - **`get_response(session, consumer_message)`**: builds a pydantic-ai `Agent` on
-  `GoogleModel(consumer.agent.model)`, output schema `ExerciseResponse` (exercise sessions) or
+  the handling provider’s `default_model`, output schema `ExerciseResponse` (exercise sessions) or
   `GeneralResponse`. Runs `agent.run_sync(...)` with `message_history=session.get_chat_history()`
   and a 2-tool-call limit. Registered tools:
   - `get_asset(step_no)` — reads the step, then `Asset.objects.filter(tags__in=step.tags)` and
