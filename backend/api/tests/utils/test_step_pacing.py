@@ -8,7 +8,12 @@ from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse
-from ...utils.SessionStateMachine import is_model_ready_chip, on_model_turn, prepare_model_readiness
+from ...utils.SessionStateMachine import (
+    confirm_summary_if_done,
+    is_model_ready_chip,
+    on_model_turn,
+    prepare_model_readiness,
+)
 from ...utils.turn_hint import user_prompt_with_hint
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
@@ -198,3 +203,76 @@ class GoalGateTests(BaseTest):
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
         self.assertEqual(message.question_kind, Constants.QUESTION_KIND_OPEN)
         self.assertEqual(session.cached_prompt_meta["depth_hint_step_id"], step.id)
+
+    def test_confirmation_question_does_not_accept_the_goal(self):
+        session = self._session()
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        message = Message.objects.create(
+            session=session,
+            sender=agent,
+            text="Did I capture that accurately?",
+            reasoning="test",
+        )
+        response = ExerciseStateResponse(
+            text=message.text,
+            reasoning="test",
+            suggested_responses=[],
+            step_goal_met=True,
+            asks_readiness=False,
+        )
+        with patch("api.utils.extraction.check_done_when") as check:
+            on_model_turn(session, message, response)
+        check.assert_not_called()
+        session.refresh_from_db()
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_yep_completes_the_step_when_done_when_is_met(self):
+        session = self._session()
+        exercise = session.exercise
+        exercise.steps_no = 2
+        exercise.save(update_fields=["steps_no", "updated_at"])
+        next_step = Step.objects.create(
+            exercise=exercise,
+            title="Next",
+            description="Next",
+            instructions="Ask for a plan.",
+            order=1,
+        )
+        SessionStep.objects.create(
+            session=session,
+            step=next_step,
+            order=1,
+            completed=False,
+        )
+        session.total_steps_no = 2
+        session.save(update_fields=["total_steps_no", "updated_at"])
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="Yep")
+        with (
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": True, "missing": ""},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = confirm_summary_if_done(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 2)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_yep_stays_in_chat_when_done_when_is_not_met(self):
+        session = self._session()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="Yep")
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the situation"},
+        ):
+            outcome = confirm_summary_if_done(user_message)
+        self.assertIsNone(outcome)
+        session.refresh_from_db()
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)

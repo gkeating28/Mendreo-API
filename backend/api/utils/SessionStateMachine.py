@@ -171,6 +171,9 @@ def on_model_turn(session, agent_message, response) -> None:
     session_step = _live_step(session)
     goal_met = bool(getattr(response, "step_goal_met", False))
     asks = bool(getattr(response, "asks_readiness", False))
+    # A question is still waiting for the user's answer, so the goal is not met yet.
+    if (getattr(agent_message, "text", None) or "").strip().endswith("?") and not asks:
+        goal_met = False
 
     if session_step and goal_met and session_step.goal_met_at is None:
         if not _accept_goal(session, session_step, agent_message):
@@ -245,6 +248,36 @@ _READY_AFFIRMATIONS = {
 def is_ready_affirmation(text: str) -> bool:
     normalized = " ".join((text or "").strip().lower().replace("\u2019", "'").split())
     return normalized.rstrip(".!") in _READY_AFFIRMATIONS
+
+
+def confirm_summary_if_done(user_message) -> ChipOutcome | None:
+    """An affirmation that meets done_when completes the step. The chat model does not run."""
+    session = user_message.session
+    if not session.exercise_id or session.in_pre_exercise_phase():
+        return None
+    if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
+        return None
+    if not is_ready_affirmation(user_message.text or ""):
+        return None
+    session_step = _live_step(session)
+    if session_step is None or session_step.completed:
+        return None
+    if not (getattr(session_step.step, "done_when", None) or "").strip():
+        return None
+
+    from .extraction import check_done_when
+
+    try:
+        result = check_done_when(session, session_step.step)
+    except Exception:
+        logger.exception(
+            "summary confirmation check failed for session=%s",
+            getattr(session, "id", None),
+        )
+        return None
+    if not result or not result.get("met"):
+        return None
+    return _confirm(session, user_message)
 
 
 def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:

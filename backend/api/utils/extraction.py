@@ -51,8 +51,11 @@ def check_done_when(session, step) -> dict | None:
             "Transcript of this step:\n"
             f"{transcript or '(no messages)'}\n\n"
             "Decide whether every concrete element named in DONE_WHEN is present "
-            "in the user's own words. A summary the assistant wrote does not count. "
-            "A yes, ok, or readiness reply does not count. "
+            "in the user's own words. A summary the assistant wrote does not count "
+            "as the user's description. "
+            "A yes, ok, or readiness reply counts only as confirmation of a summary "
+            "the assistant just gave, and only when DONE_WHEN requires that confirmation. "
+            "It does not supply the worry, the situation, or any other element. "
             "Set met true only when those elements are present. "
             "When met is false, missing names the element that is still absent."
         ),
