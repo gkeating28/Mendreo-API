@@ -33,14 +33,17 @@ class AiProviderFactoryTest(TestCase):
         self.openai.set_api_key("openai-secret")
         self.openai.save()
 
-    def test_resolve_model_falls_back_when_incompatible(self):
+    def test_resolve_model_always_uses_provider_default(self):
+        self.google.default_model = "gemini-2.5-pro"
+        self.google.save()
         self.assertEqual(
-            self.google.resolve_model_name("gpt-4.1-mini"),
-            "gemini-3.1-flash-lite",
+            self.google.resolve_model_name("gemini-3.1-flash-lite"),
+            "gemini-2.5-pro",
         )
+        self.assertEqual(self.google.resolve_model_name(None), "gemini-2.5-pro")
         self.assertEqual(
             self.openai.resolve_model_name("gpt-4.1"),
-            "gpt-4.1",
+            "gpt-4.1-mini",
         )
 
     def test_runtime_failover_logs_audit(self):

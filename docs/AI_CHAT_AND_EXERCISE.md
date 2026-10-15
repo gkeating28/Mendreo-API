@@ -23,7 +23,7 @@ Every consumer message belongs to a `Session`. The session type decides which te
 | **Standard chat** | `Session.exercise` is `null`. `GET /sessions/today` reuses today’s open general session; `Session.create_general` starts a fresh one. | `general_prompt.txt` | `GeneralResponse` (`text`, `suggested_responses`, `reasoning`, optional `asset_id`) |
 | **Exercise execution** | `Session.exercise` is set (start an exercise, or accept a Yes/No offer from chat). | `exercise_prompt.txt` | `ExerciseResponse` (same fields **plus** `is_step_complete`, `step_no`, `completion_result`) |
 
-The Gemini model name comes from the consumer’s assigned `Agent.model` (database). It is **not** part of the prompt text. `Agent.context` exists on the model but is **not** injected into chat prompts today.
+The model name comes from the AI provider that handles the call: that row’s `default_model`. `Agent.model` is stored on the agent but is not sent. `Agent.context` is stored too and is not injected into chat prompts.
 
 ---
 

@@ -20,7 +20,7 @@ Two call styles exist. Almost every section below is one or the other.
 
 Used for live chat, exercise greetings, pre-exercise check-in, and exercise steps.
 
-1. Resolve the consumer’s assigned `Agent.model` (default `gemini-3.1-flash-lite`). `Agent.context` is stored on the agent row but is **not** injected into prompts.
+1. Resolve the model from the AI provider handling the call (`AiProvider.default_model`). `Agent.model` and `Agent.context` are stored on the agent row but are not used.
 2. Build or reuse the session system prompt (`_prepare_prompt` → `session.cached_prompt`).
 3. Construct a pydantic-ai `Agent` with:
    - `system_prompt` = cached prompt

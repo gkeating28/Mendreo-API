@@ -61,9 +61,14 @@ class AiProvider(SmartModel):
         prefixes = Constants.AI_PROVIDER_MODEL_PREFIXES.get(provider_type, ())
         return model_name.startswith(prefixes)
 
-    def resolve_model_name(self, requested_model: str | None) -> str:
-        if requested_model and self.model_belongs_to_provider(requested_model, self.provider):
-            return requested_model
+    def resolve_model_name(self, requested_model: str | None = None) -> str:
+        """The model for every call this provider handles.
+
+        ``requested_model`` is ignored. Chat, exercises, and one-shot calls
+        all use ``default_model``, including when another caller passes the
+        agent row's model name.
+        """
+        del requested_model
         return self.default_model
 
     @classmethod
