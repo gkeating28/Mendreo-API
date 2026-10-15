@@ -351,6 +351,7 @@ class GroundingTests(TestCase):
         self.assertNotIn("Do not add one from memory", prompt)
 
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
+        self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED, "true")
         session.refresh_from_db()
         cached = _prepare_prompt(session)
         self.assertIn("UNIQUE_NOTE_ALPHA", cached)
@@ -372,6 +373,34 @@ class GroundingTests(TestCase):
         self.assertNotIn("evidence-based strategies", enabled)
         self.assertNotIn("only as background", enabled)
         self.assertIn("<REFERENCE>", enabled)
+
+    def test_exercise_retrieval_uses_its_own_switch(self):
+        consumer = Auth.create_consumer()
+        exercise = self._exercise()
+        self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
+        self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED, "false")
+        general = Session.objects.create(consumer=consumer)
+        exercise_session = Session.objects.create(
+            consumer=consumer,
+            exercise=exercise,
+            current_step_no=0,
+            completed=False,
+            total_steps_no=exercise.steps_no,
+        )
+        self.assertTrue(stamp_retrieval_enabled(general))
+        self.assertFalse(stamp_retrieval_enabled(exercise_session))
+        self.assertTrue(general.cached_prompt_meta.get("retrieval_enabled"))
+        self.assertFalse(exercise_session.cached_prompt_meta.get("retrieval_enabled"))
+
+        self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED, "true")
+        later = Session.objects.create(
+            consumer=consumer,
+            exercise=exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=exercise.steps_no,
+        )
+        self.assertTrue(stamp_retrieval_enabled(later))
 
     def test_settings_or_cache_failure_leaves_retrieval_off(self):
         consumer = Auth.create_consumer()

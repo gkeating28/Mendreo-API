@@ -51,6 +51,8 @@ class SettingCreateSerializer(serializers.Serializer):
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
+    ai_retrieval_enabled = serializers.BooleanField(required=False)
+    ai_retrieval_exercise_enabled = serializers.BooleanField(required=False)
 
     def validate(self, attrs):
         incoming = set(getattr(self, "initial_data", {}) or {})
@@ -135,6 +137,16 @@ class SettingCreateSerializer(serializers.Serializer):
             capture.value = str(validated_data["store_turn_prompts"]).lower()
             capture.save()
 
+        if "ai_retrieval_enabled" in validated_data:
+            chat_retrieval = Setting.get_or_create_ai_retrieval_enabled()
+            chat_retrieval.value = str(validated_data["ai_retrieval_enabled"]).lower()
+            chat_retrieval.save()
+
+        if "ai_retrieval_exercise_enabled" in validated_data:
+            exercise_retrieval = Setting.get_or_create_ai_retrieval_exercise_enabled()
+            exercise_retrieval.value = str(validated_data["ai_retrieval_exercise_enabled"]).lower()
+            exercise_retrieval.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -148,4 +160,6 @@ class SettingCreateSerializer(serializers.Serializer):
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
+            "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
+            "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
         }

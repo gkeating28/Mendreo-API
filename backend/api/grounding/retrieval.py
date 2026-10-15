@@ -41,7 +41,10 @@ def stamp_retrieval_enabled(session) -> bool:
 
     meta = dict(session.cached_prompt_meta or {})
     try:
-        enabled = bool(Setting.get_ai_retrieval_enabled())
+        if getattr(session, "exercise_id", None):
+            enabled = bool(Setting.get_ai_retrieval_exercise_enabled())
+        else:
+            enabled = bool(Setting.get_ai_retrieval_enabled())
     except Exception:
         logger.exception(
             "retrieval flag lookup failed for session=%s; leaving retrieval off",
