@@ -11,7 +11,7 @@ from ..utils.ExerciseOffer import maybe_handle_offer_response
 from ..utils.Permissions import (
     IsConsumerPermission, IsAdminPermission,
 )
-from ..utils.Views import SmartPaginationAPIView
+from ..utils.Views import SmartAPIView, SmartPaginationAPIView
 
 
 class ListCreate(SmartPaginationAPIView):
@@ -112,6 +112,33 @@ class ListCreate(SmartPaginationAPIView):
         data = self.override_response_data(request, data, instance)
 
         return self.post_response(request, instance, data)
+
+
+class MessagePrompt(SmartAPIView):
+    """Admin read of the prompt stored for one assistant message."""
+
+    permission_classes = [IsAdminPermission]
+
+    def get(self, request, id):
+        message = Message.objects.filter(id=id).first()
+        if message is None:
+            return self.not_found()
+        from .models import TurnPrompt
+
+        prompt = TurnPrompt.objects.filter(message=message).first()
+        if prompt is None:
+            return self.not_found("No stored prompt for this message.")
+        return Response(
+            {
+                "message_id": message.id,
+                "session_id": message.session_id,
+                "model_name": prompt.model_name,
+                "system_prompt": prompt.system_prompt,
+                "user_prompt": prompt.user_prompt,
+                "history": prompt.history or [],
+                "created_at": prompt.created_at,
+            }
+        )
 
 
 def _from_suggested_response(data) -> bool:

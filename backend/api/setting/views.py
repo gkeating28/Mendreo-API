@@ -30,7 +30,11 @@ class ListCreate(SmartAPIView):
         for setting in settings:
             data[setting.key] = setting.value
 
-            if setting.key in ("survey_enabled", "observations_enabled"):
+            if setting.key in (
+                "survey_enabled",
+                "observations_enabled",
+                Constants.SETTING_KEY_STORE_TURN_PROMPTS,
+            ):
                 data[setting.key] = setting.value.lower() == "true"
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
                 try:
@@ -79,6 +83,7 @@ class ListCreate(SmartAPIView):
             "generic_answers_default": Setting.get_generic_answers_default(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
+            "store_turn_prompts": Setting.get_store_turn_prompts(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

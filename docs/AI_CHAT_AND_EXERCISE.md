@@ -25,6 +25,8 @@ Every consumer message belongs to a `Session`. The session type decides which te
 
 The model name comes from the AI provider that handles the call: that row’s `default_model`. `Agent.model` is stored on the agent but is not sent. `Agent.context` is stored too and is not injected into chat prompts.
 
+For QA, set `store_turn_prompts` to true on `POST /settings`. Each assistant reply then stores the system prompt, the user prompt (including any turn hint and `<RETRIEVED>` block), the history, and the model name. Read it with `GET /messages/<assistant-message-id>/prompt` as an admin. The message list does not include it. The setting defaults to false. Turn it off, then drop the `TurnPrompt` table, when validation is finished.
+
 ---
 
 ## 2. What happens on each user message

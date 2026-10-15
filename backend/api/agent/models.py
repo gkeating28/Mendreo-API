@@ -230,6 +230,9 @@ class Agent(SmartModel):
             resources=resources,
             retrieval=retrieval,
         )
+        from ..message.turn_prompt import save_pending_turn_prompt
+
+        save_pending_turn_prompt(session, agent_message)
 
         if session.exercise_id:
             from ..utils.SessionStateMachine import on_model_turn

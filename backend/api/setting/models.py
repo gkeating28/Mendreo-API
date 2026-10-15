@@ -57,6 +57,7 @@ class Setting(SmartModel):
         Setting.get_or_create_risk_keywords()
         Setting.get_or_create_trust_and_safety_email()
         Setting.get_or_create_ai_retrieval_enabled()
+        Setting.get_or_create_store_turn_prompts()
         Setting.get_or_create_retrieval_min_similarity()
         Setting.get_or_create_retrieval_max_chunks()
         Setting.get_or_create_retrieval_max_tokens()
@@ -344,6 +345,22 @@ class Setting(SmartModel):
         raw = Setting._cached_value(
             Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
             Setting.get_or_create_ai_retrieval_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_store_turn_prompts():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_STORE_TURN_PROMPTS,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_store_turn_prompts() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_STORE_TURN_PROMPTS,
+            Setting.get_or_create_store_turn_prompts,
         )
         return str(raw).strip().lower() in {"1", "true", "yes"}
 

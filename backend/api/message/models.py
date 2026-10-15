@@ -60,3 +60,22 @@ class Message(SmartModel):
     def __str__(self):
         """Return a human-readable representation of the model instance."""
         return "Message: {}".format(self.id)
+
+
+class TurnPrompt(SmartModel):
+    """Exact model payload for one assistant reply. QA only."""
+
+    id = CharIDField(primary_key=True, prefix="tpr_")
+
+    message = models.OneToOneField(
+        Message,
+        related_name="turn_prompt",
+        on_delete=models.CASCADE,
+    )
+    model_name = models.CharField(max_length=255, blank=True, default="")
+    system_prompt = models.TextField(blank=True, default="")
+    user_prompt = models.TextField(blank=True, default="")
+    history = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"TurnPrompt: {self.id}"

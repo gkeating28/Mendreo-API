@@ -333,17 +333,28 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         from .history import build_history
         from .turn_hint import user_prompt_with_hint
         from ..grounding.retrieval import augment_user_prompt
+        from ..message.turn_prompt import stash_turn_prompt
 
+        user_prompt = augment_user_prompt(
+            session,
+            consumer_message,
+            user_prompt_with_hint(session, consumer_message),
+        )
+        history = build_history(
+            session, exclude_message_id=getattr(consumer_message, "id", None)
+        )
+        stash_turn_prompt(
+            session,
+            model_name=getattr(provider, "_resolved_model_name", "")
+            or getattr(provider, "default_model", ""),
+            system_prompt=prompt,
+            user_prompt=user_prompt,
+            history=history,
+        )
         result = agent.run_sync(
-            user_prompt=augment_user_prompt(
-                session,
-                consumer_message,
-                user_prompt_with_hint(session, consumer_message),
-            ),
+            user_prompt=user_prompt,
             deps=dependencies,
-            message_history=build_history(
-                session, exclude_message_id=getattr(consumer_message, "id", None)
-            ),
+            message_history=history,
             usage_limits=UsageLimits(tool_calls_limit=2)
         )
         return result
