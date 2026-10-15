@@ -51,7 +51,8 @@ class GeneralResponse(BaseModel):
           "Required. A text based response to your client's question. Speak to the client in second person. "
           "Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'. "
           "Never use the double-quote character in this text. When repeating the client's words, use single quotes or no quotes. "
-          "Always finish the sentence with a full stop or question mark."
+          "Always finish the sentence with a full stop or question mark. "
+          "Never open with 'Thanks for sharing', 'Thank you for', or 'It sounds like'."
       ),
     )
     risk_level: str = Field(
@@ -723,6 +724,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_style = (
             "Write in British English" not in cached
             or "When the client asks about a fact listed here" not in cached
+            or "Never open with 'Thanks for sharing'" not in cached
         )
         if not any((
             stale_placeholders,

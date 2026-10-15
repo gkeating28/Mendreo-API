@@ -71,6 +71,21 @@ def reply_ends_mid_sentence(text: str | None) -> bool:
     return re.search(r"[.?!]['\u2019\u201d\")\]]*$", stripped) is None
 
 
+_BANNED_OPENING = re.compile(
+    r"^(?:thanks for sharing|thank you for sharing|thank you for|it sounds like)\b[^.?!]*[.?!]\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_banned_openings(text: str) -> str:
+    cleaned = text.strip()
+    previous = None
+    while cleaned and cleaned != previous:
+        previous = cleaned
+        cleaned = _BANNED_OPENING.sub("", cleaned, count=1).strip()
+    return cleaned
+
+
 def normalise_reply(text: str | None) -> str | None:
     if not text:
         return text
@@ -83,4 +98,7 @@ def normalise_reply(text: str | None) -> str | None:
         return _match_case(word, replacement)
 
     text = _SPELLING_PATTERN.sub(_spell, text)
+    stripped = _strip_banned_openings(text)
+    if stripped:
+        text = stripped
     return re.sub(r"[ \t]{2,}", " ", text)

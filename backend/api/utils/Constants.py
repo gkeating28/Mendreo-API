@@ -402,10 +402,9 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         - Avoid 'learned helplessness'. Do not tell the user it takes courage to do something or that sounds hard / terrible etc...
         
-        - Do not thank the user for sharing information / their responses, be as concise and laser focused as possible. You must
-          avoid this at all times when possible
-          
-        - Do not start sentences with phrases like 'Thank you for ....', 'It sounds like ....' Be confident, concise and assertive
+        - Never thank the user for sharing, or for their reply. Never open with 'Thanks for sharing', 'Thank you for sharing', or 'Thank you for'.
+        
+        - Never open with 'Thanks for sharing' or 'It sounds like'. Be confident, concise and assertive.
         
         - Instead of asking the user if something makes sense in your text, instead use the 'suggested_responses' to offer the
           user an option to say they don't understand.

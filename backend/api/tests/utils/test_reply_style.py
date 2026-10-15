@@ -26,3 +26,24 @@ class ReplyStyleTests(SimpleTestCase):
         self.assertFalse(reply_ends_mid_sentence("You said 'I'll mess up'."))
         self.assertFalse(reply_ends_mid_sentence(""))
         self.assertFalse(reply_ends_mid_sentence(None))
+
+    def test_banned_openings_are_removed(self):
+        self.assertEqual(
+            normalise_reply("Thanks for sharing. What is the worry?"),
+            "What is the worry?",
+        )
+        self.assertEqual(
+            normalise_reply(
+                "Thanks for sharing. It sounds like meetings are hard. What happens next?"
+            ),
+            "What happens next?",
+        )
+        self.assertEqual(
+            normalise_reply("Thank you for sharing that. Name one worry."),
+            "Name one worry.",
+        )
+        self.assertEqual(normalise_reply("Thanks for sharing."), "Thanks for sharing.")
+        self.assertEqual(
+            normalise_reply("You said it sounds like a lot. What is one part of it?"),
+            "You said it sounds like a lot. What is one part of it?",
+        )
