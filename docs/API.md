@@ -72,6 +72,7 @@ Session detail includes `phase` (`pre_exercise` / `exercise` / `completed` / `ge
 | Method | Path | Function |
 |---|---|---|
 | GET, POST | `/messages` | List messages / send a message (drives the AI conversation) |
+| GET | `/messages/<id>/prompt` | Admin only. The prompt stored for that assistant message when `store_turn_prompts` is on |
 | GET | `/summaries/<id>` | Retrieve a summary |
 
 **Async AI (Vercel):** `POST /messages` creates the user message, enqueues Gemini on the worker via Celery, and returns the user message with `ai_pending: true`. Poll `GET /messages?session_id=<id>` (or `GET /sessions/<id>`) until the agent reply appears as `last_message`. Local/dev defaults to synchronous replies unless `AI_ASYNC_MESSAGES=true`.

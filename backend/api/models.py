@@ -4,6 +4,7 @@ from django.db import models
 from .user.models import User, UserSettings
 from .admin.models import Admin  # noqa: F401
 from .session.models import Session, SessionMetric  # noqa: F401
+from .message.models import Message, TurnPrompt  # noqa: F401
 from .prompt.models import PromptVersion  # noqa: F401
 from .eval.models import EvalCase, EvalRun  # noqa: F401
 from .summary.models import Summary

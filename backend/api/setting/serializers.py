@@ -50,6 +50,7 @@ class SettingCreateSerializer(serializers.Serializer):
     )
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
+    store_turn_prompts = serializers.BooleanField(required=False)
 
     def validate(self, attrs):
         incoming = set(getattr(self, "initial_data", {}) or {})
@@ -129,6 +130,11 @@ class SettingCreateSerializer(serializers.Serializer):
             address.value = validated_data["trust_and_safety_email"] or ""
             address.save()
 
+        if "store_turn_prompts" in validated_data:
+            capture = Setting.get_or_create_store_turn_prompts()
+            capture.value = str(validated_data["store_turn_prompts"]).lower()
+            capture.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -141,4 +147,5 @@ class SettingCreateSerializer(serializers.Serializer):
             "generic_answers_default": Setting.get_generic_answers_default(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
+            "store_turn_prompts": Setting.get_store_turn_prompts(),
         }

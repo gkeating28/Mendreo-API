@@ -25,6 +25,8 @@ Every consumer message belongs to a `Session`. The session type decides which te
 
 The Gemini model name comes from the consumer’s assigned `Agent.model` (database). It is **not** part of the prompt text. `Agent.context` exists on the model but is **not** injected into chat prompts today.
 
+For QA, set `store_turn_prompts` to true on `POST /settings`. Each assistant reply then stores the system prompt, the user prompt (including any turn hint and `<RETRIEVED>` block), the history, and the model name. Read it with `GET /messages/<assistant-message-id>/prompt` as an admin. The message list does not include it. The setting defaults to false. Turn it off, then drop the `TurnPrompt` table, when validation is finished.
+
 ---
 
 ## 2. What happens on each user message
