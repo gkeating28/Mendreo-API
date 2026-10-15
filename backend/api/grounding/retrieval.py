@@ -33,9 +33,10 @@ def session_retrieval_enabled(session) -> bool:
 def stamp_retrieval_enabled(session) -> bool:
     """Resolve the flag once, when the session starts.
 
-    A settings, cache, or stamp-save failure is logged and retrieval stays
-    off, so session create still succeeds. ``Session.get_or_create`` calls
-    this too, which is how a new exercise run is stamped.
+    General chat uses ``ai_retrieval_enabled``. An exercise session, including
+    its check-in, uses ``ai_retrieval_exercise_enabled``. A settings, cache, or
+    stamp-save failure is logged and retrieval stays off, so session create
+    still succeeds.
     """
     from ..setting.models import Setting
 
