@@ -14,7 +14,8 @@ from ...utils.SessionStateMachine import (
     on_model_turn,
     prepare_model_readiness,
 )
-from ...utils.turn_hint import user_prompt_with_hint
+from ...utils.summary_confirmation import is_summary_confirmation, summary_confirmation_rule
+from ...utils.turn_hint import SUMMARY_CONFIRM_HINT, user_prompt_with_hint
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -276,3 +277,127 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_ready_to_continue_does_not_finish_a_step_that_must_name_the_worry(self):
+        session = self._session(
+            done_when=(
+                "The user has described their specific worry, the situation it occurs in, "
+                "and confirmed the summary is accurate."
+            )
+        )
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        message = Message.objects.create(
+            session=session,
+            sender=agent,
+            text=(
+                "The straw breathing made the thought, 'I'm going to miss a deadline "
+                "and lose my job,' feel less strong. We've reached the end of this step. "
+                "Are you ready to continue?"
+            ),
+            reasoning="test",
+            question_kind=Constants.QUESTION_KIND_READINESS,
+        )
+        response = ExerciseStateResponse(
+            text=message.text,
+            reasoning="test",
+            suggested_responses=[],
+            step_goal_met=True,
+            asks_readiness=True,
+            question_kind=Constants.QUESTION_KIND_READINESS,
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, message, response)
+
+        session.refresh_from_db()
+        step = session.session_steps.get(order=0)
+        self.assertIsNone(step.goal_met_at)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(session.cached_prompt_meta["goal_hint"], SUMMARY_CONFIRM_HINT)
+
+    def test_yep_after_a_named_summary_completes_the_step(self):
+        session = self._session(
+            done_when="The user confirmed the summary is accurate.",
+        )
+        exercise = session.exercise
+        exercise.steps_no = 2
+        exercise.save(update_fields=["steps_no", "updated_at"])
+        next_step = Step.objects.create(
+            exercise=exercise,
+            title="Next",
+            description="Next",
+            instructions="Ask for a plan.",
+            order=1,
+        )
+        SessionStep.objects.create(session=session, step=next_step, order=1, completed=False)
+        session.total_steps_no = 2
+        session.save(update_fields=["total_steps_no", "updated_at"])
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text=(
+                "So, to recap, you worry about missing deadlines and losing your job, "
+                "and it comes up at night when you are alone. Did I capture that accurately?"
+            ),
+            reasoning="test",
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="Yep")
+        with (
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": True, "missing": ""},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = confirm_summary_if_done(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.session_steps.get(order=0).completed)
+
+    def test_yep_after_a_readiness_question_does_not_confirm_the_summary(self):
+        session = self._session(
+            done_when="The user confirmed the summary is accurate.",
+        )
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text="We've reached the end of this step. Are you ready to continue?",
+            reasoning="test",
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="Yep")
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as check:
+            outcome = confirm_summary_if_done(user_message)
+        self.assertIsNone(outcome)
+        check.assert_not_called()
+        session.refresh_from_db()
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+
+class SummaryConfirmationTests(SimpleTestCase):
+    def test_a_recap_counts_and_a_readiness_close_does_not(self):
+        recap = (
+            "So, to recap, you worry about missing deadlines and losing your job, "
+            "and it comes up at night. Did I capture that accurately?"
+        )
+        close = (
+            "The thought 'I'm going to miss a deadline and lose my job' feels less strong. "
+            "We've reached the end of this step. Are you ready to continue?"
+        )
+        self.assertTrue(is_summary_confirmation(recap))
+        self.assertFalse(is_summary_confirmation(close))
+        self.assertFalse(is_summary_confirmation("Did I get that right?"))
+
+    def test_rule_is_added_only_when_the_step_requires_a_confirmed_summary(self):
+        required = "The user confirmed the summary is accurate."
+        plain = "The user has named the worry and the situation."
+        self.assertIn("summarise the worry", summary_confirmation_rule(required))
+        self.assertEqual(summary_confirmation_rule(plain), "")

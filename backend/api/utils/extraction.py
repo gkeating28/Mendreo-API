@@ -56,6 +56,8 @@ def check_done_when(session, step) -> dict | None:
             "A yes, ok, or readiness reply counts only as confirmation of a summary "
             "the assistant just gave, and only when DONE_WHEN requires that confirmation. "
             "It does not supply the worry, the situation, or any other element. "
+            "If DONE_WHEN requires the user to confirm a summary, met is true only when "
+            "an assistant message named the worry and the situation and the user agreed afterwards. "
             "Set met true only when those elements are present. "
             "When met is false, missing names the element that is still absent."
         ),

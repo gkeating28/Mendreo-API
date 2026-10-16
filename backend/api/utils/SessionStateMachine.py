@@ -265,6 +265,14 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     if not (getattr(session_step.step, "done_when", None) or "").strip():
         return None
 
+    from .summary_confirmation import is_summary_confirmation, summary_confirmation_required
+
+    done_when = session_step.step.done_when or ""
+    if summary_confirmation_required(done_when):
+        previous = _last_agent_message(session, before=user_message)
+        if previous is None or not is_summary_confirmation(previous.text or ""):
+            return None
+
     from .extraction import check_done_when
 
     try:
@@ -524,12 +532,30 @@ def _done_when_passed(session, session_step, agent_message) -> bool:
             getattr(session, "id", None),
             getattr(session_step, "id", None),
         )
-        return True
+        result = {"met": True}
+    done_when = getattr(session_step.step, "done_when", None) or ""
+    from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+    if (result is None or result.get("met")) and summary_confirmation_required(done_when):
+        if not summary_was_confirmed(session, session_step.step):
+            _downgrade_readiness(agent_message)
+            _store_summary_hint(session)
+            return False
     if result is None or result.get("met"):
         return True
     _downgrade_readiness(agent_message)
     _store_goal_hint(session, result.get("missing") or "")
     return False
+
+
+def _store_summary_hint(session) -> None:
+    from .turn_hint import SUMMARY_CONFIRM_HINT
+
+    meta = dict(session.cached_prompt_meta or {})
+    meta.pop("depth_hint_step_id", None)
+    meta["goal_hint"] = SUMMARY_CONFIRM_HINT
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
 
 def _store_goal_hint(session, missing: str) -> None:

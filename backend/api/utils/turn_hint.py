@@ -135,6 +135,12 @@ def probe_count_for(previous, question_kind: str) -> int:
     return 0
 
 
+SUMMARY_CONFIRM_HINT = (
+    "This step is not done. Summarise the worry and the situation in the user's words, "
+    "then ask if you have that right. Do not ask them to move on, and do not start another exercise."
+)
+
+
 def goal_hint_text(missing: str) -> str:
     gap = (missing or "").strip() or "what this step still requires"
     return (

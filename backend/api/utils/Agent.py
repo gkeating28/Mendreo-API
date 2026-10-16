@@ -977,6 +977,9 @@ def _render_state_machine_steps(exercise, session, token_context, live_index, st
                 "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
                 "on a message whose only question is whether they are ready to finish."
             )
+        from .summary_confirmation import summary_confirmation_rule
+
+        completion += summary_confirmation_rule(step.done_when or "")
         reference = resolve_tokens(step.reference_material or "", context)
         blocks.append(
             "<STEP>\n"
@@ -1072,6 +1075,9 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=
                 "(good morning / good afternoon / good evening / goodnight). "
                 "The app shows the summary page after they confirm."
             )
+        from .summary_confirmation import summary_confirmation_rule
+
+        completion_criteria += summary_confirmation_rule(step.done_when or "")
         rendered += Constants.PROMPT_STEP.format(
             step_title=step.title,
             step_description=description,
