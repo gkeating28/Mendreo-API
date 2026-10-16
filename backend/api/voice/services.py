@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from datetime import timedelta
+from difflib import SequenceMatcher
 from typing import Iterable
 
 from django.conf import settings
@@ -43,6 +44,9 @@ TTS_EMPTY_TEXT = "This message has no speakable text."
 TTS_MAX_CHARS = 5000
 VOICE_PREVIEW_TEXT = "Hi, I'm Toni. How are you feeling today?"
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
+# ElevenLabs retries a turn with a corrected transcript ("kinda" / "kind of").
+# 0.85 keeps that pair and rejects a genuinely different sentence.
+VOICE_RETRY_SIMILARITY = 0.85
 # Official Custom LLM buffer words (docs: "Let me think about that... ").
 # "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
 # tiny first chunk is often held in Railway/Gunicorn buffers until Gemini
@@ -393,7 +397,25 @@ def iter_silent_completion_sse() -> Iterable[bytes]:
     yield b"data: [DONE]\n\n"
 
 
-def is_repeat_voice_utterance(grant: VoiceGrant, user_text: str) -> bool:
+def _normalize_voice_text(text: str) -> str:
+    cleaned = (text or "").lower()
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _voice_texts_similar(left: str, right: str) -> bool:
+    """True when two transcripts are the same turn after ASR correction."""
+    a = _normalize_voice_text(left)
+    b = _normalize_voice_text(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= VOICE_RETRY_SIMILARITY
+
+
+def _recent_voice_user_message(grant: VoiceGrant):
+    """Latest user voice row in this conversation, if it is still inside the retry window."""
     last = (
         Message.objects.filter(
             session=grant.session,
@@ -404,36 +426,44 @@ def is_repeat_voice_utterance(grant: VoiceGrant, user_text: str) -> bool:
         .first()
     )
     if last is None:
-        return False
-    if (last.text or "").strip() != user_text.strip():
-        return False
-    return last.created_at >= timezone.now() - VOICE_DUPLICATE_WINDOW
+        return None
+    if last.created_at < timezone.now() - VOICE_DUPLICATE_WINDOW:
+        return None
+    return last
 
 
-def existing_agent_reply_for_utterance(grant: VoiceGrant, user_text: str) -> str:
-    """Replay Toni's already-saved reply when ElevenLabs retries a cascaded turn."""
-    last_user = (
-        Message.objects.filter(
-            session=grant.session,
-            sender__consumer=grant.consumer,
-            voice_conversation_id=voice_conversation_key(grant),
-        )
-        .filter(text=user_text.strip())
-        .order_by("-created_at")
-        .first()
-    )
-    if last_user is None:
-        return ""
+def _agent_replied_since(grant: VoiceGrant, user_message: Message) -> bool:
+    return Message.objects.filter(
+        session=grant.session,
+        sender__agent=grant.consumer.agent,
+        created_at__gte=user_message.created_at,
+    ).exists()
+
+
+def _agent_reply_after(grant: VoiceGrant, user_message: Message) -> str:
     agent = (
         Message.objects.filter(
             session=grant.session,
             sender__agent=grant.consumer.agent,
-            created_at__gte=last_user.created_at,
+            created_at__gte=user_message.created_at,
         )
         .order_by("created_at")
         .first()
     )
     return (agent.text or "").strip() if agent else ""
+
+
+def _same_turn_retry(grant: VoiceGrant, user_text: str, last_user: Message) -> bool:
+    """A second completion for this conversation before the user has moved on.
+
+    ElevenLabs sends the corrected transcript as a new request. The text is
+    not identical, and the message list is the same turn. A request that
+    arrives before Toni's reply is saved is the same turn even when the
+    wording differs more.
+    """
+    if _voice_texts_similar(last_user.text or "", user_text):
+        return True
+    return not _agent_replied_since(grant, last_user)
 
 
 def produce_spoken_turn(grant: VoiceGrant, user_text: str) -> str:
@@ -444,10 +474,9 @@ def produce_spoken_turn(grant: VoiceGrant, user_text: str) -> str:
             return (offer_result.text or "").strip()
         return ""
 
-    if is_repeat_voice_utterance(grant, user_text):
-        replay = existing_agent_reply_for_utterance(grant, user_text)
-        if replay and replay != UNDERSTANDING_FALLBACK:
-            return replay
+    last_user = _recent_voice_user_message(grant)
+    if last_user is not None and _same_turn_retry(grant, user_text, last_user):
+        return _agent_reply_after(grant, last_user)
 
     agent_message = run_toni_reply(grant, user_text)
     return (agent_message.text or "").strip()

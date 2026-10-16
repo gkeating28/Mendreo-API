@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import timedelta
 from unittest import mock
 
 from django.test import SimpleTestCase, override_settings
@@ -1004,6 +1005,116 @@ class CustomLlmTests(TestCase):
         self.assertEqual(
             Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
             1,
+        )
+
+    def test_corrected_transcript_replays_the_saved_reply(self):
+        first_text = (
+            "Not necessarily. I'm just kinda happy to chat about today "
+            "and the long week it's been."
+        )
+        corrected = (
+            "Not necessarily. I'm just kind of happy to chat about today "
+            "and the long week it's been."
+        )
+        mocked = GeneralResponse(text="Glad you're here.", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            first = self._post_completions(self._payload(user_text=first_text))
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            _sse_body(first)
+            self.assertEqual(get_agent_response.call_count, 1)
+
+            second = self._post_completions(self._payload(user_text=corrected))
+            self.assertEqual(second.status_code, status.HTTP_200_OK)
+            second_body = _sse_body(second)
+            self.assertEqual(get_agent_response.call_count, 1)
+            self.assertIn("Glad you're here.", _sse_contents(second_body))
+
+        user_messages = Message.objects.filter(
+            session=self.session,
+            sender__consumer=self.consumer,
+        )
+        self.assertEqual(user_messages.count(), 1)
+        self.assertEqual(user_messages.get().text, first_text)
+        self.assertEqual(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+            ).count(),
+            1,
+        )
+
+    def test_different_utterance_within_the_window_calls_gemini(self):
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            first = self._post_completions(self._payload(user_text="hello again"))
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            _sse_body(first)
+
+            second = self._post_completions(
+                self._payload(user_text="What should I do about work tomorrow?")
+            )
+            self.assertEqual(second.status_code, status.HTTP_200_OK)
+            _sse_body(second)
+            self.assertEqual(get_agent_response.call_count, 2)
+
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            2,
+        )
+
+    def test_retry_before_agent_reply_does_not_save_a_second_user_row(self):
+        participant = Participant.objects.filter(
+            session=self.session,
+            consumer=self.consumer,
+        ).first()
+        Message.objects.create(
+            session=self.session,
+            sender=participant,
+            text="Not necessarily. I'm just kinda happy to chat.",
+            voice_conversation_id=f"grant:{self.grant.id}",
+            voice_turn_index=0,
+        )
+        mocked = GeneralResponse(text="should not speak", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(
+                self._payload(user_text="What should I do about work tomorrow?")
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+            get_agent_response.assert_not_called()
+
+        self.assertNotIn("should not speak", body)
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            1,
+        )
+
+    def test_similar_text_outside_the_window_is_a_new_turn(self):
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            first = self._post_completions(self._payload(user_text="hello again"))
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            _sse_body(first)
+
+        Message.objects.filter(
+            session=self.session,
+            sender__consumer=self.consumer,
+        ).update(created_at=timezone.now() - timedelta(seconds=21))
+
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            second = self._post_completions(self._payload(user_text="hello again"))
+            self.assertEqual(second.status_code, status.HTTP_200_OK)
+            _sse_body(second)
+            self.assertEqual(get_agent_response.call_count, 1)
+
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            2,
         )
 
     def test_spoken_yes_skips_gemini_and_clears_offer(self):
