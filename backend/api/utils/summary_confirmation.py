@@ -1,11 +1,12 @@
-"""A step that must name the worry cannot finish before the user agrees the summary."""
+"""A step that requires a confirmed summary cannot finish before the user agrees."""
 
 from __future__ import annotations
 
 import re
 
 _REQUIRED = re.compile(
-    r"confirm(?:ed|s|ing)?\s+(?:that\s+)?(?:the\s+)?summary|summary\s+is\s+accurate",
+    r"(?:confirm(?:ed|s|ing)?|agree(?:d|s)?)\s+(?:with\s+)?(?:that\s+)?(?:the\s+)?summary"
+    r"|summary\s+is\s+accurate",
     re.IGNORECASE,
 )
 
@@ -24,8 +25,8 @@ def summary_confirmation_rule(done_when: str) -> str:
     if not summary_confirmation_required(done_when):
         return ""
     return (
-        "\n\nBefore this step can finish, one message must summarise the worry "
-        "and the situation in the user's words and ask if that summary is right. "
+        "\n\nBefore this step can finish, one message must summarise what this step "
+        "asked for, in the user's words, and ask if that summary is right. "
         "Do not set step_goal_met on that message. "
         "Do not ask if they are ready for the next step until they have confirmed the summary."
     )

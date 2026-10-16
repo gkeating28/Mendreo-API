@@ -136,7 +136,7 @@ def probe_count_for(previous, question_kind: str) -> int:
 
 
 SUMMARY_CONFIRM_HINT = (
-    "This step is not done. Summarise the worry and the situation in the user's words, "
+    "This step is not done. Summarise what this step asked for, in the user's words, "
     "then ask if you have that right. Do not ask them to move on, and do not start another exercise."
 )
 

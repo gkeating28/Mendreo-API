@@ -398,6 +398,12 @@ class SummaryConfirmationTests(SimpleTestCase):
 
     def test_rule_is_added_only_when_the_step_requires_a_confirmed_summary(self):
         required = "The user confirmed the summary is accurate."
+        agreed = "The user has agreed with the summary of their decisions and alternative action."
         plain = "The user has named the worry and the situation."
-        self.assertIn("summarise the worry", summary_confirmation_rule(required))
+        ready = "Ask if the user is ready to move on, and move on when the user agrees."
+        rule = summary_confirmation_rule(required)
+        self.assertIn("summarise what this step asked for", rule)
+        self.assertNotIn("worry", rule)
+        self.assertIn("summarise what this step asked for", summary_confirmation_rule(agreed))
         self.assertEqual(summary_confirmation_rule(plain), "")
+        self.assertEqual(summary_confirmation_rule(ready), "")
