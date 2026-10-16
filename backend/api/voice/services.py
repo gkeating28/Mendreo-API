@@ -47,6 +47,11 @@ VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # ElevenLabs retries a turn with a corrected transcript ("kinda" / "kind of").
 # 0.85 keeps that pair and rejects a genuinely different sentence.
 VOICE_RETRY_SIMILARITY = 0.85
+# A corrected transcript can arrive while the first Gemini call is still running.
+# Poll for its saved reply, and send a content token before cascade timeout (~8s).
+VOICE_RETRY_POLL_SECONDS = 0.2
+VOICE_RETRY_WAIT_SECONDS = 25
+VOICE_RETRY_KEEPALIVE_SECONDS = 6
 # Official Custom LLM buffer words (docs: "Let me think about that... ").
 # "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
 # tiny first chunk is often held in Railway/Gunicorn buffers until Gemini
@@ -333,6 +338,15 @@ def stamp_agent_voice_fields(agent_message: Message, grant: VoiceGrant) -> Messa
     return agent_message
 
 
+def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message:
+    """Gemini for an existing user row. Does not insert another user message."""
+    session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
+    session.refresh_from_db(fields=["cached_prompt"])
+    agent_message = Agent.get_response(session=session, user_message=user_message)
+    apply_agent_response(user_message, agent_message)
+    return stamp_agent_voice_fields(agent_message, grant)
+
+
 def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message:
     """
     Same Gemini path as text chat: Agent.get_response + apply_agent_response.
@@ -340,12 +354,8 @@ def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message:
     Neither helper reads the HTTP request or JWT — they only need Session + Message.
     Do not call POST /messages (that would enqueue/double-fire Gemini).
     """
-    session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
-    session.refresh_from_db(fields=["cached_prompt"])
     user_message = create_user_voice_message(grant=grant, text=user_text)
-    agent_message = Agent.get_response(session=session, user_message=user_message)
-    apply_agent_response(user_message, agent_message)
-    return stamp_agent_voice_fields(agent_message, grant)
+    return _generate_agent_reply(grant, user_message)
 
 
 def sse_chunk(content: str | None, *, finish_reason=None, chunk_id: str, created: int, model: str) -> bytes:
@@ -466,20 +476,73 @@ def _same_turn_retry(grant: VoiceGrant, user_text: str, last_user: Message) -> b
     return not _agent_replied_since(grant, last_user)
 
 
-def produce_spoken_turn(grant: VoiceGrant, user_text: str) -> str:
-    """Offer / replay / Gemini on the request thread. Returns text to speak."""
+def _prepare_spoken_turn(grant: VoiceGrant, user_text: str):
+    """Decide what this completion should speak.
+
+    Returns ``("speak", text)``, ``("silent", "")`` for an offer that has no
+    agent line, or ``("wait", user_message)`` when this is a retry and Toni's
+    reply is not saved yet.
+    """
     offer_result = try_voice_offer_reply(grant, user_text)
     if offer_result is not None:
         if getattr(offer_result.sender, "agent_id", None):
-            return (offer_result.text or "").strip()
-        return ""
+            return "speak", (offer_result.text or "").strip()
+        return "silent", ""
 
     last_user = _recent_voice_user_message(grant)
     if last_user is not None and _same_turn_retry(grant, user_text, last_user):
-        return _agent_reply_after(grant, last_user)
+        reply = _agent_reply_after(grant, last_user)
+        if reply:
+            return "speak", reply
+        return "wait", last_user
 
     agent_message = run_toni_reply(grant, user_text)
-    return (agent_message.text or "").strip()
+    return "speak", (agent_message.text or "").strip()
+
+
+def _iter_wait_for_reply(grant, user_message, *, chunk_id, created, model):
+    """Poll for the in-flight reply, yielding keepalive chunks so the stream stays open.
+
+    The return value is the saved reply, or "" when the wait expires.
+    """
+    deadline = time.monotonic() + VOICE_RETRY_WAIT_SECONDS
+    next_keepalive = time.monotonic() + VOICE_RETRY_KEEPALIVE_SECONDS
+    while True:
+        reply = _agent_reply_after(grant, user_message)
+        if reply:
+            return reply
+        now = time.monotonic()
+        if now >= deadline:
+            return ""
+        if now >= next_keepalive:
+            yield sse_chunk(
+                spoken_llm_keepalive(),
+                finish_reason=None,
+                chunk_id=chunk_id,
+                created=created,
+                model=model,
+            )
+            next_keepalive = now + VOICE_RETRY_KEEPALIVE_SECONDS
+        yield sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
+        time.sleep(min(VOICE_RETRY_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+
+
+def _speak_after_retry_wait(grant, user_message, *, chunk_id, created, model):
+    """Wait for the first call, then speak its reply. One Gemini call if it never arrives."""
+    spoken = yield from _iter_wait_for_reply(
+        grant,
+        user_message,
+        chunk_id=chunk_id,
+        created=created,
+        model=model,
+    )
+    if spoken:
+        return spoken
+    spoken = _agent_reply_after(grant, user_message)
+    if spoken:
+        return spoken
+    spoken = (_generate_agent_reply(grant, user_message).text or "").strip()
+    return spoken or UNDERSTANDING_FALLBACK
 
 
 def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
@@ -495,11 +558,12 @@ def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
 
 
 def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
-    """Filler + flush, then Gemini on this request. No background work.
+    """Filler + flush, then the spoken reply. No background work.
 
-    A daemon thread + cache lock caused today's regressions: ORM objects
-    crossed threads (Gemini fallback / "please repeat"), and orphan Gemini
-    writes showed up as late replies after hangup. Keep this path linear.
+    A corrected transcript that arrives while Gemini is still running keeps
+    this stream alive (padding, and the filler again before the cascade
+    window) until the first call saves Toni's reply. A daemon thread + cache
+    lock caused earlier regressions, so the wait stays on this request.
     """
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
@@ -517,7 +581,19 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
     try:
         yield _chunk(spoken_llm_keepalive())
         yield sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
-        spoken = produce_spoken_turn(grant, user_text)
+        kind, payload = _prepare_spoken_turn(grant, user_text)
+        if kind == "wait":
+            spoken = yield from _speak_after_retry_wait(
+                grant,
+                payload,
+                chunk_id=chunk_id,
+                created=created,
+                model=model,
+            )
+        elif kind == "silent":
+            spoken = ""
+        else:
+            spoken = payload or UNDERSTANDING_FALLBACK
         if spoken:
             yield _chunk(spoken)
         yield _chunk(None, finish_reason="stop")

@@ -1064,31 +1064,89 @@ class CustomLlmTests(TestCase):
             2,
         )
 
-    def test_retry_before_agent_reply_does_not_save_a_second_user_row(self):
+    def _open_voice_user_message(self, text):
         participant = Participant.objects.filter(
             session=self.session,
             consumer=self.consumer,
         ).first()
-        Message.objects.create(
+        return Message.objects.create(
             session=self.session,
             sender=participant,
-            text="Not necessarily. I'm just kinda happy to chat.",
+            text=text,
             voice_conversation_id=f"grant:{self.grant.id}",
             voice_turn_index=0,
         )
+
+    def test_inflight_retry_speaks_the_reply_when_it_appears(self):
+        original = "Not necessarily. I'm just kinda happy to chat about today."
+        corrected = "Not necessarily. I'm just kind of happy to chat about today."
+        user_message = self._open_voice_user_message(original)
+        agent_participant = Participant.objects.filter(
+            session=self.session,
+            agent=self.consumer.agent,
+        ).first()
+        saved = {"done": False}
+
+        def sleep_and_save(_seconds):
+            if saved["done"]:
+                return
+            saved["done"] = True
+            Message.objects.create(
+                session=self.session,
+                sender=agent_participant,
+                text="Glad you're here.",
+                voice_conversation_id=f"grant:{self.grant.id}",
+                voice_turn_index=1,
+            )
+
         mocked = GeneralResponse(text="should not speak", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:
             get_agent_response.return_value = mocked, {}, None, None
-            response = self._post_completions(
-                self._payload(user_text="What should I do about work tomorrow?")
-            )
+            with mock.patch("api.voice.services.time.sleep", side_effect=sleep_and_save):
+                response = self._post_completions(self._payload(user_text=corrected))
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             body = _sse_body(response)
             get_agent_response.assert_not_called()
 
+        self.assertIn("Glad you're here.", _sse_contents(body))
         self.assertNotIn("should not speak", body)
+        self.assertGreaterEqual(body.count("flush_padding"), 2)
+        self.assertTrue(saved["done"])
         self.assertEqual(
             Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            1,
+        )
+        self.assertEqual(
+            Message.objects.get(pk=user_message.pk).text,
+            original,
+        )
+
+    def test_inflight_retry_calls_gemini_once_when_the_wait_times_out(self):
+        original = "Not necessarily. I'm just kinda happy to chat about today."
+        self._open_voice_user_message(original)
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.voice.services.VOICE_RETRY_WAIT_SECONDS", 0):
+            with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                get_agent_response.return_value = mocked, {}, None, None
+                response = self._post_completions(
+                    self._payload(user_text="What should I do about work tomorrow?")
+                )
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                body = _sse_body(response)
+                self.assertEqual(get_agent_response.call_count, 1)
+                consumer_message = get_agent_response.call_args.kwargs["consumer_message"]
+
+        self.assertEqual(consumer_message.text, original)
+        self.assertIn("Heard you", _sse_contents(body))
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            1,
+        )
+        self.assertEqual(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+            ).count(),
             1,
         )
 
