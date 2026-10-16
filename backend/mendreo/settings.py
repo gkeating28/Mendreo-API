@@ -69,6 +69,13 @@ _allowed_extra_hosts = [
 ]
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get('GENERAL_HOST_DOMAIN', '*').split(',') if h.strip()] + _allowed_extra_hosts
 
+# The app is only reached through Vercel or Railway. Both terminate TLS.
+# Trust the forwarded protocol so pagination links stay https. The host
+# itself is corrected by PublicHostMiddleware: the function otherwise sees
+# 127.0.0.1 or the deployment URL, and that URL is behind Vercel SSO.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
 if DEPLOYMENT_TARGET == 'vercel' or DEPLOYMENT_TARGET == 'worker' or DEPLOYMENT_TARGET.startswith('worker'):
     # Avoid a DB round-trip on health checks and lightweight HTTP handlers.
     SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
@@ -97,6 +104,7 @@ if DEBUG:
     INSTALLED_APPS.insert(9, 'debug_toolbar')
 
 MIDDLEWARE = [
+    'mendreo.middleware.PublicHostMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
