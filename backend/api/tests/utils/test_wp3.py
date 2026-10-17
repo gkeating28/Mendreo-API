@@ -87,6 +87,8 @@ class Wp3Tests(TestCase):
         open_question = _Previous(Constants.QUESTION_KIND_OPEN, 0)
         self.assertEqual(turn_hint_text(open_question, "yes"), FOLLOW_UP_HINT)
         self.assertIn("One question only.", FOLLOW_UP_HINT)
+        self.assertIn("Do not start another exercise", FOLLOW_UP_HINT)
+        self.assertIn("this step's instructions", ACCEPT_HINT)
         self.assertEqual(
             turn_hint_text(_Previous(Constants.QUESTION_KIND_OPEN, 1), "fine"),
             FOLLOW_UP_HINT,

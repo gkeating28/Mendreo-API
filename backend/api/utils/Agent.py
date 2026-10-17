@@ -25,7 +25,7 @@ from ..session.serializers import Session, SessionDetailSerializer
 
 from ..utils import DateUtils, Constants, S3 as S3Utils
 from .SuggestedResponses import sanitize_suggested_responses
-from .reply_style import normalise_reply, reply_ends_mid_sentence
+from .reply_style import normalise_reply, reply_ends_mid_sentence, reply_leaves_the_step
 from .completion import is_usable_completion_result, pick_completion_result_from_texts
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
@@ -302,6 +302,21 @@ def update_summary(summary, date=None, freezer=None):
     summary.save()
 
 
+def _current_step_instructions(session) -> str | None:
+    """Instructions for the live exercise step. None outside an exercise step."""
+    if not getattr(session, "exercise_id", None):
+        return None
+    if session.in_pre_exercise_phase():
+        return None
+    order = (session.current_step_no or 1) - 1
+    row = (
+        session.session_steps.filter(order=order).select_related("step").first()
+    )
+    if row is None or row.step is None:
+        return None
+    return row.step.instructions or ""
+
+
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
     """Entry point: get the agent's response to a user's message."""
     consumer = consumer_message.sender.consumer
@@ -322,6 +337,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     timer_start = time.perf_counter()
     usage = {}
+
+    steer = [None]
 
     def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider)
@@ -346,6 +363,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             consumer_message,
             user_prompt_with_hint(session, consumer_message),
         )
+        if steer[0]:
+            user_prompt = f"{user_prompt}\n\n<TURN_HINT>\n{steer[0]}\n</TURN_HINT>"
         history = build_history(
             session, exclude_message_id=getattr(consumer_message, "id", None)
         )
@@ -383,6 +402,32 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             except Exception:
                 logger.exception(
                     "mid-sentence retry failed for session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+        instructions = _current_step_instructions(session)
+        if instructions is not None and reply_leaves_the_step(
+            getattr(response_data, "text", None), instructions
+        ):
+            from .turn_hint import STAY_ON_STEP_HINT
+
+            logger.warning(
+                "reply left the live step for session=%s message=%s; retrying once",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+            steer[0] = STAY_ON_STEP_HINT
+            try:
+                retry, _provider = run_with_failover(_run)
+                retry_data = retry.output
+                if not reply_leaves_the_step(
+                    getattr(retry_data, "text", None), instructions
+                ):
+                    result = retry
+                    response_data = retry_data
+            except Exception:
+                logger.exception(
+                    "on-step retry failed for session=%s message=%s",
                     getattr(session, "id", None),
                     getattr(consumer_message, "id", None),
                 )

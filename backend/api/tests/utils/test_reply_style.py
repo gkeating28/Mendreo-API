@@ -1,6 +1,10 @@
 from django.test import SimpleTestCase
 
-from ...utils.reply_style import normalise_reply, reply_ends_mid_sentence
+from ...utils.reply_style import (
+    normalise_reply,
+    reply_ends_mid_sentence,
+    reply_leaves_the_step,
+)
 
 
 class ReplyStyleTests(SimpleTestCase):
@@ -26,6 +30,36 @@ class ReplyStyleTests(SimpleTestCase):
         self.assertFalse(reply_ends_mid_sentence("You said 'I'll mess up'."))
         self.assertFalse(reply_ends_mid_sentence(""))
         self.assertFalse(reply_ends_mid_sentence(None))
+
+    def test_starting_another_exercise_leaves_the_step(self):
+        instructions = "Ask the user what they're worried about."
+        self.assertTrue(
+            reply_leaves_the_step(
+                "Let's start with a short exercise to help you observe your thoughts. Are you ready to begin?",
+                instructions,
+            )
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "This exercise will guide you to notice your thoughts without judgment.",
+                instructions,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "What are you worried about?",
+                instructions,
+            )
+        )
+
+    def test_a_step_that_starts_an_activity_may_say_so(self):
+        instructions = "Let's start with a short exercise: ask them to notice one breath."
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Let's start with a short exercise. Notice one breath.",
+                instructions,
+            )
+        )
 
     def test_banned_openings_are_removed(self):
         self.assertEqual(
