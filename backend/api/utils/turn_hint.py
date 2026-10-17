@@ -9,15 +9,21 @@ from . import Constants
 _TRAILING_ELLIPSIS = re.compile(r"(?:\s*(?:\.{3}|…))+\s*$")
 
 FOLLOW_UP_HINT = (
-    "The reply was brief. Ask one specific follow-up about when, where or what "
-    "happened before moving on. One question only."
+    "The reply was brief. Stay on this step. Ask one follow-up that this step's "
+    "instructions still need. One question only. Do not start another exercise or activity."
 )
 DEPTH_HINT = (
     "The step's result is not yet specific enough to record. "
     "Ask one follow-up that would make it concrete."
 )
 ACCEPT_HINT = (
-    "You have already followed up twice on this question. Accept the answer and continue."
+    "You have already followed up twice on this question. Accept the answer and "
+    "continue with the next part of this step's instructions. "
+    "Do not start another exercise or activity."
+)
+STAY_ON_STEP_HINT = (
+    "That reply left this step. Ask only the next question in this step's instructions. "
+    "Do not start, name, or offer any other exercise or activity."
 )
 
 

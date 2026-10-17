@@ -71,6 +71,24 @@ def reply_ends_mid_sentence(text: str | None) -> bool:
     return re.search(r"[.?!]['\u2019\u201d\")\]]*$", stripped) is None
 
 
+_LEAVES_STEP = re.compile(
+    r"\b(?:let'?s|let us)\s+(?:start|begin|try)\b"
+    r"|\b(?:a|another|new|short|different)\s+exercise\b"
+    r"|\bthis exercise will\b",
+    re.IGNORECASE,
+)
+
+
+def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
+    """True when a reply starts an activity the live step does not name."""
+    raw = text or ""
+    if not _LEAVES_STEP.search(raw):
+        return False
+    if _LEAVES_STEP.search(instructions or ""):
+        return False
+    return True
+
+
 _BANNED_OPENING = re.compile(
     r"^(?:thanks for sharing|thank you for sharing|thank you for|it sounds like)\b[^.?!]*[.?!]\s*",
     re.IGNORECASE,
