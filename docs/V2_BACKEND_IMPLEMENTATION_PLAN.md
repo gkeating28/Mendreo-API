@@ -371,7 +371,7 @@ cd backend && ../.venv/bin/python manage.py test api.tests
 ## 12. Docs & rollout checklist
 
 - [x] This plan reviewed and open questions filled (remaining items deferred with defaults)
-- [ ] Slice A–F merged to `main` (PR #33)
+- [x] Slice A–F merged to `main` (PR #33)
 - [x] Slice C implemented on branch (pre-exercise contracts stable for admin UI)
 - [x] Slice D implemented on branch (mobile onboarding can integrate)
 - [x] Slice E implemented on branch (Progress tabs can integrate)
