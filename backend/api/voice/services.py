@@ -48,6 +48,10 @@ VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # 0.85 keeps that pair and rejects a genuinely different sentence.
 # A longer utterance is a continuation, not a retry, even below this line.
 VOICE_RETRY_SIMILARITY = 0.85
+# Share of the open utterance's words that must still appear, in order, for a
+# longer transcript to continue that row. 0.6 allows a short deletion
+# ("have a chat" -> "chat") and still rejects a different sentence.
+VOICE_CONTINUATION_WORD_KEEP = 0.6
 # A corrected transcript can arrive while the first Gemini call is still running.
 # Poll for its saved reply, and send a content token before cascade timeout (~8s).
 VOICE_RETRY_POLL_SECONDS = 0.2
@@ -368,8 +372,9 @@ def _count_followup_agent_reply(user_message: Message, agent_message: Message) -
 def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message | None:
     """Gemini for an existing user row. Does not insert another user message.
 
-    Returns None when a continuation rewrote the user text while this call was
-    in flight. The model reply is dropped so it is neither kept nor spoken.
+    Returns None when this call's text was rewritten, or a newer user voice
+    row landed, while generation was in flight. The model reply is dropped
+    so it is neither kept nor spoken.
     """
     source_text = _normalize_voice_text(user_message.text or "")
     session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
@@ -377,9 +382,11 @@ def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message |
     agent_message = Agent.get_response(session=session, user_message=user_message)
     with transaction.atomic():
         locked = Message.objects.select_for_update().get(pk=user_message.pk)
-        if _normalize_voice_text(locked.text or "") != source_text:
+        text_changed = _normalize_voice_text(locked.text or "") != source_text
+        newer_user = _newer_voice_user_message(grant, locked)
+        if text_changed or newer_user is not None:
             logger.info(
-                "dropping voice reply for superseded text grant=%s message=%s",
+                "dropping voice reply for superseded turn grant=%s message=%s",
                 grant.id,
                 user_message.id,
             )
@@ -479,21 +486,24 @@ def _voice_texts_similar(left: str, right: str) -> bool:
 
 
 def _voice_text_extends(earlier: str, later: str) -> bool:
-    """True when later keeps the earlier words and adds more.
+    """True when later keeps most of the earlier words, in order, and adds more.
 
-    A prefix ("I'm doing good" -> "... I had a good weekend") or an insertion
-    ("I'm doing good" -> "I'm doing really good"). Replacing a word
-    ("kinda" -> "kind of") is a correction, not a continuation.
+    A prefix, an insertion, or a short deletion ("have a chat" -> "chat"
+    plus a new clause) continues the same row when at least 60% of the
+    earlier words still appear in order. A near-identical correction
+    ("kinda" -> "kind of") stays a retry. A different sentence does not continue.
     """
+    if _voice_texts_similar(earlier, later):
+        return False
     old_words = _normalize_voice_text(earlier).split()
     new_words = _normalize_voice_text(later).split()
     if not old_words or len(new_words) <= len(old_words):
         return False
-    for tag, _i1, _i2, _j1, _j2 in SequenceMatcher(None, old_words, new_words).get_opcodes():
-        if tag in ("equal", "insert"):
-            continue
-        return False
-    return True
+    matched = 0
+    for tag, i1, i2, _j1, _j2 in SequenceMatcher(None, old_words, new_words).get_opcodes():
+        if tag == "equal":
+            matched += i2 - i1
+    return matched / len(old_words) >= VOICE_CONTINUATION_WORD_KEEP
 
 
 def _recent_voice_user_message(grant: VoiceGrant):
@@ -514,16 +524,31 @@ def _recent_voice_user_message(grant: VoiceGrant):
     return last
 
 
-def _agent_reply_after(grant: VoiceGrant, user_message: Message) -> str:
-    agent = (
+def _newer_voice_user_message(grant: VoiceGrant, user_message: Message):
+    """Next user voice row in this conversation, if the speaker continued."""
+    return (
         Message.objects.filter(
             session=grant.session,
-            sender__agent=grant.consumer.agent,
-            created_at__gte=user_message.created_at,
+            sender__consumer=grant.consumer,
+            voice_conversation_id=voice_conversation_key(grant),
+            created_at__gt=user_message.created_at,
         )
         .order_by("created_at")
         .first()
     )
+
+
+def _agent_reply_after(grant: VoiceGrant, user_message: Message) -> str:
+    """Toni's reply to this row, ignoring a reply that belongs after a later user row."""
+    newer_user = _newer_voice_user_message(grant, user_message)
+    replies = Message.objects.filter(
+        session=grant.session,
+        sender__agent=grant.consumer.agent,
+        created_at__gte=user_message.created_at,
+    )
+    if newer_user is not None:
+        replies = replies.filter(created_at__lt=newer_user.created_at)
+    agent = replies.order_by("created_at").first()
     return (agent.text or "").strip() if agent else ""
 
 

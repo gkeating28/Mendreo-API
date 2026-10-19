@@ -1297,6 +1297,185 @@ class CustomLlmTests(TestCase):
             2,
         )
 
+    def test_rephrased_weekend_utterance_continues_the_same_row(self):
+        short = "I just want to have a chat"
+        longer = "I had a very nice weekend and I just want to chat about it"
+        self._open_voice_user_message(short)
+        mocked = GeneralResponse(
+            text="Tell me about the weekend.",
+            reasoning="r",
+            suggested_responses=[],
+        )
+        with mock.patch("api.voice.services.VOICE_RETRY_WAIT_SECONDS", 0):
+            with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                get_agent_response.return_value = mocked, {}, None, None
+                response = self._post_completions(self._payload(user_text=longer))
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                body = _sse_body(response)
+                self.assertEqual(get_agent_response.call_count, 1)
+                consumer_message = get_agent_response.call_args.kwargs["consumer_message"]
+
+        self.assertEqual(consumer_message.text, longer)
+        self.assertIn("Tell me about the weekend.", _sse_contents(body))
+        user_messages = Message.objects.filter(
+            session=self.session,
+            sender__consumer=self.consumer,
+        )
+        self.assertEqual(user_messages.count(), 1)
+        self.assertEqual(user_messages.get().text, longer)
+        agent_messages = Message.objects.filter(
+            session=self.session,
+            sender__agent=self.consumer.agent,
+        )
+        self.assertEqual(agent_messages.count(), 1)
+        self.assertEqual(agent_messages.get().text, "Tell me about the weekend.")
+
+    def test_different_sentence_after_an_open_chat_row_is_a_new_turn(self):
+        self._open_voice_user_message("I just want to have a chat")
+        mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
+        with mock.patch("api.voice.services.VOICE_RETRY_WAIT_SECONDS", 0):
+            with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                get_agent_response.return_value = mocked, {}, None, None
+                response = self._post_completions(
+                    self._payload(user_text="What should I do about work tomorrow?")
+                )
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                _sse_body(response)
+                self.assertEqual(get_agent_response.call_count, 1)
+                consumer_message = get_agent_response.call_args.kwargs["consumer_message"]
+
+        self.assertEqual(consumer_message.text, "What should I do about work tomorrow?")
+        self.assertEqual(
+            Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
+            2,
+        )
+
+    def test_kinda_kind_of_is_a_retry(self):
+        original = "Not necessarily. I'm just kinda happy to chat about today."
+        corrected = "Not necessarily. I'm just kind of happy to chat about today."
+        mocked = GeneralResponse(text="Glad you're here.", reasoning="r", suggested_responses=[])
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            first = self._post_completions(self._payload(user_text=original))
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            _sse_body(first)
+
+            second = self._post_completions(self._payload(user_text=corrected))
+            self.assertEqual(second.status_code, status.HTTP_200_OK)
+            second_body = _sse_body(second)
+            self.assertEqual(get_agent_response.call_count, 1)
+
+        self.assertIn("Glad you're here.", _sse_contents(second_body))
+        user_messages = Message.objects.filter(
+            session=self.session,
+            sender__consumer=self.consumer,
+        )
+        self.assertEqual(user_messages.count(), 1)
+        self.assertEqual(user_messages.get().text, original)
+        self.assertEqual(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+            ).count(),
+            1,
+        )
+
+    def test_retry_does_not_speak_an_older_rows_reply(self):
+        newer_text = "I had a very nice weekend and I just want to chat about it"
+
+        def land_newer_row_during_older_reply(session, consumer_message):
+            participant = Participant.objects.filter(
+                session=self.session,
+                consumer=self.consumer,
+            ).first()
+            Message.objects.create(
+                session=self.session,
+                sender=participant,
+                text=newer_text,
+                voice_conversation_id=f"grant:{self.grant.id}",
+                voice_turn_index=1,
+            )
+            return (
+                GeneralResponse(
+                    text="Reply to the first sentence",
+                    reasoning="r",
+                    suggested_responses=[],
+                ),
+                {},
+                None,
+                None,
+            )
+
+        with mock.patch(
+            "api.utils.Agent.get_response",
+            side_effect=land_newer_row_during_older_reply,
+        ):
+            first = self._post_completions(
+                self._payload(user_text="I just want to have a chat")
+            )
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+            first_body = _sse_body(first)
+
+        self.assertNotIn("Reply to the first sentence", _sse_contents(first_body))
+        self.assertFalse(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+                text="Reply to the first sentence",
+            ).exists()
+        )
+
+        mocked = GeneralResponse(
+            text="Tell me about the weekend.",
+            reasoning="r",
+            suggested_responses=[],
+        )
+        with mock.patch("api.voice.services.VOICE_RETRY_WAIT_SECONDS", 0):
+            with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                get_agent_response.return_value = mocked, {}, None, None
+                second = self._post_completions(self._payload(user_text=newer_text))
+                self.assertEqual(second.status_code, status.HTTP_200_OK)
+                second_body = _sse_body(second)
+                self.assertEqual(get_agent_response.call_count, 1)
+                consumer_message = get_agent_response.call_args.kwargs["consumer_message"]
+
+        self.assertEqual(consumer_message.text, newer_text)
+        self.assertNotIn("Reply to the first sentence", _sse_contents(second_body))
+        self.assertIn("Tell me about the weekend.", _sse_contents(second_body))
+
+    def test_reply_lookup_stops_before_a_newer_user_row(self):
+        from ...voice.services import _agent_reply_after
+
+        older = self._open_voice_user_message("I just want to have a chat")
+        participant = Participant.objects.filter(
+            session=self.session,
+            consumer=self.consumer,
+        ).first()
+        newer = Message.objects.create(
+            session=self.session,
+            sender=participant,
+            text="I had a very nice weekend and I just want to chat about it",
+            voice_conversation_id=f"grant:{self.grant.id}",
+            voice_turn_index=1,
+        )
+        agent_participant = Participant.objects.filter(
+            session=self.session,
+            agent=self.consumer.agent,
+        ).first()
+        Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text="Reply to the first sentence",
+            voice_conversation_id=f"grant:{self.grant.id}",
+            voice_turn_index=2,
+        )
+
+        self.assertEqual(_agent_reply_after(self.grant, older), "")
+        self.assertEqual(
+            _agent_reply_after(self.grant, newer),
+            "Reply to the first sentence",
+        )
+
     def test_similar_text_outside_the_window_is_a_new_turn(self):
         mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:
