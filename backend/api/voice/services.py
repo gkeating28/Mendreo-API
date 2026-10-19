@@ -464,6 +464,7 @@ def iter_silent_completion_sse() -> Iterable[bytes]:
     created = int(time.time())
     chunk_id = "chatcmpl-silent"
     model = "mendreo-toni"
+    yield sse_chunk(" ", finish_reason=None, chunk_id=chunk_id, created=created, model=model)
     yield sse_chunk(None, finish_reason="stop", chunk_id=chunk_id, created=created, model=model)
     yield b"data: [DONE]\n\n"
 
@@ -708,6 +709,8 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
             spoken = payload or UNDERSTANDING_FALLBACK
         if spoken:
             yield _chunk(spoken)
+        else:
+            yield _chunk(" ")
         yield _chunk(None, finish_reason="stop")
         yield b"data: [DONE]\n\n"
     except Exception:

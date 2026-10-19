@@ -987,6 +987,29 @@ class CustomLlmTests(TestCase):
             0,
         )
 
+    def test_empty_last_user_turn_ends_with_a_space_and_no_filler(self):
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            response = self._post_completions(
+                self._payload(
+                    messages=[
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "hi there"},
+                        {"role": "user", "content": ""},
+                    ]
+                )
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+            get_agent_response.assert_not_called()
+
+        self.assertEqual(_sse_contents(body), [" "])
+        self.assertEqual(body.count("Let me think about that..."), 0)
+        space_at = body.find('"content": " "')
+        stop_at = body.find('"finish_reason": "stop"')
+        self.assertGreater(space_at, -1)
+        self.assertGreater(stop_at, space_at)
+        self.assertEqual(Message.objects.filter(session=self.session).count(), 0)
+
     def test_repeat_utterance_does_not_call_gemini(self):
         mocked = GeneralResponse(text="Heard you", reasoning="r", suggested_responses=[])
         with mock.patch("api.utils.Agent.get_response") as get_agent_response:
@@ -1275,6 +1298,38 @@ class CustomLlmTests(TestCase):
             sender__consumer=self.consumer,
         )
         self.assertEqual(user_message.text, longer)
+
+    def test_superseded_stream_ends_with_a_space_and_one_filler(self):
+        longer = "I'm doing good, I had a good weekend"
+
+        def grow_while_in_flight(session, consumer_message):
+            Message.objects.filter(pk=consumer_message.pk).update(text=longer)
+            return (
+                GeneralResponse(text="Good to hear.", reasoning="r", suggested_responses=[]),
+                {},
+                None,
+                None,
+            )
+
+        with mock.patch("api.utils.Agent.get_response", side_effect=grow_while_in_flight):
+            response = self._post_completions(self._payload(user_text="I'm doing good"))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+
+        self.assertEqual(_sse_contents(body), ["Let me think about that... ", " "])
+        self.assertEqual(body.count("Let me think about that..."), 1)
+        self.assertNotIn("Good to hear.", body)
+        space_at = body.find('"content": " "')
+        stop_at = body.find('"finish_reason": "stop"')
+        self.assertGreater(space_at, -1)
+        self.assertGreater(stop_at, space_at)
+        self.assertEqual(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+            ).count(),
+            0,
+        )
 
     def test_different_sentence_before_reply_is_a_new_turn(self):
         self._open_voice_user_message("I'm doing good")
