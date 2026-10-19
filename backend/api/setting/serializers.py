@@ -51,6 +51,8 @@ class SettingCreateSerializer(serializers.Serializer):
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
+    update_summary = serializers.CharField(required=False, allow_blank=True)
+    update_exercise_summary = serializers.CharField(required=False, allow_blank=True)
     ai_retrieval_enabled = serializers.BooleanField(required=False)
     ai_retrieval_exercise_enabled = serializers.BooleanField(required=False)
 
@@ -147,6 +149,17 @@ class SettingCreateSerializer(serializers.Serializer):
             exercise_retrieval.value = str(validated_data["ai_retrieval_exercise_enabled"]).lower()
             exercise_retrieval.save()
 
+        incoming = getattr(self, "initial_data", {}) or {}
+        if "update_summary" in incoming:
+            summary_prompt = Setting.get_or_create_update_summary()
+            summary_prompt.value = validated_data.get("update_summary") or ""
+            summary_prompt.save()
+
+        if "update_exercise_summary" in incoming:
+            exercise_prompt = Setting.get_or_create_update_exercise_summary()
+            exercise_prompt.value = validated_data.get("update_exercise_summary") or ""
+            exercise_prompt.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -162,4 +175,6 @@ class SettingCreateSerializer(serializers.Serializer):
             "store_turn_prompts": Setting.get_store_turn_prompts(),
             "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
+            "update_summary": Setting.get_update_summary(),
+            "update_exercise_summary": Setting.get_update_exercise_summary(),
         }

@@ -63,6 +63,8 @@ class Setting(SmartModel):
         Setting.get_or_create_retrieval_max_chunks()
         Setting.get_or_create_retrieval_max_tokens()
         Setting.get_or_create_retrieval_context_min_words()
+        Setting.get_or_create_update_summary()
+        Setting.get_or_create_update_exercise_summary()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -467,6 +469,46 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_update_summary():
+        from ..utils.summary_prompts import DEFAULT_UPDATE_SUMMARY_PROMPT
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_UPDATE_SUMMARY,
+            defaults={"value": DEFAULT_UPDATE_SUMMARY_PROMPT},
+        )
+        return setting
+
+    @staticmethod
+    def get_update_summary() -> str:
+        from ..utils.summary_prompts import DEFAULT_UPDATE_SUMMARY_PROMPT
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_UPDATE_SUMMARY,
+            Setting.get_or_create_update_summary,
+        )
+        return (raw or "").strip() or DEFAULT_UPDATE_SUMMARY_PROMPT
+
+    @staticmethod
+    def get_or_create_update_exercise_summary():
+        from ..utils.summary_prompts import DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_UPDATE_EXERCISE_SUMMARY,
+            defaults={"value": DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT},
+        )
+        return setting
+
+    @staticmethod
+    def get_update_exercise_summary() -> str:
+        from ..utils.summary_prompts import DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_UPDATE_EXERCISE_SUMMARY,
+            Setting.get_or_create_update_exercise_summary,
+        )
+        return (raw or "").strip() or DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT
 
     @staticmethod
     def _cached_value(key: str, loader):

@@ -154,6 +154,10 @@ def _update_exercise_summary(session) -> None:
     for row in session.session_steps.select_related("step").filter(completed=True).order_by("order"):
         results.append(f"{row.step.title}: {row.completion_result or ''}")
     check_in = session.pre_exercise_prompt_summary or ""
+    step_results = "\n".join(results)
+
+    from ..setting.models import Setting
+    from .summary_prompts import exercise_summary_prompt
 
     class _Summary(BaseModel):
         detailed: str
@@ -161,11 +165,12 @@ def _update_exercise_summary(session) -> None:
         next_steps: str
 
     data = AI.ask(
-        (
-            "Update the notes for this exercise from the check-in and the step results.\n\n"
-            f"Check-in summary:\n{check_in or '(none)'}\n\n"
-            f"Step results:\n{chr(10).join(results) or '(none)'}\n\n"
-            f"Previous notes:\n{summary.detailed or ''}"
+        exercise_summary_prompt(
+            Setting.get_update_exercise_summary(),
+            session.consumer.user.first_name,
+            check_in,
+            step_results,
+            summary.detailed,
         ),
         _Summary,
         temperature=0.2,
