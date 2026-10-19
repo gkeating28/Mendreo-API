@@ -12,7 +12,7 @@ from typing import Iterable
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.db.utils import IntegrityError
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -46,6 +46,7 @@ VOICE_PREVIEW_TEXT = "Hi, I'm Toni. How are you feeling today?"
 VOICE_DUPLICATE_WINDOW = timedelta(seconds=20)
 # ElevenLabs retries a turn with a corrected transcript ("kinda" / "kind of").
 # 0.85 keeps that pair and rejects a genuinely different sentence.
+# A longer utterance is a continuation, not a retry, even below this line.
 VOICE_RETRY_SIMILARITY = 0.85
 # A corrected transcript can arrive while the first Gemini call is still running.
 # Poll for its saved reply, and send a content token before cascade timeout (~8s).
@@ -338,16 +339,69 @@ def stamp_agent_voice_fields(agent_message: Message, grant: VoiceGrant) -> Messa
     return agent_message
 
 
-def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message:
-    """Gemini for an existing user row. Does not insert another user message."""
+def _saved_text_matches(user_message: Message, source_text: str) -> bool:
+    """True when the stored user row still says what this call started with."""
+    user_message.refresh_from_db(fields=["text"])
+    return _normalize_voice_text(user_message.text or "") == source_text
+
+
+def _count_followup_agent_reply(user_message: Message, agent_message: Message) -> None:
+    """Count another Toni line when this user row was already paired with a reply."""
+    session = user_message.session
+    with transaction.atomic():
+        stored_last_at = (
+            type(session).objects.filter(pk=session.pk)
+            .values_list("last_message__created_at", flat=True)
+            .first()
+        )
+        update_fields = ["messages_no", "agent_messages_no", "updated_at"]
+        if stored_last_at is None or (
+            agent_message.created_at and agent_message.created_at >= stored_last_at
+        ):
+            session.last_message = agent_message
+            update_fields.append("last_message")
+        session.messages_no = F("messages_no") + 1
+        session.agent_messages_no = F("agent_messages_no") + 1
+        session.save(update_fields=update_fields)
+
+
+def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message | None:
+    """Gemini for an existing user row. Does not insert another user message.
+
+    Returns None when a continuation rewrote the user text while this call was
+    in flight. The model reply is dropped so it is neither kept nor spoken.
+    """
+    source_text = _normalize_voice_text(user_message.text or "")
     session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
     session.refresh_from_db(fields=["cached_prompt"])
     agent_message = Agent.get_response(session=session, user_message=user_message)
-    apply_agent_response(user_message, agent_message)
+    with transaction.atomic():
+        locked = Message.objects.select_for_update().get(pk=user_message.pk)
+        if _normalize_voice_text(locked.text or "") != source_text:
+            logger.info(
+                "dropping voice reply for superseded text grant=%s message=%s",
+                grant.id,
+                user_message.id,
+            )
+            agent_message.delete()
+            return None
+        already_replied = (
+            Message.objects.filter(
+                session=grant.session,
+                sender__agent=grant.consumer.agent,
+                created_at__gte=locked.created_at,
+            )
+            .exclude(pk=agent_message.pk)
+            .exists()
+        )
+        if already_replied:
+            _count_followup_agent_reply(locked, agent_message)
+        else:
+            apply_agent_response(locked, agent_message)
     return stamp_agent_voice_fields(agent_message, grant)
 
 
-def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message:
+def run_toni_reply(grant: VoiceGrant, user_text: str) -> Message | None:
     """
     Same Gemini path as text chat: Agent.get_response + apply_agent_response.
 
@@ -424,6 +478,24 @@ def _voice_texts_similar(left: str, right: str) -> bool:
     return SequenceMatcher(None, a, b).ratio() >= VOICE_RETRY_SIMILARITY
 
 
+def _voice_text_extends(earlier: str, later: str) -> bool:
+    """True when later keeps the earlier words and adds more.
+
+    A prefix ("I'm doing good" -> "... I had a good weekend") or an insertion
+    ("I'm doing good" -> "I'm doing really good"). Replacing a word
+    ("kinda" -> "kind of") is a correction, not a continuation.
+    """
+    old_words = _normalize_voice_text(earlier).split()
+    new_words = _normalize_voice_text(later).split()
+    if not old_words or len(new_words) <= len(old_words):
+        return False
+    for tag, _i1, _i2, _j1, _j2 in SequenceMatcher(None, old_words, new_words).get_opcodes():
+        if tag in ("equal", "insert"):
+            continue
+        return False
+    return True
+
+
 def _recent_voice_user_message(grant: VoiceGrant):
     """Latest user voice row in this conversation, if it is still inside the retry window."""
     last = (
@@ -442,14 +514,6 @@ def _recent_voice_user_message(grant: VoiceGrant):
     return last
 
 
-def _agent_replied_since(grant: VoiceGrant, user_message: Message) -> bool:
-    return Message.objects.filter(
-        session=grant.session,
-        sender__agent=grant.consumer.agent,
-        created_at__gte=user_message.created_at,
-    ).exists()
-
-
 def _agent_reply_after(grant: VoiceGrant, user_message: Message) -> str:
     agent = (
         Message.objects.filter(
@@ -463,25 +527,32 @@ def _agent_reply_after(grant: VoiceGrant, user_message: Message) -> str:
     return (agent.text or "").strip() if agent else ""
 
 
-def _same_turn_retry(grant: VoiceGrant, user_text: str, last_user: Message) -> bool:
-    """A second completion for this conversation before the user has moved on.
+def _same_turn_retry(user_text: str, last_user: Message) -> bool:
+    """A second completion whose transcript is the same utterance, lightly edited.
 
-    ElevenLabs sends the corrected transcript as a new request. The text is
-    not identical, and the message list is the same turn. A request that
-    arrives before Toni's reply is saved is the same turn even when the
-    wording differs more.
+    ElevenLabs sends a corrected transcript as a new request ("kinda" / "kind of").
+    Only that near-identical text is a retry. A longer utterance is a continuation,
+    and a different sentence is a new turn, including when Toni has not replied yet.
     """
-    if _voice_texts_similar(last_user.text or "", user_text):
-        return True
-    return not _agent_replied_since(grant, last_user)
+    return _voice_texts_similar(last_user.text or "", user_text)
+
+
+def _continue_spoken_turn(grant: VoiceGrant, last_user: Message, user_text: str):
+    """Rewrite the open user row and answer the full utterance once."""
+    last_user.text = user_text
+    last_user.save(update_fields=["text", "updated_at"])
+    agent_message = _generate_agent_reply(grant, last_user)
+    if agent_message is None:
+        return "silent", ""
+    return "speak", (agent_message.text or "").strip()
 
 
 def _prepare_spoken_turn(grant: VoiceGrant, user_text: str):
     """Decide what this completion should speak.
 
-    Returns ``("speak", text)``, ``("silent", "")`` for an offer that has no
-    agent line, or ``("wait", user_message)`` when this is a retry and Toni's
-    reply is not saved yet.
+    Returns ``("speak", text)``, ``("silent", "")`` when there is nothing to
+    say, or ``("wait", user_message)`` when this is a retry and Toni's reply
+    is not saved yet.
     """
     offer_result = try_voice_offer_reply(grant, user_text)
     if offer_result is not None:
@@ -490,24 +561,32 @@ def _prepare_spoken_turn(grant: VoiceGrant, user_text: str):
         return "silent", ""
 
     last_user = _recent_voice_user_message(grant)
-    if last_user is not None and _same_turn_retry(grant, user_text, last_user):
+    if last_user is not None and _voice_text_extends(last_user.text or "", user_text):
+        return _continue_spoken_turn(grant, last_user, user_text)
+
+    if last_user is not None and _same_turn_retry(user_text, last_user):
         reply = _agent_reply_after(grant, last_user)
         if reply:
             return "speak", reply
         return "wait", last_user
 
     agent_message = run_toni_reply(grant, user_text)
+    if agent_message is None:
+        return "silent", ""
     return "speak", (agent_message.text or "").strip()
 
 
-def _iter_wait_for_reply(grant, user_message, *, chunk_id, created, model):
+def _iter_wait_for_reply(grant, user_message, *, chunk_id, created, model, source_text):
     """Poll for the in-flight reply, yielding keepalive chunks so the stream stays open.
 
-    The return value is the saved reply, or "" when the wait expires.
+    The return value is the saved reply, or "" when the wait expires or the
+    user text is no longer the utterance this retry is waiting on.
     """
     deadline = time.monotonic() + VOICE_RETRY_WAIT_SECONDS
     next_keepalive = time.monotonic() + VOICE_RETRY_KEEPALIVE_SECONDS
     while True:
+        if not _saved_text_matches(user_message, source_text):
+            return ""
         reply = _agent_reply_after(grant, user_message)
         if reply:
             return reply
@@ -529,20 +608,26 @@ def _iter_wait_for_reply(grant, user_message, *, chunk_id, created, model):
 
 def _speak_after_retry_wait(grant, user_message, *, chunk_id, created, model):
     """Wait for the first call, then speak its reply. One Gemini call if it never arrives."""
+    source_text = _normalize_voice_text(user_message.text or "")
     spoken = yield from _iter_wait_for_reply(
         grant,
         user_message,
         chunk_id=chunk_id,
         created=created,
         model=model,
+        source_text=source_text,
     )
+    if not _saved_text_matches(user_message, source_text):
+        return ""
     if spoken:
         return spoken
     spoken = _agent_reply_after(grant, user_message)
     if spoken:
         return spoken
-    spoken = (_generate_agent_reply(grant, user_message).text or "").strip()
-    return spoken or UNDERSTANDING_FALLBACK
+    generated = _generate_agent_reply(grant, user_message)
+    if generated is None:
+        return ""
+    return (generated.text or "").strip() or UNDERSTANDING_FALLBACK
 
 
 def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
@@ -560,10 +645,12 @@ def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
 def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
     """Filler + flush, then the spoken reply. No background work.
 
-    A corrected transcript that arrives while Gemini is still running keeps
+    A near-identical retry that arrives while Gemini is still running keeps
     this stream alive (padding, and the filler again before the cascade
-    window) until the first call saves Toni's reply. A daemon thread + cache
-    lock caused earlier regressions, so the wait stays on this request.
+    window) until the first call saves Toni's reply. A longer continuation
+    answers the full text instead, and the first call drops its reply if the
+    user row changed. A daemon thread + cache lock caused earlier regressions,
+    so the wait stays on this request.
     """
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
