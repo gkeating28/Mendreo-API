@@ -88,6 +88,8 @@ class ListCreate(SmartAPIView):
             "store_turn_prompts": Setting.get_store_turn_prompts(),
             "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
+            "update_summary": Setting.get_update_summary(),
+            "update_exercise_summary": Setting.get_update_exercise_summary(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

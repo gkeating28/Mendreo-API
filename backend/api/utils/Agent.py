@@ -245,6 +245,9 @@ def update_summary(summary, date=None, freezer=None):
 
     sessions = "\n".join(all_lines)
 
+    from .summary_prompts import client_summary_prompt
+    from ..setting.models import Setting
+
     exercise_prompt_text = ""
     if exercise:
         exercise_prompt_text = f"""
@@ -256,37 +259,15 @@ def update_summary(summary, date=None, freezer=None):
             </EXERCISE>
         """
 
-    ai_prompt = f"""
-        You are a helpful assistant training in the Unified Protocol that keeps detailed notes and observations
-        about your client {user_first_name}.
-         
-        Your task is to update your existing summary and observations for {user_first_name} while factoring in the most 
-        recent sessions you have had.
-
-        <NEW_SESSIONS>
-            {sessions}
-        </NEW_SESSIONS>
-
-        <PREVIOUS_SUMMARY>
-            {summary.detailed or ''}
-        </PREVIOUS_SUMMARY>
-
-        <PREVIOUS_OBSERVATIONS>
-            {summary.observations or ''}
-        </PREVIOUS_OBSERVATIONS>
-        
-        <PREVIOUS_NEXT_STEPS>
-            {summary.next_steps or ''}
-        </PREVIOUS_NEXT_STEPS>
-        
-        {exercise_prompt_text}
-
-        Update the detailed notes and observations based on the new conversation.
-        
-        Observations are detailed notes on what exercises the user has completed, whether or not they enjoy doing the exercise
-        along with any insights into the state of mind / any other relevant clinical observations.
-        
-        """
+    ai_prompt = client_summary_prompt(
+        Setting.get_update_summary(),
+        user_first_name,
+        sessions,
+        summary.detailed,
+        summary.observations,
+        summary.next_steps,
+        exercise_prompt_text,
+    )
 
     ai_response = AI.ask(prompt=ai_prompt, schema=SUMMARY_RESPONSE_SCHEMA)
 
