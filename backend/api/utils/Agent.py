@@ -283,8 +283,27 @@ def update_summary(summary, date=None, freezer=None):
     summary.save()
 
 
+def _hold_on_step(response_data) -> None:
+    """Replace an off-script reply so the user is not offered another technique."""
+    from .turn_hint import ON_STEP_FALLBACK
+
+    response_data.text = ON_STEP_FALLBACK
+    response_data.suggested_responses = []
+    response_data.question_kind = Constants.QUESTION_KIND_OPEN
+    if hasattr(response_data, "asks_readiness"):
+        response_data.asks_readiness = False
+    if hasattr(response_data, "step_goal_met"):
+        response_data.step_goal_met = False
+    if hasattr(response_data, "is_step_complete"):
+        response_data.is_step_complete = False
+
+
 def _current_step_instructions(session) -> str | None:
-    """Instructions for the live exercise step. None outside an exercise step."""
+    """Title, instructions, and reference for the live step.
+
+    None outside an exercise step. A technique named in any of those may be
+    used. One named only in the model's own reply may not.
+    """
     if not getattr(session, "exercise_id", None):
         return None
     if session.in_pre_exercise_phase():
@@ -295,7 +314,13 @@ def _current_step_instructions(session) -> str | None:
     )
     if row is None or row.step is None:
         return None
-    return row.step.instructions or ""
+    step = row.step
+    parts = (
+        step.title or "",
+        step.instructions or "",
+        getattr(step, "reference_material", None) or "",
+    )
+    return "\n".join(part.strip() for part in parts if part and part.strip())
 
 
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
@@ -398,6 +423,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 getattr(consumer_message, "id", None),
             )
             steer[0] = STAY_ON_STEP_HINT
+            stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
                 retry_data = retry.output
@@ -406,12 +432,21 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 ):
                     result = retry
                     response_data = retry_data
+                    stayed = True
+                else:
+                    logger.warning(
+                        "on-step retry still left the step for session=%s message=%s",
+                        getattr(session, "id", None),
+                        getattr(consumer_message, "id", None),
+                    )
             except Exception:
                 logger.exception(
                     "on-step retry failed for session=%s message=%s",
                     getattr(session, "id", None),
                     getattr(consumer_message, "id", None),
                 )
+            if not stayed:
+                _hold_on_step(response_data)
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
@@ -752,6 +787,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             or "When the client asks about a fact listed here" not in cached
             or "Never open with 'Thanks for sharing'" not in cached
         )
+        stale_on_step = (
+            bool(session.exercise_id)
+            and "Do not reframe the situation" in cached
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -760,6 +799,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_machine,
             stale_retrieval,
             stale_style,
+            stale_on_step,
         )):
             return cached
         session.cached_prompt = None
@@ -950,6 +990,8 @@ def _step_already_started(step_no: int, steps_no: int) -> str:
         "Steps in <STEP_OUTLINE> are context only. Do not start them. "
         "Do only what this step's instructions tell you to do. "
         "Do not add a technique those instructions do not name. "
+        "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
+        "After they confirm, you may ask whether they are ready for the next step. "
         "A <RETRIEVED> block may explain that technique. It cannot start a different exercise or activity. "
         "Unless those instructions ask for it, do not:\n"
         "- weigh evidence for or against a thought or worry\n"
