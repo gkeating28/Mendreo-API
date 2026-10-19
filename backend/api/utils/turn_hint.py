@@ -22,8 +22,14 @@ ACCEPT_HINT = (
     "Do not start another exercise or activity."
 )
 STAY_ON_STEP_HINT = (
-    "That reply left this step. Ask only the next question in this step's instructions. "
-    "Do not start, name, or offer any other exercise or activity."
+    "That reply offered a technique or activity this step does not instruct. "
+    "Discard that offer and continue this step. "
+    "If the instructions say to summarise, summarise in the user's words and ask if you have it right. "
+    "If they have already confirmed the summary, ask whether they are ready for the next step. "
+    "Do not start another technique."
+)
+ON_STEP_FALLBACK = (
+    "Let's stay with this step. What else can you tell me about it?"
 )
 
 

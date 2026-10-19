@@ -26,7 +26,6 @@ def _replace_steps(exercise):
                 title=title,
                 description=f"Description {index + 1}",
                 instructions=f"Instructions {index + 1}",
-                completion_criteria=f"Done {index + 1}",
                 completion_label=f"Label {index + 1}",
                 completion_prompt="Extract the result." if index < 2 else None,
                 key=f"step_{index + 1}",
@@ -84,9 +83,49 @@ class Wp5StepRenderingTests(BaseTest):
         self.assertIn("0 to 10 scale", prompt)
         self.assertIn("balanced or more accurate thought", prompt)
         self.assertIn("only as background", prompt)
+        self.assertIn("ask if you have it right", prompt)
+        self.assertNotIn("Do not reframe the situation", prompt)
         self.assertNotIn("cognitive restructuring as appropriate", prompt)
         self.assertEqual(_prompt_phase(session), "step:3:step_active")
         self.assertEqual(steps[2].title, "Live step")
+
+        session.cached_prompt = prompt.replace(
+            "ask if you have it right",
+            "Do not reframe the situation. ask if you have it right",
+        )
+        session.save(update_fields=["cached_prompt", "updated_at"])
+        rebuilt = _prepare_prompt(session)
+        self.assertNotIn("Do not reframe the situation", rebuilt)
+        self.assertIn("ask if you have it right", rebuilt)
+
+    def test_live_step_script_includes_title_instructions_and_reference(self):
+        from ...utils.Agent import _current_step_instructions
+
+        exercise = General.create_exercise()
+        steps = _replace_steps(exercise)
+        steps[0].title = "Name the Worry"
+        steps[0].instructions = "Ask what they are worried about."
+        steps[0].reference_material = "Worry is a behaviour, not a solution."
+        steps[0].save(
+            update_fields=[
+                "title",
+                "instructions",
+                "reference_material",
+                "updated_at",
+            ]
+        )
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            current_step_no=1,
+            total_steps_no=5,
+            state="step_active",
+        )
+        SessionStep.create(session, exercise)
+        script = _current_step_instructions(session)
+        self.assertIn("Name the Worry", script)
+        self.assertIn("Ask what they are worried about.", script)
+        self.assertIn("Worry is a behaviour, not a solution.", script)
 
     def test_missing_completion_prompt_does_not_call_the_model(self):
         step = Step(completion_prompt=None)
