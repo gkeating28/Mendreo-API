@@ -17,6 +17,14 @@ TOKEN_PATTERN = re.compile(
 
 DEFAULT_START_BUTTON_LABEL = "Start exercise"
 
+CHECK_IN_RULES = """
+            - Conduct a short conversational check-in only.
+            - Do not begin Step 1 or any exercise step content.
+            - Do not set step_goal_met or asks_readiness during the check-in.
+            - When the check-in goal is met, invite the user to tap the start button;
+              do not invent step progression yourself.
+        """
+
 
 def has_completed_exercise_before(consumer, exercise) -> bool:
     """Returning user for this exercise = at least one prior completed session."""
@@ -119,6 +127,7 @@ def test_pre_exercise_prompt(
         "tokens": resolved["resolved_tokens"],
         "prompt": prompt,
         "dry_run": None,
+        "debug": _check_in_debug(prompt),
     }
 
     if not run_dry_run:
@@ -131,9 +140,36 @@ def test_pre_exercise_prompt(
     class OpeningMessage(BaseModel):
         text: str = Field(description="The assistant's opening check-in message")
 
-    result = AI.ask(prompt, OpeningMessage, temperature=0.4)
-    payload["dry_run"] = {"opening_message": result.get("text")}
+    from ..utils.prompt_debug import capture, take_provider
+
+    with capture():
+        result = AI.ask(prompt, OpeningMessage, temperature=0.4)
+        provider = take_provider()
+    opening = result.get("text")
+    payload["dry_run"] = {"opening_message": opening}
+    payload["debug"] = _check_in_debug(
+        prompt,
+        schema=OpeningMessage,
+        model_name=getattr(provider, "default_model", None) if provider is not None else None,
+        reply=opening,
+    )
     return payload
+
+
+def _check_in_debug(prompt, schema=None, model_name=None, reply=None):
+    """Debug for the short test prompt. The rules are not sent to the model."""
+    from ..utils.prompt_debug import build_debug
+
+    return build_debug(
+        system_prompt=None,
+        user_prompt=prompt,
+        schema=schema,
+        model_name=model_name,
+        retrieval_enabled=False,
+        reply_before=reply,
+        reply_after=reply,
+        extra_block_labels=("check_in_rules",),
+    )
 
 
 def complete_pre_exercise_checkin(session, *, summary: Optional[str] = None, synthetic_text=None):
@@ -214,13 +250,7 @@ def generate_pre_exercise_summary(session) -> str:
 def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
     """XML block injected into the system prompt during the check-in phase."""
     resolved = resolve_pre_exercise_fields(exercise, consumer, session=session)
-    rules = """
-            - Conduct a short conversational check-in only.
-            - Do not begin Step 1 or any exercise step content.
-            - Do not set step_goal_met or asks_readiness during the check-in.
-            - When the check-in goal is met, invite the user to tap the start button;
-              do not invent step progression yourself.
-        """
+    rules = CHECK_IN_RULES
     phase_note = "Do NOT start exercise steps yet. The app moves to Step 1 when the user taps Start."
     return f"""
     <PRE_EXERCISE_CHECK_IN>

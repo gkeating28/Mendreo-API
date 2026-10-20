@@ -428,6 +428,28 @@ def _followup_phase(consumer, entry) -> str:
     return "stay_on_opener"
 
 
+ONBOARDING_FOLLOWUP_RULES = """                - While this block is present: do not run a daily check-in,
+                  do not call get_exercise, do not offer an exercise.
+                - One question only. Two sentences max.
+
+                PHASE stay_on_opener (first message is already a real topic):
+                - Reply only to what they just said.
+                - Do not mention PRIOR_ANSWER, do not ask permission,
+                  do not re-ask the onboarding question.
+
+                PHASE permission (server may send this as a canned line):
+                - If you speak: one permission ask about PRIOR_ANSWER only.
+                - Do not also check in or triage.
+
+                PHASE followup (they agreed, or they started answering it):
+                - Attempt 1: weave a warm follow-up that invites more
+                  specificity about PRIOR_ANSWER. Do not stack questions.
+                - Attempt 2: if you speak, stay on this topic only.
+                  The server may send a direct re-ask.
+                - After this topic is resolved, continue a normal
+                  supportive chat (this block will be removed)."""
+
+
 def format_onboarding_followup_block(session) -> str:
     """XML block for the general-chat system prompt, or empty."""
     if not should_inject_onboarding_followup(session):
@@ -449,26 +471,7 @@ def format_onboarding_followup_block(session) -> str:
             <PHASE>{phase}</PHASE>
             <ATTEMPT>{attempt}</ATTEMPT>
             <RULES>
-                - While this block is present: do not run a daily check-in,
-                  do not call get_exercise, do not offer an exercise.
-                - One question only. Two sentences max.
-
-                PHASE stay_on_opener (first message is already a real topic):
-                - Reply only to what they just said.
-                - Do not mention PRIOR_ANSWER, do not ask permission,
-                  do not re-ask the onboarding question.
-
-                PHASE permission (server may send this as a canned line):
-                - If you speak: one permission ask about PRIOR_ANSWER only.
-                - Do not also check in or triage.
-
-                PHASE followup (they agreed, or they started answering it):
-                - Attempt 1: weave a warm follow-up that invites more
-                  specificity about PRIOR_ANSWER. Do not stack questions.
-                - Attempt 2: if you speak, stay on this topic only.
-                  The server may send a direct re-ask.
-                - After this topic is resolved, continue a normal
-                  supportive chat (this block will be removed).
+{ONBOARDING_FOLLOWUP_RULES}
             </RULES>
         </ONBOARDING_FOLLOW_UP>
     """

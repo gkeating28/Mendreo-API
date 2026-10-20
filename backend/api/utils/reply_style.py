@@ -141,6 +141,24 @@ def _unnamed_technique(text: str, allowed: str) -> bool:
     return False
 
 
+def stay_on_step_catalogue_text() -> str:
+    """Live guard text: the retry hint, then the patterns that decide a retry."""
+    from .turn_hint import STAY_ON_STEP_HINT
+
+    lines = [
+        STAY_ON_STEP_HINT,
+        "",
+        "The runner retries once with that hint, then holds the reply on the step.",
+        "Activity patterns:",
+    ]
+    for pattern in _ACTIVITY_PATTERNS:
+        lines.append(pattern.pattern)
+    lines.append("Technique groups:")
+    for group in _TECHNIQUE_GROUPS:
+        lines.append(", ".join(group))
+    return "\n".join(lines)
+
+
 def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     """True when a reply starts an activity the live step does not name.
 

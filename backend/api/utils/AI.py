@@ -65,7 +65,10 @@ class AI:
                 return output.model_dump()
             return dict(output)
 
-        data, _provider = run_with_failover(_run, model_name=model)
+        data, provider = run_with_failover(_run, model_name=model)
+        from .prompt_debug import note_provider
+
+        note_provider(provider)
         return data
 
     @staticmethod

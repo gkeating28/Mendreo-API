@@ -303,6 +303,38 @@ def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
     return ChipOutcome(user_message, build_session_state(session))
 
 
+HIDDEN_OPENER_STEP_ONE = (
+    "The exercise has already been introduced during the check-in. "
+    "Ask the first question of step 1 now. "
+    "Do not welcome the user, explain the exercise, or ask if it is right for them."
+)
+HIDDEN_OPENER_LATER = (
+    "Continue straight into step {step_no}. "
+    "Ask only the first question that step's instructions require. "
+    "Do not introduce the exercise."
+)
+HIDDEN_OPENER_GREET_REPEAT = (
+    "Hi, I'd like to practise this exercise again. "
+    "Please start with the pre-exercise check-in before we begin Step 1."
+)
+HIDDEN_OPENER_GREET_FIRST = (
+    "Hi, I'd like to practise this exercise. "
+    "Can you greet me and explain the exercise please?"
+)
+
+
+def hidden_opener_catalogue_text() -> str:
+    """Every hidden opener the runner can send. Built from the constants above."""
+    return "\n\n".join(
+        (
+            HIDDEN_OPENER_STEP_ONE,
+            HIDDEN_OPENER_LATER,
+            HIDDEN_OPENER_GREET_REPEAT,
+            HIDDEN_OPENER_GREET_FIRST,
+        )
+    )
+
+
 def opening_turn(step_no: int) -> str:
     """Hidden user turn that opens a step. It is not shown in the chat.
 
@@ -310,16 +342,8 @@ def opening_turn(step_no: int) -> str:
     exercise is already underway and to ask the step's first question.
     """
     if step_no <= 1:
-        return (
-            "The exercise has already been introduced during the check-in. "
-            "Ask the first question of step 1 now. "
-            "Do not welcome the user, explain the exercise, or ask if it is right for them."
-        )
-    return (
-        f"Continue straight into step {step_no}. "
-        "Ask only the first question that step's instructions require. "
-        "Do not introduce the exercise."
-    )
+        return HIDDEN_OPENER_STEP_ONE
+    return HIDDEN_OPENER_LATER.format(step_no=step_no)
 
 
 def start_check_in(session, summary=None):
@@ -561,6 +585,7 @@ def _store_summary_hint(session) -> None:
 def _store_goal_hint(session, missing: str) -> None:
     from .turn_hint import goal_hint_text
 
+    session._debug_goal_missing = missing or ""
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
     meta["goal_hint"] = goal_hint_text(missing)
@@ -603,6 +628,7 @@ def _depth_check_passed(session, session_step) -> bool:
     )
     if (extracted.get("confidence") or 0) >= Setting.get_knowledge_min_confidence():
         return True
+    session._debug_depth_held = True
     meta = dict(session.cached_prompt_meta or {})
     meta["depth_hint_step_id"] = session_step.id
     session.cached_prompt_meta = meta

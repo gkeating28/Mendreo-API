@@ -177,7 +177,9 @@ def post_authoring_message(session, text, from_suggested_response):
         build_session_state,
         consume_chip,
         handle_typed_while_awaiting,
+        is_ready_affirmation,
     )
+    from .prompt_debug import capture, finish_debug
 
     text = (text or "").strip()
     if not text:
@@ -190,22 +192,27 @@ def post_authoring_message(session, text, from_suggested_response):
     if sender is None:
         raise ValueError("This test run has no participant.")
 
-    user_message = Message.objects.create(session=session, sender=sender, text=text)
-    outcome = consume_chip(user_message, from_suggested_response)
-    if outcome is None and not from_suggested_response:
-        outcome = handle_typed_while_awaiting(user_message)
+    awaiting = session.state == Constants.SESSION_STATE_AWAITING_READY
+    refused = False
+    with capture() as cap:
+        user_message = Message.objects.create(session=session, sender=sender, text=text)
+        outcome = consume_chip(user_message, from_suggested_response)
+        if outcome is None and not from_suggested_response:
+            outcome = handle_typed_while_awaiting(user_message)
+            if outcome is not None and awaiting and not is_ready_affirmation(text):
+                refused = True
 
-    if outcome is not None:
-        reply = outcome.message
-        state = outcome.session_state
-    else:
-        agent_message = Agent.get_response(user_message=user_message, session=session)
-        reason = model_failure_reason(agent_message)
-        if reason:
-            raise RuntimeError(reason)
-        reply = apply_agent_response(user_message, agent_message)
-        session.refresh_from_db()
-        state = build_session_state(session)
+        if outcome is not None:
+            reply = outcome.message
+            state = outcome.session_state
+        else:
+            agent_message = Agent.get_response(user_message=user_message, session=session)
+            reason = model_failure_reason(agent_message)
+            if reason:
+                raise RuntimeError(reason)
+            reply = apply_agent_response(user_message, agent_message)
+            session.refresh_from_db()
+            state = build_session_state(session)
 
     return {
         "text": reply.text,
@@ -219,6 +226,11 @@ def post_authoring_message(session, text, from_suggested_response):
             "text": user_message.text,
             "created_at": user_message.created_at,
         },
+        "debug": finish_debug(
+            cap,
+            session,
+            refusal_reason="not in readiness yes-list" if refused else None,
+        ),
     }
 
 
@@ -273,6 +285,7 @@ def start_authoring_test(snapshot, consumer, admin=None):
     from ..session.models import Session, SessionStep
     from .AIWorkerClient import _run_session_greeting
     from .SessionStateMachine import build_session_state, opening_turn
+    from .prompt_debug import capture, finish_debug
 
     step_count = snapshot.steps.count()
     if step_count < 1:
@@ -292,11 +305,13 @@ def start_authoring_test(snapshot, consumer, admin=None):
     SessionStep.create(session, snapshot)
     Participant.create_participants(session)
     # Same hidden line a real Start sends into step 1.
-    opening = _run_session_greeting(session, synthetic_text=opening_turn(1))
+    with capture() as cap:
+        opening = _run_session_greeting(session, synthetic_text=opening_turn(1))
     reason = model_failure_reason(opening)
     if reason:
         raise RuntimeError(reason)
     session.refresh_from_db()
+    session._authoring_debug = finish_debug(cap, session)
     return session, opening, build_session_state(session)
 
 

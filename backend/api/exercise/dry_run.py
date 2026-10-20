@@ -105,25 +105,35 @@ def dry_run_step(exercise, step, consumer, transcript: str | None = None, step_f
             subject="Dry run",
         )
         SessionStep.create(session, exercise)
-        from ..grounding.retrieval import stamp_retrieval_enabled
+        from ..grounding.retrieval import session_retrieval_enabled, stamp_retrieval_enabled
+        from ..utils.prompt_debug import build_debug, capture, take_provider
 
         stamp_retrieval_enabled(session)
         prompt = _prepare_prompt(session, steps=rows, create_summary=False)
         if transcript:
             prompt = f"{prompt}\n\nTranscript so far:\n{transcript}"
-        result = AI.ask(
-            (
-                f"{prompt}\n\n"
-                "Write only the opening message for the live step. One or two sentences."
-            ),
-            _Opening,
-            temperature=0.4,
+        asked = (
+            f"{prompt}\n\n"
+            "Write only the opening message for the live step. One or two sentences."
         )
+        with capture():
+            result = AI.ask(asked, _Opening, temperature=0.4)
+            provider = take_provider()
+        opening = result.get("text")
         return {
             "exercise_id": exercise.id,
             "step_id": live.id,
             "prompt": prompt,
-            "opening_message": result.get("text"),
+            "opening_message": opening,
+            "debug": build_debug(
+                system_prompt=None,
+                user_prompt=asked,
+                schema=_Opening,
+                model_name=getattr(provider, "default_model", None) if provider is not None else None,
+                retrieval_enabled=session_retrieval_enabled(session),
+                reply_before=opening,
+                reply_after=opening,
+            ),
         }
     finally:
         if session is not None:

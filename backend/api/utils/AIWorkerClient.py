@@ -98,18 +98,17 @@ def _run_session_greeting(session, synthetic_text=None):
         return None
 
     if session.exercise_id:
+        from .SessionStateMachine import (
+            HIDDEN_OPENER_GREET_FIRST,
+            HIDDEN_OPENER_GREET_REPEAT,
+        )
+
         if synthetic_text:
             text = synthetic_text
         elif session.in_pre_exercise_phase():
-            text = (
-                "Hi, I'd like to practise this exercise again. "
-                "Please start with the pre-exercise check-in before we begin Step 1."
-            )
+            text = HIDDEN_OPENER_GREET_REPEAT
         else:
-            text = (
-                "Hi, I'd like to practise this exercise. "
-                "Can you greet me and explain the exercise please?"
-            )
+            text = HIDDEN_OPENER_GREET_FIRST
     else:
         return None
 

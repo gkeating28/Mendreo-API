@@ -325,6 +325,8 @@ def _current_step_instructions(session) -> str | None:
 
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
     """Entry point: get the agent's response to a user's message."""
+    from .prompt_debug import capture_on, remember_reply, remember_turn
+
     consumer = consumer_message.sender.consumer
     assert consumer, "Message sender must be a consumer"
 
@@ -345,6 +347,11 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     usage = {}
 
     steer = [None]
+    sent_for_result = {}
+    result = None
+    debug_result = None
+    on_step_retried = False
+    on_step_held = False
 
     def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider)
@@ -388,11 +395,27 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             message_history=history,
             usage_limits=UsageLimits(tool_calls_limit=2)
         )
+        if capture_on():
+            from ..grounding.retrieval import session_retrieval_enabled
+
+            sent_for_result[id(result)] = {
+                "system_prompt": prompt,
+                "user_prompt": user_prompt,
+                "model_name": getattr(provider, "default_model", None)
+                or getattr(provider, "_resolved_model_name", None),
+                "retrieval_enabled": session_retrieval_enabled(session),
+                "pending": [
+                    {"source_id": item.get("source_id")}
+                    for item in (getattr(session, "_pending_retrieval", None) or [])
+                ],
+                "schema": schema,
+            }
         return result
 
     try:
         result, _provider = run_with_failover(_run)
         response_data = result.output
+        debug_result = result
         if reply_ends_mid_sentence(getattr(response_data, "text", None)):
             logger.warning(
                 "reply ended mid-sentence for session=%s message=%s; retrying once",
@@ -405,6 +428,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 if not reply_ends_mid_sentence(getattr(retry_data, "text", None)):
                     result = retry
                     response_data = retry_data
+                    debug_result = retry
             except Exception:
                 logger.exception(
                     "mid-sentence retry failed for session=%s message=%s",
@@ -426,6 +450,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
+                on_step_retried = True
+                debug_result = retry
                 retry_data = retry.output
                 if not reply_leaves_the_step(
                     getattr(retry_data, "text", None), instructions
@@ -447,6 +473,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 )
             if not stayed:
                 _hold_on_step(response_data)
+                on_step_held = True
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
@@ -475,7 +502,22 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         'response_time_in_sec': round(timer_end - timer_start, 3)
     }
 
+    raw_reply = response_data.text
     response_data.text = normalise_reply(response_data.text)
+    if capture_on():
+        remember_reply(raw_reply, response_data.text)
+        looked_up = debug_result if debug_result is not None else result
+        info = sent_for_result.get(id(looked_up)) if looked_up is not None else None
+        remember_turn(
+            system_prompt=(info or {}).get("system_prompt", prompt),
+            user_prompt=(info or {}).get("user_prompt") if info else None,
+            model_name=(info or {}).get("model_name") if info else None,
+            retrieval_enabled=(info or {}).get("retrieval_enabled") if info else None,
+            pending=(info or {}).get("pending") if info else None,
+            schema=(info or {}).get("schema", schema) if info else schema,
+            on_step_retried=on_step_retried,
+            on_step_held=on_step_held,
+        )
     response_data.suggested_responses = sanitize_suggested_responses(
         response_data.suggested_responses,
         response_data.text,
@@ -505,6 +547,25 @@ _UP_BACKGROUND_SENTENCE = (
     "          only as background. The only technique you may use is the one named in "
     "the instructions for the work in front of you.\n"
     "          Do not apply cognitive restructuring, or any other technique, on your own."
+)
+DESCRIPTION_PREFIX = (
+    "Clinical background only. Do not read this to the user, "
+    "and do not turn it into a welcome or a suitability check.\n\n"
+)
+STEP_SCOPE_RULES = (
+    "The step below in <STEP> is the only step you may work on. "
+    "Steps in <STEP_OUTLINE> are context only. Do not start them. "
+    "Do only what this step's instructions tell you to do. "
+    "Do not add a technique those instructions do not name. "
+    "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
+    "After they confirm, you may ask whether they are ready for the next step. "
+    "A <RETRIEVED> block may explain that technique. It cannot start a different exercise or activity. "
+    "Unless those instructions ask for it, do not:\n"
+    "- weigh evidence for or against a thought or worry\n"
+    "- ask how much something bothers them on a 0 to 10 scale\n"
+    "- look for a balanced or more accurate thought\n"
+    "- brainstorm solutions, plans, or who can support them\n"
+    "Your first message must be the first question in those instructions.\n\n"
 )
 
 
@@ -869,11 +930,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
                 step_no = only_index + 1
-                description = (
-                    "Clinical background only. Do not read this to the user, "
-                    "and do not turn it into a welcome or a suitability check.\n\n"
-                    + description
-                )
+                description = DESCRIPTION_PREFIX + description
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(
@@ -985,21 +1042,7 @@ def _prompt_template(session) -> str:
 
 
 def _step_already_started(step_no: int, steps_no: int) -> str:
-    scope = (
-        "The step below in <STEP> is the only step you may work on. "
-        "Steps in <STEP_OUTLINE> are context only. Do not start them. "
-        "Do only what this step's instructions tell you to do. "
-        "Do not add a technique those instructions do not name. "
-        "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
-        "After they confirm, you may ask whether they are ready for the next step. "
-        "A <RETRIEVED> block may explain that technique. It cannot start a different exercise or activity. "
-        "Unless those instructions ask for it, do not:\n"
-        "- weigh evidence for or against a thought or worry\n"
-        "- ask how much something bothers them on a 0 to 10 scale\n"
-        "- look for a balanced or more accurate thought\n"
-        "- brainstorm solutions, plans, or who can support them\n"
-        "Your first message must be the first question in those instructions.\n\n"
-    )
+    scope = STEP_SCOPE_RULES
     if step_no <= 1:
         return (
             "The pre-exercise check-in is finished and this exercise has already been introduced. "

@@ -89,6 +89,9 @@ def _already_answered(consumer, question) -> bool:
     return bool(pending)
 
 
+PENDING_QUESTION_RULE = "Ask this when it fits the conversation. One question only."
+
+
 def _block(question, session) -> str:
     from ..knowledge.models import KnowledgeEntry
 
@@ -111,7 +114,7 @@ def _block(question, session) -> str:
     return (
         "<PENDING_QUESTION>\n"
         f"{question.prompt}\n"
-        "Ask this when it fits the conversation. One question only."
+        f"{PENDING_QUESTION_RULE}"
         f"{follow}\n"
         "</PENDING_QUESTION>"
     )
