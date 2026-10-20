@@ -17,7 +17,12 @@ from ...utils.prompt_debug import (
     finish_debug,
     reply_style_report,
 )
-from ...utils.reply_style import normalise_reply
+from ...utils.reply_style import normalise_reply, stay_on_step_catalogue_text
+from ...utils.summary_prompts import (
+    DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT,
+    DEFAULT_UPDATE_SUMMARY_PROMPT,
+)
+from ...utils.turn_hint import ON_STEP_FALLBACK, STAY_ON_STEP_HINT
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -65,6 +70,40 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertEqual(programming["applies"], "every turn")
         self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
         self.assertEqual(rows["step_scope_rules"]["applies"], "exercise only")
+        self.assertIn("ask if you have it right", rows["step_scope_rules"]["text"])
+        self.assertIn(
+            "you may ask whether they are ready for the next step",
+            rows["step_scope_rules"]["text"],
+        )
+        fallback = rows["on_step_fallback"]
+        self.assertEqual(fallback["text"], ON_STEP_FALLBACK)
+        self.assertEqual(
+            fallback["applies"],
+            "replaces the model's reply when an off-script retry still leaves the step",
+        )
+        self.assertTrue(fallback["file"].endswith("turn_hint.py"))
+        fallback_source = (_ROOT / fallback["file"]).read_text().splitlines()
+        self.assertTrue(fallback_source[fallback["line"] - 1].startswith("ON_STEP_FALLBACK"))
+        guard = rows["stay_on_step_guard"]
+        self.assertEqual(guard["text"], stay_on_step_catalogue_text())
+        self.assertTrue(guard["text"].startswith(STAY_ON_STEP_HINT))
+        self.assertIn("retries once", guard["text"])
+        self.assertTrue(guard["file"].endswith("reply_style.py"))
+        guard_source = (_ROOT / guard["file"]).read_text().splitlines()
+        self.assertIn("def reply_leaves_the_step", guard_source[guard["line"] - 1])
+        self.assertEqual(rows["client_summary_prompt"]["text"], DEFAULT_UPDATE_SUMMARY_PROMPT)
+        self.assertEqual(
+            rows["client_summary_prompt"]["applies"],
+            "editable in Settings (update_summary)",
+        )
+        self.assertEqual(
+            rows["exercise_summary_prompt"]["text"],
+            DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT,
+        )
+        self.assertEqual(
+            rows["exercise_summary_prompt"]["applies"],
+            "editable in Settings (update_exercise_summary)",
+        )
         self.assertEqual(rows["description_prefix"]["text"], DESCRIPTION_PREFIX)
         self.assertEqual(rows["onboarding_followup_rules"]["applies"], "general chat only")
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
@@ -152,6 +191,35 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertFalse(debug["reply_style"]["changed"])
         self.assertFalse(hasattr(session, "_debug_goal_missing"))
         self.assertFalse(hasattr(session, "_debug_depth_held"))
+        self.assertFalse(debug["on_step_retried"])
+        self.assertFalse(debug["on_step_held"])
+
+    def test_on_step_retry_debug_uses_the_retried_hint(self):
+        user_prompt = f"What is the worry?\n\n<TURN_HINT>\n{STAY_ON_STEP_HINT}\n</TURN_HINT>"
+        debug = build_debug(
+            system_prompt="system",
+            user_prompt=user_prompt,
+            on_step_retried=True,
+            on_step_held=True,
+        )
+        self.assertEqual(debug["user_prompt"], user_prompt)
+        self.assertEqual(debug["turn_hint"], STAY_ON_STEP_HINT)
+        self.assertTrue(debug["on_step_retried"])
+        self.assertTrue(debug["on_step_held"])
+        labels = [row["label"] for row in debug["blocks"]]
+        self.assertIn("stay_on_step_guard", labels)
+        held = finish_debug(
+            type("Cap", (), {"data": {
+                "system_prompt": "system",
+                "user_prompt": user_prompt,
+                "on_step_retried": True,
+                "on_step_held": False,
+            }})(),
+            type("Session", (), {"cached_prompt_meta": {}})(),
+        )
+        self.assertTrue(held["on_step_retried"])
+        self.assertFalse(held["on_step_held"])
+        self.assertEqual(held["turn_hint"], STAY_ON_STEP_HINT)
 
 
 class PromptDebugApiTests(BaseTest):
@@ -267,4 +335,8 @@ class PromptDebugApiTests(BaseTest):
         self.assertEqual(rows["programming_instructions"]["text"], Constants.PROMPT_PROGRAMMING_INSTRUCTIONS)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["pending_question"]["applies"], "every turn")
+        self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)
+        self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
+        self.assertEqual(rows["client_summary_prompt"]["text"], DEFAULT_UPDATE_SUMMARY_PROMPT)
+        self.assertIn("editable in Settings", rows["exercise_summary_prompt"]["applies"])
         self.assertNotIn("system_prompt", response.json[0])
