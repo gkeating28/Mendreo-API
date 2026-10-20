@@ -11,10 +11,12 @@ from .views import (
     TestRun,
     TestRunDetail,
     TestRunMessage,
+    PromptRules,
 )
 
 urlpatterns = [
     path('', ListCreate.as_view()),
+    path('/prompt-rules', PromptRules.as_view()),
     path('/duplicate', DuplicateExerciseView.as_view()),
     path('/lint', ExerciseLint.as_view()),
     path('/<str:id>/dry-run', StepDryRun.as_view()),

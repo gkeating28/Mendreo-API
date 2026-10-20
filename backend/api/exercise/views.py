@@ -246,15 +246,17 @@ class TestRun(SmartAPIView):
                 status_code=status.HTTP_502_BAD_GATEWAY,
             )
 
-        return Response(
-            {
-                "opening_message": opening.text,
-                "session_state": session_state,
-                "session_id": session.id,
-                "snapshot_exercise_id": snapshot.id,
-            },
-            status=status.HTTP_200_OK,
-        )
+        body = {
+            "opening_message": opening.text,
+            "session_state": session_state,
+            "session_id": session.id,
+            "snapshot_exercise_id": snapshot.id,
+        }
+        debug = getattr(session, "_authoring_debug", None)
+        if debug is not None:
+            body["debug"] = debug
+            del session._authoring_debug
+        return Response(body, status=status.HTTP_200_OK)
 
 
 class TestRunMessage(SmartAPIView):
@@ -449,6 +451,26 @@ class TestPreExercisePrompt(SmartAPIView):
             )
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class PromptRules(SmartAPIView):
+    """Hard-coded rule blocks, read from the constants the runner uses."""
+
+    permission_classes = [IsAdminPermission]
+    role_permission = True
+    model = Exercise
+
+    def get(self, request):
+        if not self.has_role_permission("POST", Exercise):
+            return self.get_permission_denied_response(request, "GET")
+        if self.should_obscure_pii(request):
+            return self.respond_with(
+                "Personal Information view permission is required to test against a user",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        from ..utils.prompt_debug import catalogue
+
+        return Response(catalogue(), status=status.HTTP_200_OK)
 
 
 class ExerciseTokens(SmartAPIView):
