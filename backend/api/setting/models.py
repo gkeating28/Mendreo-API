@@ -65,6 +65,8 @@ class Setting(SmartModel):
         Setting.get_or_create_retrieval_context_min_words()
         Setting.get_or_create_update_summary()
         Setting.get_or_create_update_exercise_summary()
+        Setting.get_or_create_reply_length_instruction()
+        Setting.get_or_create_one_question_instruction()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -509,6 +511,40 @@ class Setting(SmartModel):
             Setting.get_or_create_update_exercise_summary,
         )
         return (raw or "").strip() or DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT
+
+    @staticmethod
+    def get_or_create_reply_length_instruction():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_REPLY_LENGTH,
+            defaults={"value": Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION},
+        )
+        return setting
+
+    @staticmethod
+    def get_reply_length_instruction() -> str:
+        """Stored reply-length line. Blank means the line is left out of the prompt."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_REPLY_LENGTH,
+            Setting.get_or_create_reply_length_instruction,
+        )
+        return (raw or "").strip()
+
+    @staticmethod
+    def get_or_create_one_question_instruction():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONE_QUESTION,
+            defaults={"value": Constants.DEFAULT_ONE_QUESTION_INSTRUCTION},
+        )
+        return setting
+
+    @staticmethod
+    def get_one_question_instruction() -> str:
+        """Stored one-question line. Blank means the line is left out of the prompt."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONE_QUESTION,
+            Setting.get_or_create_one_question_instruction,
+        )
+        return (raw or "").strip()
 
     @staticmethod
     def _cached_value(key: str, loader):

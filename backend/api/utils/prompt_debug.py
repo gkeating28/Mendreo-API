@@ -29,8 +29,23 @@ _SPECS = (
         "name": "PROMPT_PROGRAMMING_INSTRUCTIONS",
     },
     {
+        "label": "reply_length",
+        "applies": "editable in Settings (reply_length)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_REPLY_LENGTH_INSTRUCTION",
+    },
+    {
+        "label": "one_question",
+        "applies": "editable in Settings (one_question)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_ONE_QUESTION_INSTRUCTION",
+    },
+    {
         "label": "step_scope_rules",
-        "applies": "exercise only",
+        "applies": (
+            "exercise only; the first-message sentence is omitted "
+            "on the no-check-in opening turn"
+        ),
         "module": "api.utils.Agent",
         "name": "STEP_SCOPE_RULES",
     },
@@ -60,12 +75,6 @@ _SPECS = (
         "name": "DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT",
     },
     {
-        "label": "description_prefix",
-        "applies": "exercise only",
-        "module": "api.utils.Agent",
-        "name": "DESCRIPTION_PREFIX",
-    },
-    {
         "label": "restructuring_rewrite",
         "applies": "exercise only",
         "module": "api.utils.Agent",
@@ -91,7 +100,10 @@ _SPECS = (
     },
     {
         "label": "hidden_opener",
-        "applies": "exercise only",
+        "applies": (
+            "start on a no-check-in step-1 open; the other lines after a "
+            "check-in or on a later step"
+        ),
         "module": "api.utils.SessionStateMachine",
         "name": "HIDDEN_OPENER_STEP_ONE",
         "text_fn": "hidden_opener_catalogue_text",
@@ -315,9 +327,9 @@ def _spec_in(spec, module, blob: str) -> bool:
 def _hidden_opener_in(module, blob: str) -> bool:
     step_one = module.HIDDEN_OPENER_STEP_ONE
     later = module.HIDDEN_OPENER_LATER
-    if step_one in blob or module.HIDDEN_OPENER_GREET_FIRST in blob:
+    if step_one in blob or module.HIDDEN_OPENER_GREET_REPEAT in blob:
         return True
-    if module.HIDDEN_OPENER_GREET_REPEAT in blob:
+    if any(line.strip() == module.HIDDEN_OPENER_START for line in blob.splitlines()):
         return True
     head, _, tail = later.partition("{step_no}")
     return bool(head and tail and head in blob and tail in blob)

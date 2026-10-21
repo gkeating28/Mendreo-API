@@ -317,22 +317,31 @@ HIDDEN_OPENER_GREET_REPEAT = (
     "Hi, I'd like to practise this exercise again. "
     "Please start with the pre-exercise check-in before we begin Step 1."
 )
-HIDDEN_OPENER_GREET_FIRST = (
-    "Hi, I'd like to practise this exercise. "
-    "Can you greet me and explain the exercise please?"
-)
+# No instruction. The step 1 text in the system prompt is what the model follows.
+HIDDEN_OPENER_START = "start"
 
 
 def hidden_opener_catalogue_text() -> str:
     """Every hidden opener the runner can send. Built from the constants above."""
     return "\n\n".join(
         (
-            HIDDEN_OPENER_STEP_ONE,
-            HIDDEN_OPENER_LATER,
-            HIDDEN_OPENER_GREET_REPEAT,
-            HIDDEN_OPENER_GREET_FIRST,
+            "No-check-in step-1 open:\n" + HIDDEN_OPENER_START,
+            "After a check-in, step 1:\n" + HIDDEN_OPENER_STEP_ONE,
+            "Later step:\n" + HIDDEN_OPENER_LATER,
+            "Check-in:\n" + HIDDEN_OPENER_GREET_REPEAT,
         )
     )
+
+
+def greeting_text(session, synthetic_text=None) -> str:
+    """Hidden user turn for a session greeting. Not shown in the chat."""
+    if synthetic_text:
+        return synthetic_text
+    if session.in_pre_exercise_phase():
+        return HIDDEN_OPENER_GREET_REPEAT
+    if (session.current_step_no or 1) <= 1:
+        return HIDDEN_OPENER_START
+    return opening_turn(session.current_step_no)
 
 
 def opening_turn(step_no: int) -> str:

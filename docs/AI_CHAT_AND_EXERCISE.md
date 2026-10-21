@@ -190,7 +190,7 @@ Progress **observations** (`Setting.observations_*`) are a separate daily genera
 3. If the user has **already completed this exercise** and `exercise.pre_exercise_enabled`, start in **pre-exercise** (`current_step_no = 0`). Otherwise start at Step 1.
 4. Fire a **greeting** turn (`request_session_greeting`) with a **hardcoded fake user message** that is not shown as a consumer bubble:
    - Pre-exercise: *“Hi, I'd like to practise this exercise again. Please start with the pre-exercise check-in before we begin Step 1.”*
-   - Otherwise: *“Hi, I'd like to practise this exercise. Can you greet me and explain the exercise please?”*
+   - Otherwise, when the run starts on step 1: *“start”*. No instruction is added. Later steps still use the step opener that asks that step's first question.
 
 That greeting is a full LLM turn using the exercise system prompt.
 

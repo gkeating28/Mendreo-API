@@ -132,7 +132,8 @@ The first assistant line of a **new** exercise run. Resume of an incomplete run 
 
 1. Build a **synthetic consumer message** (not saved as a user chat row):
    - Pre-exercise: *“Hi, I'd like to practise this exercise again. Please start with the pre-exercise check-in before we begin Step 1.”*
-   - Step 1: *“Hi, I'd like to practise this exercise. Can you greet me and explain the exercise please?”*
+   - Step 1 with no check-in: *“start”*. Nothing else is added to that turn.
+   - Step 1 after a check-in: the hidden line that the exercise was introduced in the check-in, to ask the first question of step 1, and not to welcome the user.
 2. Run the same conversational agent as a normal turn (`ExerciseResponse` schema).
 3. Persist only the **agent** message; bump `agent_messages_no` / `messages_no` by 1 (not +2).
 
@@ -214,7 +215,7 @@ Client taps the start button: `POST /sessions/<id>/complete-pre-exercise`.
    - Else one-shot `AI.ask`: completion prompt + full check-in transcript → `{ summary }` (temperature 0.2). On failure, the same fallback string.
 3. Stamp `pre_exercise_prompt_summary` and `pre_exercise_completed_at`.
 4. Set `current_step_no = 1`. **Clear `cached_prompt`.**
-5. Call `request_session_greeting` again with the **Step 1** synthetic text (“greet me and explain the exercise”).
+5. Call `request_session_greeting` again with `opening_turn(1)`: the exercise was introduced in the check-in, ask the first question of step 1, and do not welcome the user.
 6. The greeting turn rebuilds the system prompt **without** the pre-exercise block and **with** the real step list.
 
 ---

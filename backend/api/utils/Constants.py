@@ -239,6 +239,16 @@ SETTING_KEY_RETRIEVAL_MAX_TOKENS = "retrieval_max_tokens"
 SETTING_KEY_RETRIEVAL_CONTEXT_MIN_WORDS = "retrieval_context_min_words"
 SETTING_KEY_UPDATE_SUMMARY = "update_summary"
 SETTING_KEY_UPDATE_EXERCISE_SUMMARY = "update_exercise_summary"
+SETTING_KEY_REPLY_LENGTH = "reply_length"
+SETTING_KEY_ONE_QUESTION = "one_question"
+
+# Seed text for the two style lines. A blank setting omits that line.
+DEFAULT_REPLY_LENGTH_INSTRUCTION = (
+    "- Keep your responses short and to the point, ideally these should be no more than 2 sentences"
+)
+DEFAULT_ONE_QUESTION_INSTRUCTION = (
+    "- Do not ask compound questions. Only ask one simple, single question at a time."
+)
 
 RETRIEVAL_MIN_SIMILARITY_DEFAULT = 0.5
 RETRIEVAL_MAX_CHUNKS_DEFAULT = 4
@@ -391,14 +401,10 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         - Maintain a calm, warm, and professional tone.
         
-        - Keep your responses short and to the point, ideally these should be no more than 2 sentences
-        
         - When explaining a concept / exercise keep your initial response short and concise and offer a 'suggested_response' of
           where you can add further information.
         
         - Do not repeat the users queries to ask for clarification
-
-        - Do not ask compound questions. Only ask one simple, single question at a time.
 
         - Always refer to {user_name} by their name. Never refer to them as "the user" or "the client".
         

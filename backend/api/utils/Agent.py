@@ -548,10 +548,6 @@ _UP_BACKGROUND_SENTENCE = (
     "the instructions for the work in front of you.\n"
     "          Do not apply cognitive restructuring, or any other technique, on your own."
 )
-DESCRIPTION_PREFIX = (
-    "Clinical background only. Do not read this to the user, "
-    "and do not turn it into a welcome or a suitability check.\n\n"
-)
 STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
@@ -565,7 +561,12 @@ STEP_SCOPE_RULES = (
     "- ask how much something bothers them on a 0 to 10 scale\n"
     "- look for a balanced or more accurate thought\n"
     "- brainstorm solutions, plans, or who can support them\n"
-    "Your first message must be the first question in those instructions.\n\n"
+    "Your first message must be the first question in those instructions. "
+    "If this step's instructions ask for a longer reply, such as a summary, "
+    "that overrides the reply-length line above.\n\n"
+)
+_FIRST_MESSAGE_SENTENCE = (
+    "Your first message must be the first question in those instructions. "
 )
 
 
@@ -823,6 +824,62 @@ def update_session(session_ai_prompt, session):
         traceback.format_exc()
 
 
+def _style_bullet(text: str) -> str:
+    """Indent a settings line so it sits with the other programming bullets."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if text.startswith("-"):
+        return f"        {text}"
+    return f"        - {text}"
+
+
+def apply_style_instructions(
+    programming_instructions: str,
+    reply_length: str,
+    one_question: str,
+) -> str:
+    """Put the two Settings lines back where the hard-coded bullets sat.
+
+    A blank value leaves that bullet out.
+    """
+    reply = _style_bullet(reply_length)
+    question = _style_bullet(one_question)
+    if reply:
+        anchor = "- When explaining a concept / exercise keep your initial response short"
+        programming_instructions = programming_instructions.replace(
+            anchor,
+            f"{reply}\n        \n        {anchor}",
+            1,
+        )
+    if question:
+        anchor = "- Always refer to "
+        programming_instructions = programming_instructions.replace(
+            anchor,
+            f"{question}\n\n        {anchor}",
+            1,
+        )
+    return programming_instructions
+
+
+def style_instructions_stale(cached: str, reply_length: str, one_question: str) -> bool:
+    """True when a cached prompt still has a line the setting has changed or cleared."""
+    cached = cached or ""
+    pairs = (
+        (reply_length, Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION),
+        (one_question, Constants.DEFAULT_ONE_QUESTION_INSTRUCTION),
+    )
+    for current, default in pairs:
+        current = (current or "").strip().lstrip("-").strip()
+        default = default.strip().lstrip("-").strip()
+        if current:
+            if current not in cached:
+                return True
+        elif default and default in cached:
+            return True
+    return False
+
+
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     from ..grounding.retrieval import session_retrieval_enabled
@@ -831,6 +888,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     cached = session.cached_prompt
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
+    bare_opening = _session_is_bare_opening(session)
     if cached:
         # Older prompts left {today_date} uninterpolated (nested format),
         # told Toni to "click the exercise", or predate the block order.
@@ -843,15 +901,23 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
         if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
             stale_retrieval = True
+        from ..setting.models import Setting
+
         stale_style = (
             "Write in British English" not in cached
             or "When the client asks about a fact listed here" not in cached
             or "Never open with 'Thanks for sharing'" not in cached
+            or style_instructions_stale(
+                cached,
+                Setting.get_reply_length_instruction(),
+                Setting.get_one_question_instruction(),
+            )
         )
         stale_on_step = (
             bool(session.exercise_id)
             and "Do not reframe the situation" in cached
         )
+        stale_opening = bool(meta.get("bare_opening")) != bare_opening
         if not any((
             stale_placeholders,
             stale_click,
@@ -861,6 +927,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_retrieval,
             stale_style,
             stale_on_step,
+            stale_opening,
         )):
             return cached
         session.cached_prompt = None
@@ -930,13 +997,14 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
                 step_no = only_index + 1
-                description = DESCRIPTION_PREFIX + description
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(
                     exercise, session, token_context, only_index, steps=steps
                 )
-                exercise_steps = _step_already_started(step_no, live_steps_no) + exercise_steps
+                exercise_steps = _step_already_started(
+                    step_no, live_steps_no, bare_opening=bare_opening
+                ) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
                 exercise_steps = _get_formatted_exercise_steps_text(
@@ -971,13 +1039,19 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         }
 
     user_name = consumer.user.first_name or "there"
-    programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
-        user_name=user_name,
-        up_technique_rule=(
-            Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
-            if retrieval_on
-            else Constants.UP_MEMORY_TECHNIQUE_RULE
+    from ..setting.models import Setting
+
+    programming_instructions = apply_style_instructions(
+        Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
+            user_name=user_name,
+            up_technique_rule=(
+                Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
+                if retrieval_on
+                else Constants.UP_MEMORY_TECHNIQUE_RULE
+            ),
         ),
+        Setting.get_reply_length_instruction(),
+        Setting.get_one_question_instruction(),
     )
     if retrieval_on:
         programming_instructions = (
@@ -1010,6 +1084,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["prompt_phase"] = prompt_phase
     meta["state_machine"] = _state_machine_enabled()
     meta["retrieval_instruction"] = retrieval_on
+    meta["bare_opening"] = bare_opening
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
@@ -1041,8 +1116,30 @@ def _prompt_template(session) -> str:
         return f.read()
 
 
-def _step_already_started(step_no: int, steps_no: int) -> str:
+def is_bare_opening(in_check_in: bool, step_no: int, agent_message_stored: bool) -> bool:
+    """True only for a no-check-in step-1 open, before any agent reply is stored."""
+    return (not in_check_in) and step_no <= 1 and not agent_message_stored
+
+
+def _session_is_bare_opening(session) -> bool:
+    if not getattr(session, "exercise_id", None) or session.in_pre_exercise_phase():
+        return False
+    step_no = session.current_step_no or 1
+    if step_no > 1:
+        return False
+    from ..message.models import Message
+
+    stored = Message.objects.filter(
+        session=session, sender__agent__isnull=False
+    ).exists()
+    return is_bare_opening(False, step_no, stored)
+
+
+def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = False) -> str:
     scope = STEP_SCOPE_RULES
+    if bare_opening and step_no <= 1:
+        scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
+        return scope
     if step_no <= 1:
         return (
             "The pre-exercise check-in is finished and this exercise has already been introduced. "

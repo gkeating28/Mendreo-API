@@ -1,6 +1,8 @@
 """Prompt debug is read-only: same reply, admin-only, sourced from the live constants."""
 
+import string
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -10,7 +12,29 @@ from ...exercise.pre_exercise import CHECK_IN_RULES
 from ...message.models import TurnPrompt
 from ...session.models import Session
 from ...utils import Constants
-from ...utils.Agent import DESCRIPTION_PREFIX, STEP_SCOPE_RULES, ExerciseStateResponse
+from django.core.cache import cache
+
+from ...setting.models import Setting
+from ...utils.Agent import (
+    STEP_SCOPE_RULES,
+    ExerciseStateResponse,
+    _prompt_template,
+    _step_already_started,
+    apply_style_instructions,
+    is_bare_opening,
+    style_instructions_stale,
+)
+from ...utils.SessionStateMachine import (
+    HIDDEN_OPENER_GREET_REPEAT,
+    HIDDEN_OPENER_START,
+    greeting_text,
+    opening_turn,
+)
+
+_LENGTH_OVERRIDE = (
+    "If this step's instructions ask for a longer reply, such as a summary, "
+    "that overrides the reply-length line above."
+)
 from ...utils.prompt_debug import (
     build_debug,
     catalogue,
@@ -69,8 +93,13 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertEqual(programming["text"], Constants.PROMPT_PROGRAMMING_INSTRUCTIONS)
         self.assertEqual(programming["applies"], "every turn")
         self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
-        self.assertEqual(rows["step_scope_rules"]["applies"], "exercise only")
+        self.assertEqual(
+            rows["step_scope_rules"]["applies"],
+            "exercise only; the first-message sentence is omitted "
+            "on the no-check-in opening turn",
+        )
         self.assertIn("ask if you have it right", rows["step_scope_rules"]["text"])
+        self.assertIn(_LENGTH_OVERRIDE, rows["step_scope_rules"]["text"])
         self.assertIn(
             "you may ask whether they are ready for the next step",
             rows["step_scope_rules"]["text"],
@@ -104,24 +133,189 @@ class PromptDebugUnitTests(SimpleTestCase):
             rows["exercise_summary_prompt"]["applies"],
             "editable in Settings (update_exercise_summary)",
         )
-        self.assertEqual(rows["description_prefix"]["text"], DESCRIPTION_PREFIX)
+        self.assertNotIn("description_prefix", rows)
+        self.assertNotIn("2 sentences", rows["programming_instructions"]["text"])
+        self.assertNotIn("compound questions", rows["programming_instructions"]["text"])
+        self.assertEqual(
+            rows["reply_length"]["text"],
+            Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION,
+        )
+        self.assertEqual(rows["reply_length"]["applies"], "editable in Settings (reply_length)")
+        self.assertEqual(
+            rows["one_question"]["text"],
+            Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+        )
+        self.assertEqual(rows["one_question"]["applies"], "editable in Settings (one_question)")
         self.assertEqual(rows["onboarding_followup_rules"]["applies"], "general chat only")
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["check_in_rules"]["applies"], "check-in only")
         self.assertIn("Ask the first question of step 1 now.", rows["hidden_opener"]["text"])
+        self.assertIn(HIDDEN_OPENER_START, rows["hidden_opener"]["text"])
+        self.assertIn("No-check-in step-1 open", rows["hidden_opener"]["text"])
+        self.assertIn("no-check-in step-1 open", rows["hidden_opener"]["applies"])
         included = build_debug(
-            system_prompt=STEP_SCOPE_RULES + "\n" + DESCRIPTION_PREFIX,
+            system_prompt=(
+                STEP_SCOPE_RULES
+                + "\n"
+                + Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION
+                + "\n"
+                + Constants.DEFAULT_ONE_QUESTION_INSTRUCTION
+            ),
             user_prompt="The exercise has already been introduced during the check-in. Ask the first question of step 1 now. Do not welcome the user, explain the exercise, or ask if it is right for them.",
         )
         labels = [row["label"] for row in included["blocks"]]
         self.assertIn("step_scope_rules", labels)
-        self.assertIn("description_prefix", labels)
+        self.assertIn("reply_length", labels)
+        self.assertIn("one_question", labels)
         self.assertIn("hidden_opener", labels)
+        self.assertNotIn("description_prefix", labels)
         self.assertNotIn("check_in_rules", labels)
+        self.assertNotIn("greet me and explain", rows["hidden_opener"]["text"])
         source = (_ROOT / programming["file"]).read_text().splitlines()
         self.assertTrue(
             source[programming["line"] - 1].startswith("PROMPT_PROGRAMMING_INSTRUCTIONS")
         )
+
+    def test_style_lines_come_from_settings_and_a_blank_omits_them(self):
+        base = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
+            user_name="Sam",
+            up_technique_rule="rule",
+        )
+        self.assertNotIn("2 sentences", base)
+        self.assertNotIn("compound questions", base)
+        filled = apply_style_instructions(
+            base,
+            Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION,
+            Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+        )
+        self.assertLess(
+            filled.index("no more than 2 sentences"),
+            filled.index("When explaining a concept"),
+        )
+        self.assertLess(
+            filled.index("compound questions"),
+            filled.index("Always refer to Sam"),
+        )
+        blank = apply_style_instructions(base, "", "   ")
+        self.assertEqual(blank, base)
+        self.assertFalse(
+            style_instructions_stale(
+                filled,
+                Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION,
+                Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+            )
+        )
+        self.assertTrue(
+            style_instructions_stale(
+                filled,
+                "",
+                Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+            )
+        )
+        custom = "Keep replies to one short sentence"
+        self.assertTrue(
+            style_instructions_stale(
+                filled,
+                custom,
+                Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+            )
+        )
+        rewritten = apply_style_instructions(
+            base,
+            custom,
+            "",
+        )
+        self.assertIn(custom, rewritten)
+        self.assertNotIn("compound questions", rewritten)
+        self.assertFalse(style_instructions_stale(rewritten, custom, ""))
+
+    def test_bare_opening_omits_the_two_lines(self):
+        self.assertTrue(is_bare_opening(False, 1, False))
+        self.assertFalse(is_bare_opening(True, 1, False))
+        self.assertFalse(is_bare_opening(False, 1, True))
+        self.assertFalse(is_bare_opening(False, 2, False))
+
+        opening = _step_already_started(1, 3, bare_opening=True)
+        later = _step_already_started(1, 3, bare_opening=False)
+        step_two = _step_already_started(2, 3, bare_opening=False)
+        self.assertNotIn("Do not write a welcome", opening)
+        self.assertNotIn("Your first message must be the first question", opening)
+        self.assertIn("Do only what this step's instructions tell you to do", opening)
+        self.assertIn(_LENGTH_OVERRIDE, opening)
+        self.assertIn("Do not write a welcome", later)
+        self.assertIn("Your first message must be the first question", later)
+        self.assertIn("Do not introduce the exercise", step_two)
+        self.assertIn("Your first message must be the first question", step_two)
+        self.assertNotIn("Do not write a welcome", step_two)
+
+        fresh = SimpleNamespace(
+            in_pre_exercise_phase=lambda: False,
+            current_step_no=1,
+        )
+        self.assertEqual(greeting_text(fresh), HIDDEN_OPENER_START)
+        check_in = SimpleNamespace(
+            in_pre_exercise_phase=lambda: True,
+            current_step_no=0,
+        )
+        self.assertEqual(greeting_text(check_in), HIDDEN_OPENER_GREET_REPEAT)
+        self.assertEqual(greeting_text(fresh, opening_turn(1)), opening_turn(1))
+
+    def test_length_override_is_in_the_exercise_prompt_only(self):
+        def filled(template, **overrides):
+            names = {
+                field
+                for _, field, _, _ in string.Formatter().parse(template)
+                if field
+            }
+            values = {name: "" for name in names}
+            values.update(overrides)
+            return template.format(**values)
+
+        exercise = filled(
+            _prompt_template(SimpleNamespace(exercise=object())),
+            exercise_steps=_step_already_started(1, 3),
+        )
+        general = filled(_prompt_template(SimpleNamespace(exercise=None)))
+        self.assertIn(_LENGTH_OVERRIDE, exercise)
+        self.assertNotIn(_LENGTH_OVERRIDE, general)
+
+    def test_missing_style_setting_uses_the_default_and_a_blank_drops_it(self):
+        rows = {}
+
+        def get_or_create(key, defaults):
+            if key not in rows:
+                rows[key] = SimpleNamespace(value=defaults["value"])
+                return rows[key], True
+            return rows[key], False
+
+        cache.clear()
+        with patch.object(Setting.objects, "get_or_create", side_effect=get_or_create):
+            self.assertEqual(
+                Setting.get_reply_length_instruction(),
+                Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION,
+            )
+            self.assertEqual(
+                Setting.get_one_question_instruction(),
+                Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+            )
+            self.assertEqual(
+                rows[Constants.SETTING_KEY_REPLY_LENGTH].value,
+                Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION,
+            )
+            self.assertEqual(
+                rows[Constants.SETTING_KEY_ONE_QUESTION].value,
+                Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
+            )
+
+            rows[Constants.SETTING_KEY_REPLY_LENGTH].value = ""
+            rows[Constants.SETTING_KEY_ONE_QUESTION].value = "   "
+            cache.clear()
+            self.assertEqual(Setting.get_reply_length_instruction(), "")
+            self.assertEqual(Setting.get_one_question_instruction(), "")
+            self.assertEqual(
+                apply_style_instructions("base\n- Always refer to ", "", ""),
+                "base\n- Always refer to ",
+            )
 
     def test_reply_style_report_does_not_change_the_reply(self):
         raw = "Thanks for sharing that. The color is blue."
@@ -333,6 +527,11 @@ class PromptDebugApiTests(BaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
         rows = {row["label"]: row for row in response.json}
         self.assertEqual(rows["programming_instructions"]["text"], Constants.PROMPT_PROGRAMMING_INSTRUCTIONS)
+        self.assertEqual(rows["reply_length"]["text"], Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION)
+        self.assertIn("editable in Settings (reply_length)", rows["reply_length"]["applies"])
+        self.assertEqual(rows["one_question"]["text"], Constants.DEFAULT_ONE_QUESTION_INSTRUCTION)
+        self.assertIn("editable in Settings (one_question)", rows["one_question"]["applies"])
+        self.assertNotIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["pending_question"]["applies"], "every turn")
         self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)

@@ -36,7 +36,7 @@ from ...utils.authoring_run import (
 from ...utils.form_answers import record_onboarding_knowledge, save_form_answer
 from ...utils.prompt_blocks import render_session_context
 from ...utils.risk import apply_turn_risk
-from ...utils.SessionStateMachine import _confirm, opening_turn
+from ...utils.SessionStateMachine import HIDDEN_OPENER_START, _confirm
 from ...utils.session_close import close_idle_sessions
 from ..TestCase import TestCase
 from ..utils.BaseTest import BaseTest
@@ -760,7 +760,7 @@ class AuthoringSnapshotTests(AuthoringRunTestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
         hidden = self.model.call_args.kwargs["consumer_message"].text
-        self.assertEqual(hidden, opening_turn(1))
+        self.assertEqual(hidden, HIDDEN_OPENER_START)
         self.assertNotIn("greet me and explain", hidden)
 
 

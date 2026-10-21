@@ -53,6 +53,8 @@ class SettingCreateSerializer(serializers.Serializer):
     store_turn_prompts = serializers.BooleanField(required=False)
     update_summary = serializers.CharField(required=False, allow_blank=True)
     update_exercise_summary = serializers.CharField(required=False, allow_blank=True)
+    reply_length = serializers.CharField(required=False, allow_blank=True)
+    one_question = serializers.CharField(required=False, allow_blank=True)
     ai_retrieval_enabled = serializers.BooleanField(required=False)
     ai_retrieval_exercise_enabled = serializers.BooleanField(required=False)
 
@@ -160,6 +162,16 @@ class SettingCreateSerializer(serializers.Serializer):
             exercise_prompt.value = validated_data.get("update_exercise_summary") or ""
             exercise_prompt.save()
 
+        if "reply_length" in incoming:
+            reply_length = Setting.get_or_create_reply_length_instruction()
+            reply_length.value = validated_data.get("reply_length") or ""
+            reply_length.save()
+
+        if "one_question" in incoming:
+            one_question = Setting.get_or_create_one_question_instruction()
+            one_question.value = validated_data.get("one_question") or ""
+            one_question.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -177,4 +189,6 @@ class SettingCreateSerializer(serializers.Serializer):
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
             "update_summary": Setting.get_update_summary(),
             "update_exercise_summary": Setting.get_update_exercise_summary(),
+            "reply_length": Setting.get_reply_length_instruction(),
+            "one_question": Setting.get_one_question_instruction(),
         }

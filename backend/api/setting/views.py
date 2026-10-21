@@ -90,6 +90,8 @@ class ListCreate(SmartAPIView):
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
             "update_summary": Setting.get_update_summary(),
             "update_exercise_summary": Setting.get_update_exercise_summary(),
+            "reply_length": Setting.get_reply_length_instruction(),
+            "one_question": Setting.get_one_question_instruction(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)
