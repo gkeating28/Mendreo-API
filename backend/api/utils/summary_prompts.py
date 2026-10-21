@@ -19,6 +19,15 @@ DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT = (
     "Update the notes for this exercise from the check-in and the step results."
 )
 
+DEFAULT_RUN_SUMMARY_PROMPT = (
+    "Summarise this completed exercise for {name}.\n"
+    "Write one short sentence, then three to five bullets of what they worked through.\n"
+    "Stay with what they said in the check-in, the step results, and the transcript.\n"
+    "Do not give advice, and do not add anything that is not in that material."
+)
+
+DEFAULT_RUN_SUMMARY_TONE_GUIDE = ""
+
 
 def stored_instruction(template: str | None, fallback: str, name: str) -> str:
     text = (template or "").strip() or fallback
@@ -74,3 +83,34 @@ def exercise_summary_prompt(
         f"Step results:\n{step_results or '(none)'}\n\n"
         f"Previous notes:\n{previous_notes or ''}"
     )
+
+
+def run_summary_prompt(
+    instruction: str | None,
+    name: str,
+    tone: str | None,
+    max_words: int,
+    check_in: str | None,
+    step_results: str | None,
+    transcript: str | None,
+) -> str:
+    body = stored_instruction(instruction, DEFAULT_RUN_SUMMARY_PROMPT, name)
+    parts = [
+        body,
+        "",
+        f"Max length: about {max_words} words.",
+    ]
+    guide = (tone or "").strip()
+    if guide:
+        parts.append(f"Tone guide: {guide}")
+    parts.extend(
+        [
+            "",
+            f"Check-in summary:\n{check_in or '(none)'}",
+            "",
+            f"Step results:\n{step_results or '(none)'}",
+            "",
+            f"Transcript:\n{transcript or '(none)'}",
+        ]
+    )
+    return "\n".join(parts)

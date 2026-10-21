@@ -366,6 +366,7 @@ class Summary(SmartAPIView):
             "observations": exercise_summary.observations,
             "time_taken_in_seconds": time_taken_in_seconds,
             "average_time_taken_in_seconds": session.exercise.average_duration,
+            "run_summary": session.run_summary if isinstance(session.run_summary, dict) else None,
         }
 
         return Response(data=data, status=status.HTTP_200_OK)

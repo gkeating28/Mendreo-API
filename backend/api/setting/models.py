@@ -67,6 +67,9 @@ class Setting(SmartModel):
         Setting.get_or_create_update_exercise_summary()
         Setting.get_or_create_reply_length_instruction()
         Setting.get_or_create_one_question_instruction()
+        Setting.get_or_create_run_summary_prompt()
+        Setting.get_or_create_run_summary_tone_guide()
+        Setting.get_or_create_run_summary_max_length()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -545,6 +548,67 @@ class Setting(SmartModel):
             Setting.get_or_create_one_question_instruction,
         )
         return (raw or "").strip()
+
+    @staticmethod
+    def get_or_create_run_summary_prompt():
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_PROMPT
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_PROMPT,
+            defaults={"value": DEFAULT_RUN_SUMMARY_PROMPT},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_prompt() -> str:
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_PROMPT
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_PROMPT,
+            Setting.get_or_create_run_summary_prompt,
+        )
+        return (raw or "").strip() or DEFAULT_RUN_SUMMARY_PROMPT
+
+    @staticmethod
+    def get_or_create_run_summary_tone_guide():
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_TONE_GUIDE
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_TONE_GUIDE,
+            defaults={"value": DEFAULT_RUN_SUMMARY_TONE_GUIDE},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_tone_guide() -> str:
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_TONE_GUIDE
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_TONE_GUIDE,
+            Setting.get_or_create_run_summary_tone_guide,
+        )
+        if raw is None:
+            return DEFAULT_RUN_SUMMARY_TONE_GUIDE
+        return str(raw).strip()
+
+    @staticmethod
+    def get_or_create_run_summary_max_length():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+            defaults={"value": str(Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH)},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_max_length() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+            Setting.get_or_create_run_summary_max_length,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH
 
     @staticmethod
     def _cached_value(key: str, loader):

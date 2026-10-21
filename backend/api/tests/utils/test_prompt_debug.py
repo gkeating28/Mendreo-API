@@ -43,6 +43,7 @@ from ...utils.prompt_debug import (
 )
 from ...utils.reply_style import normalise_reply, stay_on_step_catalogue_text
 from ...utils.summary_prompts import (
+    DEFAULT_RUN_SUMMARY_PROMPT,
     DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT,
     DEFAULT_UPDATE_SUMMARY_PROMPT,
 )
@@ -146,6 +147,11 @@ class PromptDebugUnitTests(SimpleTestCase):
             Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
         )
         self.assertEqual(rows["one_question"]["applies"], "editable in Settings (one_question)")
+        self.assertEqual(rows["run_summary_prompt"]["text"], DEFAULT_RUN_SUMMARY_PROMPT)
+        self.assertEqual(
+            rows["run_summary_prompt"]["applies"],
+            "editable in Settings (run_summary_prompt)",
+        )
         self.assertEqual(rows["onboarding_followup_rules"]["applies"], "general chat only")
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["check_in_rules"]["applies"], "check-in only")

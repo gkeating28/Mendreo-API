@@ -249,6 +249,10 @@ DEFAULT_REPLY_LENGTH_INSTRUCTION = (
 DEFAULT_ONE_QUESTION_INSTRUCTION = (
     "- Do not ask compound questions. Only ask one simple, single question at a time."
 )
+SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
+SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"
+SETTING_KEY_RUN_SUMMARY_MAX_LENGTH = "run_summary_max_length"
+DEFAULT_RUN_SUMMARY_MAX_LENGTH = 120
 
 RETRIEVAL_MIN_SIMILARITY_DEFAULT = 0.5
 RETRIEVAL_MAX_CHUNKS_DEFAULT = 4

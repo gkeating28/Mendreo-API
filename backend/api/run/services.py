@@ -319,6 +319,7 @@ def serialize_run(session: Session, include_transcript: bool) -> dict:
         "completedAt": completed.isoformat() if completed else None,
         "steps": steps,
         "reflections": reflections,
+        "runSummary": session.run_summary if isinstance(session.run_summary, dict) else None,
     }
 
 

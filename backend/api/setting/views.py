@@ -65,12 +65,15 @@ class ListCreate(SmartAPIView):
             elif setting.key in (
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
+                Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
             ):
                 try:
                     data[setting.key] = int(setting.value)
                 except (TypeError, ValueError):
                     if setting.key == "refresh_onboarding_cadence_days":
                         data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
+                    elif setting.key == Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH:
+                        data[setting.key] = Setting.get_run_summary_max_length()
                     else:
                         data[setting.key] = Setting.get_observations_max_length()
 
@@ -92,6 +95,9 @@ class ListCreate(SmartAPIView):
             "update_exercise_summary": Setting.get_update_exercise_summary(),
             "reply_length": Setting.get_reply_length_instruction(),
             "one_question": Setting.get_one_question_instruction(),
+            "run_summary_prompt": Setting.get_run_summary_prompt(),
+            "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
+            "run_summary_max_length": Setting.get_run_summary_max_length(),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

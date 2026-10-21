@@ -68,6 +68,7 @@ class SessionListSerializer(ListModelSerializer):
             "live_risk_level",
             "history_summary",
             "authoring_test",
+            "run_summary",
         ]
     
     @classmethod

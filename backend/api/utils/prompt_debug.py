@@ -75,6 +75,12 @@ _SPECS = (
         "name": "DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT",
     },
     {
+        "label": "run_summary_prompt",
+        "applies": "editable in Settings (run_summary_prompt)",
+        "module": "api.utils.summary_prompts",
+        "name": "DEFAULT_RUN_SUMMARY_PROMPT",
+    },
+    {
         "label": "restructuring_rewrite",
         "applies": "exercise only",
         "module": "api.utils.Agent",
