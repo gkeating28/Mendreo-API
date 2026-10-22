@@ -259,7 +259,10 @@ DEFAULT_CLIENT_KNOWLEDGE_RULE = (
     "or about past sessions, answer from <KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>. "
     "If any of those blocks has real content, you already know {user_name}. "
     "Do not say you have no information, that you have never spoken to them, "
-    "or that you have not been told."
+    "or that you have not been told. "
+    "If <CLIENT_SUMMARY> says no previous conversations exist and "
+    "<KNOWLEDGE> says no structured knowledge is recorded, this is a new client: "
+    "say you are just getting to know them and do not invent anything about them."
 )
 SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
 SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"

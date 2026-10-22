@@ -30,6 +30,13 @@ class ReturningUserInstructionTests(TestCase):
         self.assertIn("what you know about them", prompt)
         self.assertIn("whether you know who they are", prompt)
         self.assertIn("or about past sessions", prompt)
+        self.assertIn(
+            "If <CLIENT_SUMMARY> says no previous conversations exist and "
+            "<KNOWLEDGE> says no structured knowledge is recorded, this is a new client: "
+            "say you are just getting to know them and do not invent anything about them.",
+            prompt,
+        )
+        self.assertNotIn("you must say so", prompt)
         self.assertNotIn("{client_knowledge_rule}", prompt)
         self.assertNotIn(
             "If there are no notes, you have never spoken to Ada and you must say so.",
