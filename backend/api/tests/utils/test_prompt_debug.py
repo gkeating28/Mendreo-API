@@ -48,6 +48,7 @@ from ...utils.summary_prompts import (
     DEFAULT_UPDATE_SUMMARY_PROMPT,
 )
 from ...utils.turn_hint import ON_STEP_FALLBACK, STAY_ON_STEP_HINT
+from ..TestCase import TestCase
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -527,7 +528,7 @@ class PromptDebugApiTests(BaseTest):
         self.assertFalse(sent.json["debug"]["depth_gate_held"])
 
     def test_admin_catalogue_matches_the_constants(self):
-        response = self._get(
+        response = TestCase._get(
             "/exercises/prompt-rules",
             access_token=self.admin_one_access_token,
         )
