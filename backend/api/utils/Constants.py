@@ -249,13 +249,17 @@ DEFAULT_REPLY_LENGTH_INSTRUCTION = (
 DEFAULT_ONE_QUESTION_INSTRUCTION = (
     "- Do not ask compound questions. Only ask one simple, single question at a time."
 )
-SETTING_KEY_RETURNING_USER_INSTRUCTION = "returning_user_instruction"
-DEFAULT_RETURNING_USER_INSTRUCTION = (
-    "Treat {user_name} as new only if <CLIENT_SUMMARY> says there are no "
-    "previous conversations, <KNOWLEDGE> says no structured knowledge is "
-    "recorded, and <SESSION_CONTEXT> shows no earlier session. If any of them "
-    "has real content, you already know {user_name}. Never say you have never "
-    "spoken to them."
+SETTING_KEY_CLIENT_KNOWLEDGE_RULE = "client_knowledge_rule"
+DEFAULT_CLIENT_KNOWLEDGE_RULE = (
+    "Use <CLIENT_SUMMARY> for notes on previous conversations with {user_name}. "
+    "Do not invent conversations that are not written there. "
+    "Use <KNOWLEDGE> for facts {user_name} has already recorded. "
+    "Use <SESSION_CONTEXT> for earlier sessions. "
+    "When {user_name} asks what you know about them, whether you know who they are, "
+    "or about past sessions, answer from <KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>. "
+    "If any of those blocks has real content, you already know {user_name}. "
+    "Do not say you have no information, that you have never spoken to them, "
+    "or that you have not been told."
 )
 SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
 SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"
@@ -380,13 +384,7 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         Your task is to respond to your client’s messages using the data provided in the <DATA> section.
         
-        - Make use of <CLIENT_SUMMARY> for notes on previous conversations with {user_name}.
-          Do not invent conversations that are not written there.
-          {returning_user_instruction}
-
-        - <KNOWLEDGE> lists facts {user_name} has already recorded, such as work situation, sleep, and goals.
-          When {user_name} asks about one of those facts, answer from that value.
-          Do not say you have not been told it, and do not limit what you know to previous sessions.
+        - {client_knowledge_rule}
         
         - Use the <FEEDBACK> section to adjust tone, clinical direction, and communication style.
         

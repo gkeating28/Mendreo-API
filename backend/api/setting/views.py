@@ -95,7 +95,7 @@ class ListCreate(SmartAPIView):
             "update_exercise_summary": Setting.get_update_exercise_summary(),
             "reply_length": Setting.get_reply_length_instruction(),
             "one_question": Setting.get_one_question_instruction(),
-            "returning_user_instruction": Setting.get_returning_user_instruction(),
+            "client_knowledge_rule": Setting.get_client_knowledge_rule(),
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),

@@ -55,7 +55,7 @@ class SettingCreateSerializer(serializers.Serializer):
     update_exercise_summary = serializers.CharField(required=False, allow_blank=True)
     reply_length = serializers.CharField(required=False, allow_blank=True)
     one_question = serializers.CharField(required=False, allow_blank=True)
-    returning_user_instruction = serializers.CharField(required=False, allow_blank=True)
+    client_knowledge_rule = serializers.CharField(required=False, allow_blank=True)
     run_summary_prompt = serializers.CharField(required=False, allow_blank=True)
     run_summary_tone_guide = serializers.CharField(required=False, allow_blank=True)
     run_summary_max_length = serializers.IntegerField(
@@ -180,10 +180,10 @@ class SettingCreateSerializer(serializers.Serializer):
             one_question.value = validated_data.get("one_question") or ""
             one_question.save()
 
-        if "returning_user_instruction" in incoming:
-            returning = Setting.get_or_create_returning_user_instruction()
-            returning.value = validated_data.get("returning_user_instruction") or ""
-            returning.save()
+        if "client_knowledge_rule" in incoming:
+            rule = Setting.get_or_create_client_knowledge_rule()
+            rule.value = validated_data.get("client_knowledge_rule") or ""
+            rule.save()
 
         if "run_summary_prompt" in incoming:
             run_prompt = Setting.get_or_create_run_summary_prompt()
@@ -224,7 +224,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "update_exercise_summary": Setting.get_update_exercise_summary(),
             "reply_length": Setting.get_reply_length_instruction(),
             "one_question": Setting.get_one_question_instruction(),
-            "returning_user_instruction": Setting.get_returning_user_instruction(),
+            "client_knowledge_rule": Setting.get_client_knowledge_rule(),
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),

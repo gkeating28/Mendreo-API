@@ -67,7 +67,7 @@ class Setting(SmartModel):
         Setting.get_or_create_update_exercise_summary()
         Setting.get_or_create_reply_length_instruction()
         Setting.get_or_create_one_question_instruction()
-        Setting.get_or_create_returning_user_instruction()
+        Setting.get_or_create_client_knowledge_rule()
         Setting.get_or_create_run_summary_prompt()
         Setting.get_or_create_run_summary_tone_guide()
         Setting.get_or_create_run_summary_max_length()
@@ -551,20 +551,20 @@ class Setting(SmartModel):
         return (raw or "").strip()
 
     @staticmethod
-    def get_or_create_returning_user_instruction():
+    def get_or_create_client_knowledge_rule():
         setting, _ = Setting.objects.get_or_create(
-            key=Constants.SETTING_KEY_RETURNING_USER_INSTRUCTION,
-            defaults={"value": Constants.DEFAULT_RETURNING_USER_INSTRUCTION},
+            key=Constants.SETTING_KEY_CLIENT_KNOWLEDGE_RULE,
+            defaults={"value": Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE},
         )
         return setting
 
     @staticmethod
-    def get_returning_user_instruction() -> str:
+    def get_client_knowledge_rule() -> str:
         raw = Setting._cached_value(
-            Constants.SETTING_KEY_RETURNING_USER_INSTRUCTION,
-            Setting.get_or_create_returning_user_instruction,
+            Constants.SETTING_KEY_CLIENT_KNOWLEDGE_RULE,
+            Setting.get_or_create_client_knowledge_rule,
         )
-        return (raw or "").strip() or Constants.DEFAULT_RETURNING_USER_INSTRUCTION
+        return (raw or "").strip() or Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE
 
     @staticmethod
     def get_or_create_run_summary_prompt():

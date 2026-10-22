@@ -893,7 +893,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     consumer = session.consumer
     user_name = consumer.user.first_name or "there"
-    returning_user_instruction = Setting.get_returning_user_instruction().replace(
+    client_knowledge_rule = Setting.get_client_knowledge_rule().replace(
         "{user_name}", user_name
     )
     if cached:
@@ -918,7 +918,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                 Setting.get_reply_length_instruction(),
                 Setting.get_one_question_instruction(),
             )
-            or returning_user_instruction not in cached
+            or client_knowledge_rule not in cached
         )
         stale_on_step = (
             bool(session.exercise_id)
@@ -1047,7 +1047,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     programming_instructions = apply_style_instructions(
         Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
             user_name=user_name,
-            returning_user_instruction=returning_user_instruction,
+            client_knowledge_rule=client_knowledge_rule,
             up_technique_rule=(
                 Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
                 if retrieval_on

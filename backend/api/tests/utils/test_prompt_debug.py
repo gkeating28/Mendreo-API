@@ -148,6 +148,14 @@ class PromptDebugUnitTests(SimpleTestCase):
             Constants.DEFAULT_ONE_QUESTION_INSTRUCTION,
         )
         self.assertEqual(rows["one_question"]["applies"], "editable in Settings (one_question)")
+        self.assertEqual(
+            rows["client_knowledge_rule"]["text"],
+            Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE,
+        )
+        self.assertEqual(
+            rows["client_knowledge_rule"]["applies"],
+            "editable in Settings (client_knowledge_rule)",
+        )
         self.assertEqual(rows["run_summary_prompt"]["text"], DEFAULT_RUN_SUMMARY_PROMPT)
         self.assertEqual(
             rows["run_summary_prompt"]["applies"],
@@ -186,7 +194,7 @@ class PromptDebugUnitTests(SimpleTestCase):
     def test_style_lines_come_from_settings_and_a_blank_omits_them(self):
         base = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
             user_name="Sam",
-            returning_user_instruction="returning-user-rule",
+            client_knowledge_rule="client-knowledge-rule",
             up_technique_rule="rule",
         )
         self.assertNotIn("2 sentences", base)
@@ -539,6 +547,14 @@ class PromptDebugApiTests(BaseTest):
         self.assertIn("editable in Settings (reply_length)", rows["reply_length"]["applies"])
         self.assertEqual(rows["one_question"]["text"], Constants.DEFAULT_ONE_QUESTION_INSTRUCTION)
         self.assertIn("editable in Settings (one_question)", rows["one_question"]["applies"])
+        self.assertEqual(
+            rows["client_knowledge_rule"]["text"],
+            Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE,
+        )
+        self.assertIn(
+            "editable in Settings (client_knowledge_rule)",
+            rows["client_knowledge_rule"]["applies"],
+        )
         self.assertNotIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["pending_question"]["applies"], "every turn")

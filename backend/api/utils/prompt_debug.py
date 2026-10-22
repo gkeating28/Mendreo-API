@@ -41,6 +41,12 @@ _SPECS = (
         "name": "DEFAULT_ONE_QUESTION_INSTRUCTION",
     },
     {
+        "label": "client_knowledge_rule",
+        "applies": "editable in Settings (client_knowledge_rule)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_CLIENT_KNOWLEDGE_RULE",
+    },
+    {
         "label": "step_scope_rules",
         "applies": (
             "exercise only; the first-message sentence is omitted "

@@ -23,11 +23,14 @@ class ReturningUserInstructionTests(TestCase):
 
     def test_default_text_renders_with_user_name_filled(self):
         prompt = _prepare_prompt(self._session())
-        filled = Constants.DEFAULT_RETURNING_USER_INSTRUCTION.replace("{user_name}", "Ada")
+        filled = Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE.replace("{user_name}", "Ada")
 
         self.assertNotIn("{user_name}", filled)
         self.assertIn(filled, prompt)
-        self.assertNotIn("{returning_user_instruction}", prompt)
+        self.assertIn("what you know about them", prompt)
+        self.assertIn("whether you know who they are", prompt)
+        self.assertIn("or about past sessions", prompt)
+        self.assertNotIn("{client_knowledge_rule}", prompt)
         self.assertNotIn(
             "If there are no notes, you have never spoken to Ada and you must say so.",
             prompt,
@@ -49,7 +52,7 @@ class ReturningUserInstructionTests(TestCase):
         self.assertEqual(session.cached_prompt, first)
 
     def test_multiline_setting_still_matches_the_cache_check(self):
-        row = Setting.get_or_create_returning_user_instruction()
+        row = Setting.get_or_create_client_knowledge_rule()
         row.value = "Line one for {user_name}.\nLine two is still about them."
         row.save()
         cache.clear()
@@ -67,12 +70,12 @@ class ReturningUserInstructionTests(TestCase):
         self.assertIn(filled, second)
 
     def test_blank_save_returns_the_default(self):
-        row = Setting.get_or_create_returning_user_instruction()
+        row = Setting.get_or_create_client_knowledge_rule()
         row.value = ""
         row.save()
         cache.clear()
 
         self.assertEqual(
-            Setting.get_returning_user_instruction(),
-            Constants.DEFAULT_RETURNING_USER_INSTRUCTION,
+            Setting.get_client_knowledge_rule(),
+            Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE,
         )
