@@ -889,6 +889,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
     bare_opening = _session_is_bare_opening(session)
+    from ..setting.models import Setting
+
+    consumer = session.consumer
+    user_name = consumer.user.first_name or "there"
+    returning_user_instruction = Setting.get_returning_user_instruction().replace(
+        "{user_name}", user_name
+    )
     if cached:
         # Older prompts left {today_date} uninterpolated (nested format),
         # told Toni to "click the exercise", or predate the block order.
@@ -901,7 +908,6 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
         if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
             stale_retrieval = True
-        from ..setting.models import Setting
 
         stale_style = (
             "Write in British English" not in cached
@@ -912,6 +918,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                 Setting.get_reply_length_instruction(),
                 Setting.get_one_question_instruction(),
             )
+            or returning_user_instruction not in cached
         )
         stale_on_step = (
             bool(session.exercise_id)
@@ -943,7 +950,6 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         resolve_tokens,
     )
 
-    consumer = session.consumer
     now_local = DateUtils.local_now()
     today_date_str = now_local.strftime(PROMPT_DATE_FORMAT)
     current_time_str = now_local.strftime("%H:%M")
@@ -1038,12 +1044,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
-    user_name = consumer.user.first_name or "there"
-    from ..setting.models import Setting
-
     programming_instructions = apply_style_instructions(
         Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
             user_name=user_name,
+            returning_user_instruction=returning_user_instruction,
             up_technique_rule=(
                 Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
                 if retrieval_on

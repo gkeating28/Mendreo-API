@@ -185,6 +185,7 @@ class PromptDebugUnitTests(SimpleTestCase):
     def test_style_lines_come_from_settings_and_a_blank_omits_them(self):
         base = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
             user_name="Sam",
+            returning_user_instruction="returning-user-rule",
             up_technique_rule="rule",
         )
         self.assertNotIn("2 sentences", base)

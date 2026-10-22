@@ -249,6 +249,14 @@ DEFAULT_REPLY_LENGTH_INSTRUCTION = (
 DEFAULT_ONE_QUESTION_INSTRUCTION = (
     "- Do not ask compound questions. Only ask one simple, single question at a time."
 )
+SETTING_KEY_RETURNING_USER_INSTRUCTION = "returning_user_instruction"
+DEFAULT_RETURNING_USER_INSTRUCTION = (
+    "Treat {user_name} as new only if <CLIENT_SUMMARY> says there are no "
+    "previous conversations, <KNOWLEDGE> says no structured knowledge is "
+    "recorded, and <SESSION_CONTEXT> shows no earlier session. If any of them "
+    "has real content, you already know {user_name}. Never say you have never "
+    "spoken to them."
+)
 SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
 SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"
 SETTING_KEY_RUN_SUMMARY_MAX_LENGTH = "run_summary_max_length"
@@ -374,7 +382,7 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         - Make use of <CLIENT_SUMMARY> for notes on previous conversations with {user_name}.
           Do not invent conversations that are not written there.
-          If there are no notes, you have never spoken to {user_name} and you must say so.
+          {returning_user_instruction}
 
         - <KNOWLEDGE> lists facts {user_name} has already recorded, such as work situation, sleep, and goals.
           When {user_name} asks about one of those facts, answer from that value.
