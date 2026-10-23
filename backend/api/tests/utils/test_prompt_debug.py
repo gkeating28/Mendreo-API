@@ -100,6 +100,24 @@ class PromptDebugUnitTests(SimpleTestCase):
             "exercise only; the first-message sentence is omitted "
             "on the no-check-in opening turn",
         )
+        self.assertNotIn("virtual AI Therapist", programming["text"])
+        self.assertNotIn("Maintain a calm, warm, and professional tone.", programming["text"])
+        self.assertNotIn("Be confident, concise and assertive.", programming["text"])
+        self.assertNotIn("<FEEDBACK>", programming["text"])
+        self.assertNotIn("<ASSETS>", programming["text"])
+        self.assertIn("trained on the Unified Protocol", programming["text"])
+        self.assertIn("supporting your client through therapeutic conversations", programming["text"])
+        self.assertIn("or 'It sounds like'", programming["text"])
+        self.assertEqual(programming["text"].count("Never thank the user for sharing"), 1)
+        self.assertEqual(programming["text"].count("Never open with 'Thanks for sharing'"), 1)
+        self.assertNotIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
+        self.assertNotIn("0 to 10 scale", rows["step_scope_rules"]["text"])
+        self.assertNotIn("balanced or more accurate thought", rows["step_scope_rules"]["text"])
+        self.assertNotIn("brainstorm solutions", rows["step_scope_rules"]["text"])
+        self.assertIn(
+            "Your first message must be the first question in those instructions.",
+            rows["step_scope_rules"]["text"],
+        )
         self.assertIn("ask if you have it right", rows["step_scope_rules"]["text"])
         self.assertIn(_LENGTH_OVERRIDE, rows["step_scope_rules"]["text"])
         self.assertIn(
@@ -560,6 +578,14 @@ class PromptDebugApiTests(BaseTest):
         self.assertEqual(rows["pending_question"]["applies"], "every turn")
         self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)
         self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
+        self.assertNotIn("virtual AI Therapist", rows["programming_instructions"]["text"])
+        self.assertNotIn("<FEEDBACK>", rows["programming_instructions"]["text"])
+        self.assertNotIn("<ASSETS>", rows["programming_instructions"]["text"])
+        self.assertNotIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
+        self.assertIn(
+            "Your first message must be the first question in those instructions.",
+            rows["step_scope_rules"]["text"],
+        )
         self.assertEqual(rows["client_summary_prompt"]["text"], DEFAULT_UPDATE_SUMMARY_PROMPT)
         self.assertIn("editable in Settings", rows["exercise_summary_prompt"]["applies"])
         self.assertNotIn("system_prompt", response.json[0])

@@ -245,10 +245,7 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
         agent_message = Message.objects.create(
             session=session,
             sender=agent_participant,
-            text=(
-                f"Okay. I'll leave {title} here until you want it. "
-                "Tap the card whenever you're ready."
-            ),
+            text=f"Okay. I'll leave {title} here until you want it.",
             reasoning="Exercise offer declined",
             suggested_responses=[],
         )
