@@ -1,5 +1,7 @@
-from django.test import override_settings
+import re
 from unittest.mock import patch
+
+from django.test import override_settings
 
 from ...session.models import Session, SessionStep
 from ...step.models import Step
@@ -78,7 +80,9 @@ class Wp5StepRenderingTests(BaseTest):
         self.assertIn("<NAME>Later two</NAME>", prompt)
         self.assertNotIn("<TITLE>Name it</TITLE>", prompt)
         self.assertNotIn("<TITLE>Later one</TITLE>", prompt)
-        self.assertIn("<REFERENCE>", prompt.split("<SESSION_CONTEXT>", 1)[0])
+        rendered = re.search(r"(?m)^[ \t]*<SESSION_CONTEXT>[ \t]*$", prompt)
+        self.assertIsNotNone(rendered)
+        self.assertIn("<REFERENCE>", prompt[: rendered.start()])
         self.assertNotIn("weigh evidence for or against a thought or worry", prompt)
         self.assertNotIn("0 to 10 scale", prompt)
         self.assertNotIn("balanced or more accurate thought", prompt)

@@ -44,6 +44,7 @@ class ExerciseOfferTest(TestCase):
             text=f"Would you like to start {self.exercise.title}?",
             exercise=self.exercise,
             suggested_responses=suggested_responses,
+            suggested_responses_kind=Constants.SUGGESTED_RESPONSES_KIND_OFFER,
             reasoning="triage",
         )
 
