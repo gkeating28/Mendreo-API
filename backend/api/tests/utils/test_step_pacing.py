@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
+from rest_framework import status
 
 from ...message.models import Message
 from ...participant.models import Participant
@@ -9,6 +10,7 @@ from ...step.models import Step
 from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse
 from ...utils.SessionStateMachine import (
+    confirm_readiness_reply,
     confirm_summary_if_done,
     is_model_ready_chip,
     on_model_turn,
@@ -380,6 +382,160 @@ class GoalGateTests(BaseTest):
         check.assert_not_called()
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def _two_steps(self):
+        session = self._session(
+            done_when=(
+                "The user has described their specific worry, the situation it occurs in, "
+                "and confirmed the summary is accurate."
+            )
+        )
+        exercise = session.exercise
+        exercise.steps_no = 2
+        exercise.save(update_fields=["steps_no", "updated_at"])
+        next_step = Step.objects.create(
+            exercise=exercise,
+            title="Next",
+            description="Next",
+            instructions="Ask for a plan.",
+            order=1,
+        )
+        SessionStep.objects.create(
+            session=session,
+            step=next_step,
+            order=1,
+            completed=False,
+        )
+        session.total_steps_no = 2
+        session.save(update_fields=["total_steps_no", "updated_at"])
+        return session
+
+    def _ask(self, session, text):
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        return Message.objects.create(
+            session=session,
+            sender=agent,
+            text=text,
+            reasoning="test",
+        )
+
+    def test_yes_after_ready_to_continue_completes_the_step(self):
+        session = self._two_steps()
+        self._ask(
+            session,
+            "Now that you have that tool ready, are you ready to continue?",
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={
+                    "value": "not good enough before a presentation",
+                    "confidence": 0.4,
+                },
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            patch("api.utils.Agent.get_response") as chat,
+        ):
+            outcome = confirm_readiness_reply(user_message)
+        chat.assert_not_called()
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        step = session.session_steps.get(order=0)
+        self.assertTrue(step.completed)
+        self.assertEqual(step.completion_result, "not good enough before a presentation")
+        self.assertEqual(session.current_step_no, 2)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_yes_completes_when_the_completion_prompt_fails(self):
+        session = self._two_steps()
+        self._ask(session, "Are you ready to continue?")
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="Yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                side_effect=RuntimeError("down"),
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = confirm_readiness_reply(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        step = session.session_steps.get(order=0)
+        self.assertTrue(step.completed)
+        self.assertFalse(step.completion_result)
+
+    def test_longer_reply_after_ready_to_continue_stays_in_chat(self):
+        session = self._two_steps()
+        self._ask(session, "Are you ready to continue?")
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="yes, but I want to add something",
+        )
+        outcome = confirm_readiness_reply(user_message)
+        self.assertIsNone(outcome)
+        session.refresh_from_db()
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 1)
+
+    def test_yes_after_ready_to_proceed_stays_in_chat(self):
+        session = self._two_steps()
+        self._ask(session, "Are you ready to proceed?")
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="yes")
+        outcome = confirm_readiness_reply(user_message)
+        self.assertIsNone(outcome)
+        session.refresh_from_db()
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_yes_during_pre_exercise_does_not_complete(self):
+        session = self._two_steps()
+        session.current_step_no = 0
+        session.save(update_fields=["current_step_no", "updated_at"])
+        self._ask(session, "Are you ready to continue?")
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="yes")
+        outcome = confirm_readiness_reply(user_message)
+        self.assertIsNone(outcome)
+        session.refresh_from_db()
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 0)
+
+    def test_posted_yes_does_not_call_the_model(self):
+        session = self._two_steps()
+        self._ask(
+            session,
+            "Now that you have that tool ready, are you ready to continue?",
+        )
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the presentation", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            patch("api.message.views.request_agent_response") as chat,
+            patch("api.message.views.enqueue_agent_response") as queued,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "yes"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        chat.assert_not_called()
+        queued.assert_not_called()
+        self.assertEqual(response.json["session_state"]["current_step_no"], 2)
+        self.assertEqual(response.json["session_state"]["phase"], "step_active")
+        session.refresh_from_db()
+        self.assertTrue(session.session_steps.get(order=0).completed)
+        self.assertEqual(
+            session.session_steps.get(order=0).completion_result,
+            "the presentation",
+        )
 
 
 class SummaryConfirmationTests(SimpleTestCase):
