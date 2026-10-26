@@ -378,6 +378,19 @@ def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message |
     """
     source_text = _normalize_voice_text(user_message.text or "")
     session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
+    user_message.session = session
+    from ..utils.SessionStateMachine import confirm_readiness_reply
+
+    outcome = confirm_readiness_reply(user_message)
+    if outcome is not None:
+        # The step is already complete. Speak the next-step greeting when one
+        # was saved. Do not speak the user's "yes".
+        spoken = outcome.message
+        sender = getattr(spoken, "sender", None)
+        if spoken is not None and getattr(sender, "agent_id", None):
+            return stamp_agent_voice_fields(spoken, grant)
+        return None
+
     session.refresh_from_db(fields=["cached_prompt"])
     agent_message = Agent.get_response(session=session, user_message=user_message)
     with transaction.atomic():
