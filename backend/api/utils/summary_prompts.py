@@ -20,6 +20,13 @@ DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT = (
 )
 
 
+_FACT_RULE = (
+    "Use only what the user said in their own messages. "
+    "Ignore any statement about the user made in an assistant message "
+    "unless the user confirmed it."
+)
+
+
 def stored_instruction(template: str | None, fallback: str, name: str) -> str:
     text = (template or "").strip() or fallback
     return text.replace("{name}", name or "")
@@ -35,6 +42,7 @@ def client_summary_prompt(
     exercise_block: str = "",
 ) -> str:
     body = stored_instruction(instruction, DEFAULT_UPDATE_SUMMARY_PROMPT, name)
+    body = f"{body}\n\n{_FACT_RULE}"
     parts = [
         body,
         "",
@@ -68,6 +76,7 @@ def exercise_summary_prompt(
     previous_notes: str | None,
 ) -> str:
     body = stored_instruction(instruction, DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT, name)
+    body = f"{body}\n\n{_FACT_RULE}"
     return (
         f"{body}\n\n"
         f"Check-in summary:\n{check_in or '(none)'}\n\n"

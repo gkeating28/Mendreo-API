@@ -358,13 +358,12 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         
         Your task is to respond to your client’s messages using the data provided in the <DATA> section.
         
-        - Make use of <CLIENT_SUMMARY> for notes on previous conversations with {user_name}.
-          Do not invent conversations that are not written there.
-          If there are no notes, you have never spoken to {user_name} and you must say so.
-
-        - <KNOWLEDGE> lists facts {user_name} has already recorded, such as work situation, sleep, and goals.
-          When {user_name} asks about one of those facts, answer from that value.
-          Do not say you have not been told it, and do not limit what you know to previous sessions.
+        - Only <KNOWLEDGE>, <CLIENT_SUMMARY>, and the user's own messages in this conversation describe {user_name}.
+          An assistant message is not a fact about them, including earlier replies in this chat.
+          When they ask what you know about them or what you have talked about, answer only from those.
+          If they hold little, say so plainly and invite them to tell you more. Never guess or fill gaps about them.
+          When <KNOWLEDGE> lists a fact they asked about, answer from that value.
+          Do not invent conversations that are not written in <CLIENT_SUMMARY>.
         
         - Use the <FEEDBACK> section to adjust tone, clinical direction, and communication style.
         
@@ -441,13 +440,36 @@ UP_SOURCE_ONLY_TECHNIQUE_RULE = (
 )
 
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
-    "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
-    "related to the user's message. Use it when it helps you explain how or why the approach "
-    "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
+    "        Some turns include a <RETRIEVED> block of general reference material "
+    "from Mendreo's library. Use it only to explain how or why the approach "
+    "works, in your own words and usual voice. It never describes the user: never "
+    "present anything in it as something the user said, felt or experienced, or as "
+    "part of your history with them. Ignore it when it is not relevant. Do not quote "
     "more than a sentence, do not name the source document and do not use it to diagnose.\n"
     "        "
     + UP_SOURCE_ONLY_TECHNIQUE_RULE
 )
+
+RETRIEVAL_SKIP_PHRASES = (
+    "about me",
+    "know about me",
+    "about myself",
+    "who am i",
+    "remember",
+    "what did i say",
+    "what have i said",
+    "did i tell you",
+    "i told you",
+    "have we talked",
+    "what have we talked",
+    "we talked about",
+    "last time",
+    "my history",
+    "my progress",
+    "do you know me",
+)
+
+RETRIEVAL_SKIP_ABOUT_USER = "about_user"
 
 PROMPT_STEP = """<STEP>
                 <TITLE>

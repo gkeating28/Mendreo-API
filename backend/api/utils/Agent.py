@@ -271,16 +271,39 @@ def update_summary(summary, date=None, freezer=None):
 
     ai_response = AI.ask(prompt=ai_prompt, schema=SUMMARY_RESPONSE_SCHEMA)
 
+    from .user_grounding import keep_grounded_prose, user_text_from_messages
+
+    user_blob = "\n".join(
+        user_text_from_messages(session_data["messages"]) for session_data in sessions_data
+    )
     try:
-        summary.detailed = ai_response.get("detailed", summary.detailed)
-        summary.observations = ai_response.get("observations", summary.observations)
-        summary.next_steps = ai_response.get("next_steps", summary.next_steps)
+        summary.detailed = _grounded_or_previous(
+            ai_response.get("detailed"), summary.detailed, user_blob, keep_grounded_prose
+        )
+        summary.observations = _grounded_or_previous(
+            ai_response.get("observations"), summary.observations, user_blob, keep_grounded_prose
+        )
+        summary.next_steps = _grounded_or_previous(
+            ai_response.get("next_steps"), summary.next_steps, user_blob, keep_grounded_prose
+        )
 
     except json.JSONDecodeError:
         # If AI doesn't return JSON, treat as plain text notes update
-        summary.detailed = ai_response
+        summary.detailed = _grounded_or_previous(
+            ai_response if isinstance(ai_response, str) else "",
+            summary.detailed,
+            user_blob,
+            keep_grounded_prose,
+        )
 
     summary.save()
+
+
+def _grounded_or_previous(candidate, previous, user_blob, keep) -> str:
+    grounded = keep(candidate, user_blob)
+    if grounded:
+        return grounded
+    return previous or ""
 
 
 def _hold_on_step(response_data) -> None:
@@ -847,6 +870,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "Write in British English" not in cached
             or "When the client asks about a fact listed here" not in cached
             or "Never open with 'Thanks for sharing'" not in cached
+            or "assistant message is not a fact about them" not in cached
         )
         stale_on_step = (
             bool(session.exercise_id)
