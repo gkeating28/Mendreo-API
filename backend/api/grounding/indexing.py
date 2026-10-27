@@ -64,6 +64,20 @@ def index_source(source_id: str) -> int:
     if not pieces:
         mark_index(source_id, INDEX_FAILED, "There was no text to index.")
         return 0
+    from .case_material import case_material_reason
+
+    blocked = []
+    for piece in pieces:
+        reason = case_material_reason(piece.heading_path, piece.text)
+        if reason and reason not in blocked:
+            blocked.append(reason)
+    if blocked:
+        mark_index(
+            source_id,
+            INDEX_FAILED,
+            "Case material: " + "; ".join(blocked) + ".",
+        )
+        return 0
     vectors = embed_texts([piece.text for piece in pieces])
     with transaction.atomic():
         locked = KnowledgeSource.objects.select_for_update().get(id=source_id)
