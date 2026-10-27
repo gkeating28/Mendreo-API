@@ -374,6 +374,15 @@ class GroundingTests(TestCase):
         self.assertNotIn("must already be named", enabled)
         self.assertIn("Use it when it helps you explain how or why the approach", enabled)
         self.assertIn("Ignore it when it is not relevant", enabled)
+        self.assertIn(
+            "Retrieved material is general reference and is never about the user. "
+            "Never present it as something the user said or something you remember about them. "
+            "When the user asks what you know or remember about them, answer only from "
+            "<KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>.",
+            enabled,
+        )
+        self.assertNotIn("never about the user", general_prompt)
+        self.assertNotIn("never about the user", prompt)
         self.assertNotIn("evidence-based strategies", enabled)
         self.assertNotIn("only as background", enabled)
         self.assertIn("<REFERENCE>", enabled)

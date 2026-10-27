@@ -444,7 +444,11 @@ RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
     "related to the user's message. Use it when it helps you explain how or why the approach "
     "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
-    "more than a sentence, do not name the source document and do not use it to diagnose.\n"
+    "more than a sentence, do not name the source document and do not use it to diagnose. "
+    "Retrieved material is general reference and is never about the user. "
+    "Never present it as something the user said or something you remember about them. "
+    "When the user asks what you know or remember about them, answer only from "
+    "<KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>.\n"
 )
 
 PROMPT_STEP = """<STEP>
