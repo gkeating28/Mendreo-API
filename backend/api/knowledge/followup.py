@@ -428,9 +428,7 @@ def _followup_phase(consumer, entry) -> str:
     return "stay_on_opener"
 
 
-ONBOARDING_FOLLOWUP_RULES = """                - While this block is present: do not run a daily check-in,
-                  do not call get_exercise, do not offer an exercise.
-                - One question only. Two sentences max.
+ONBOARDING_FOLLOWUP_RULES = """                - One question only. Two sentences max.
 
                 PHASE stay_on_opener (first message is already a real topic):
                 - Reply only to what they just said.
@@ -439,7 +437,6 @@ ONBOARDING_FOLLOWUP_RULES = """                - While this block is present: do
 
                 PHASE permission (server may send this as a canned line):
                 - If you speak: one permission ask about PRIOR_ANSWER only.
-                - Do not also check in or triage.
 
                 PHASE followup (they agreed, or they started answering it):
                 - Attempt 1: weave a warm follow-up that invites more
@@ -464,7 +461,6 @@ def format_onboarding_followup_block(session) -> str:
     attempt = entry.followup_attempts or 0
     return f"""
         <ONBOARDING_FOLLOW_UP>
-            <!-- Outranks Daily Check-in and Triage until this block is gone. -->
             <FIELD>{label}</FIELD>
             <QUESTION>{question}</QUESTION>
             <PRIOR_ANSWER>{answer}</PRIOR_ANSWER>
