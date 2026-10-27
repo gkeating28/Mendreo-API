@@ -288,6 +288,44 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     return _confirm(session, user_message)
 
 
+def confirm_readiness_reply(user_message) -> ChipOutcome | None:
+    """A short yes after Toni asked to move on completes the step.
+
+    The chat model does not run. Done-when and the depth check stay in place
+    for every other reply. The completion prompt still records the result.
+    """
+    session = user_message.session
+    if not session.exercise_id or session.in_pre_exercise_phase():
+        return None
+    if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
+        return None
+    if not is_ready_affirmation(user_message.text or ""):
+        return None
+    session_step = _live_step(session)
+    if session_step is None or session_step.completed:
+        return None
+    previous = _last_agent_message(session, before=user_message)
+    if previous is None:
+        return None
+
+    from .StepProgress import is_advance_gate_text
+
+    if not is_advance_gate_text(previous.text):
+        return None
+
+    from .extraction import extract_step_result
+
+    try:
+        extracted = extract_step_result(session, session_step.step) or {}
+    except Exception:
+        logger.exception(
+            "readiness confirmation extract failed for session=%s",
+            getattr(session, "id", None),
+        )
+        extracted = {}
+    return _confirm(session, user_message, extracted=extracted)
+
+
 def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
     """A typed reply while waiting for readiness does not call the chat model.
 

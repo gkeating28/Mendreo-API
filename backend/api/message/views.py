@@ -88,6 +88,7 @@ class ListCreate(SmartPaginationAPIView):
         from_suggested_response = _from_suggested_response(request.data)
 
         from ..utils.SessionStateMachine import (
+            confirm_readiness_reply,
             confirm_summary_if_done,
             consume_chip,
             handle_typed_while_awaiting,
@@ -96,6 +97,8 @@ class ListCreate(SmartPaginationAPIView):
         outcome = consume_chip(instance, from_suggested_response)
         if outcome is None and not from_suggested_response:
             outcome = handle_typed_while_awaiting(instance)
+        if outcome is None:
+            outcome = confirm_readiness_reply(instance)
         if outcome is None and not from_suggested_response:
             outcome = confirm_summary_if_done(instance)
         if outcome is not None:

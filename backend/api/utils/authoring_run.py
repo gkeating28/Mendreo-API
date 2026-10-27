@@ -167,6 +167,7 @@ def post_authoring_message(session, text, from_suggested_response):
 
     Ready, not yet, and finish chips use consume_chip. A typed reply while
     waiting for readiness uses the same confirm-or-retreat rule as the app.
+    A short yes after Toni asked to move on completes the step without the model.
     Everything else goes through the agent, in process.
     """
     from ..agent.models import Agent
@@ -175,6 +176,7 @@ def post_authoring_message(session, text, from_suggested_response):
     from .MessageFlow import apply_agent_response
     from .SessionStateMachine import (
         build_session_state,
+        confirm_readiness_reply,
         consume_chip,
         handle_typed_while_awaiting,
         is_ready_affirmation,
@@ -201,6 +203,8 @@ def post_authoring_message(session, text, from_suggested_response):
             outcome = handle_typed_while_awaiting(user_message)
             if outcome is not None and awaiting and not is_ready_affirmation(text):
                 refused = True
+        if outcome is None:
+            outcome = confirm_readiness_reply(user_message)
 
         if outcome is not None:
             reply = outcome.message
