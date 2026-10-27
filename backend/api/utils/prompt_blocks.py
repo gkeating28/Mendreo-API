@@ -239,24 +239,29 @@ def render_form_answers(session) -> str:
 
 
 def render_client_summary(consumer) -> str:
-    """Summary notes only. Knowledge is rendered in its own block."""
+    """Summary notes, plus the account name so it is a fact about the client."""
     from ..summary.models import Summary
 
+    first = (getattr(getattr(consumer, "user", None), "first_name", "") or "").strip()
+    name_line = f"Name: {first}" if first else ""
     no_previous = "No previous conversations exist with this user."
     try:
         summary = Summary.objects.get(consumer=consumer)
     except Summary.DoesNotExist:
-        return no_previous
-
-    if not summary.detailed and not summary.observations:
-        return no_previous
+        summary = None
 
     parts = []
+    if name_line:
+        parts.append(name_line)
+    if summary is None or (not summary.detailed and not summary.observations):
+        parts.append(no_previous)
+        return "\n\n".join(parts)
+
     if summary.detailed:
         parts.append("Detailed notes:\n" + summary.detailed.strip())
     if summary.observations:
         parts.append("Observations:\n" + summary.observations.strip())
-    return "\n\n".join(parts) if parts else no_previous
+    return "\n\n".join(parts)
 
 
 def build_token_context(consumer, exercise=None, session=None) -> dict[str, str]:

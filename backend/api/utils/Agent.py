@@ -876,6 +876,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             bool(session.exercise_id)
             and "Do not reframe the situation" in cached
         )
+        first_name = (
+            getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
+        ).strip()
+        stale_name = bool(first_name) and f"Name: {first_name}" not in cached
         if not any((
             stale_placeholders,
             stale_click,
@@ -885,6 +889,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_retrieval,
             stale_style,
             stale_on_step,
+            stale_name,
         )):
             return cached
         session.cached_prompt = None
