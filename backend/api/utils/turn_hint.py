@@ -32,7 +32,7 @@ ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
 ABOUT_THE_USER_HINT = (
-    "{user_name} is asking what you know about him.\n"
+    "{user_name} is asking what you know about them.\n"
     "Answer in two sentences from <CLIENT_SUMMARY>, <KNOWLEDGE> and <SESSION_CONTEXT>, "
     "naming one or two specific things from them. Do not say you have no information. "
     "Then ask one simple question."

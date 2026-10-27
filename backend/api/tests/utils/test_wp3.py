@@ -174,6 +174,8 @@ class Wp3Tests(TestCase):
             text="what do you know about me?",
         )
         first_prompt = user_prompt_with_hint(session, first)
+        self.assertIn("is asking what you know about them.", first_prompt)
+        self.assertNotIn("about him", first_prompt)
         self.assertIn(expected, first_prompt)
         self.assertNotIn("Stay on this step", first_prompt)
 
