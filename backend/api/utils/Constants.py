@@ -440,22 +440,11 @@ UP_MEMORY_TECHNIQUE_RULE = (
     "          and cognitive restructuring as appropriate."
 )
 
-UP_SOURCE_ONLY_TECHNIQUE_RULE = (
-    "A technique, breathing practice, grounding sequence, or other step-by-step activity "
-    "must already be named in the current step's <INSTRUCTIONS> or <REFERENCE>. "
-    "Do not add one from memory, and do not take one from the <RETRIEVED> block. "
-    "Use <RETRIEVED> only to explain the activity those instructions already name. "
-    "If it describes a different exercise or activity, ignore it. "
-    "If the step instructions do not name a fitting activity, stay with what the user said and ask one question."
-)
-
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
     "related to the user's message. Use it when it helps you explain how or why the approach "
     "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
     "more than a sentence, do not name the source document and do not use it to diagnose.\n"
-    "        "
-    + UP_SOURCE_ONLY_TECHNIQUE_RULE
 )
 
 PROMPT_STEP = """<STEP>

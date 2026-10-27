@@ -890,7 +890,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_phase = meta.get("prompt_phase") != prompt_phase
         stale_machine = meta.get("state_machine") != _state_machine_enabled()
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
-        if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
+        if retrieval_on and (
+            Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached
+            or "do not take one from the <RETRIEVED> block" in cached
+            or "must already be named" in cached
+        ):
             stale_retrieval = True
 
         stale_style = (
@@ -1036,11 +1040,9 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
-    if retrieval_on:
-        up_technique_rule = Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
-    elif exercise:
-        # The Therapeutic card decides. Do not tell the model to apply
-        # restructuring, and do not tell it not to.
+    if retrieval_on or exercise:
+        # Exercise prompts leave technique choice to the Therapeutic card.
+        # A retrieval turn no longer adds a source-only technique ban.
         up_technique_rule = ""
     else:
         up_technique_rule = Constants.UP_MEMORY_TECHNIQUE_RULE
