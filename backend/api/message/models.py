@@ -22,6 +22,7 @@ class Message(SmartModel):
 
     usage = models.JSONField(null=True)
     retrieval = models.JSONField(null=True, blank=True)
+    retrieval_skipped = models.CharField(max_length=32, blank=True, default="")
 
     resources = models.JSONField(null=True, blank=True)
     suggested_responses_kind = EnumField(
