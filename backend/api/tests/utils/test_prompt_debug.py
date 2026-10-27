@@ -179,6 +179,7 @@ class PromptDebugUnitTests(SimpleTestCase):
             rows["run_summary_prompt"]["applies"],
             "editable in Settings (run_summary_prompt)",
         )
+        self.assertNotIn("restructuring_rewrite", rows)
         self.assertEqual(rows["onboarding_followup_rules"]["applies"], "general chat only")
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["check_in_rules"]["applies"], "check-in only")
@@ -573,6 +574,7 @@ class PromptDebugApiTests(BaseTest):
             "editable in Settings (client_knowledge_rule)",
             rows["client_knowledge_rule"]["applies"],
         )
+        self.assertNotIn("restructuring_rewrite", rows)
         self.assertNotIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["pending_question"]["applies"], "every turn")

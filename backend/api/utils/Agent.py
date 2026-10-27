@@ -538,16 +538,6 @@ _STATE_MACHINE_PROGRESSION = (
     "message a single question.\n"
     "        - Do not complete the step yourself. The app shows the readiness chips.\n"
 )
-_UP_GUIDE_SENTENCE = (
-    "          to guide your responses. This includes applying evidence-based strategies "
-    "for managing guilt, emotional regulation,\n"
-    "          and cognitive restructuring as appropriate."
-)
-_UP_BACKGROUND_SENTENCE = (
-    "          only as background. The only technique you may use is the one named in "
-    "the instructions for the work in front of you.\n"
-    "          Do not apply cognitive restructuring, or any other technique, on your own."
-)
 STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
@@ -570,7 +560,6 @@ def _state_machine_enabled() -> bool:
 
 
 def _state_machine_progression(prompt: str) -> str:
-    prompt = prompt.replace(_UP_GUIDE_SENTENCE, _UP_BACKGROUND_SENTENCE)
     start = prompt.find(_PROGRESSION_START)
     end = prompt.find("    </PROGRAMMING_INSTRUCTIONS>")
     if start == -1 or end == -1 or end < start:
@@ -919,6 +908,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             bool(session.exercise_id)
             and "Do not reframe the situation" in cached
         )
+        # Exercise prompts no longer carry a restructuring sentence. A cached
+        # copy still has the old swap, or the guide line the swap used to replace.
+        stale_restructure = bool(session.exercise_id) and (
+            "only as background" in cached
+            or "cognitive restructuring as appropriate" in cached
+            or "Do not apply cognitive restructuring" in cached
+        )
         stale_opening = bool(meta.get("bare_opening")) != bare_opening
         if not any((
             stale_placeholders,
@@ -929,6 +925,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_retrieval,
             stale_style,
             stale_on_step,
+            stale_restructure,
             stale_opening,
         )):
             return cached
@@ -1039,19 +1036,25 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
+    if retrieval_on:
+        up_technique_rule = Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
+    elif exercise:
+        # The Therapeutic card decides. Do not tell the model to apply
+        # restructuring, and do not tell it not to.
+        up_technique_rule = ""
+    else:
+        up_technique_rule = Constants.UP_MEMORY_TECHNIQUE_RULE
     programming_instructions = apply_style_instructions(
         Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
             user_name=user_name,
             client_knowledge_rule=client_knowledge_rule,
-            up_technique_rule=(
-                Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
-                if retrieval_on
-                else Constants.UP_MEMORY_TECHNIQUE_RULE
-            ),
+            up_technique_rule=up_technique_rule,
         ),
         Setting.get_reply_length_instruction(),
         Setting.get_one_question_instruction(),
     )
+    if not up_technique_rule.strip():
+        programming_instructions = programming_instructions.replace("        - \n", "", 1)
     if retrieval_on:
         programming_instructions = (
             programming_instructions.rstrip()

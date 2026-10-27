@@ -87,12 +87,6 @@ _SPECS = (
         "name": "DEFAULT_RUN_SUMMARY_PROMPT",
     },
     {
-        "label": "restructuring_rewrite",
-        "applies": "exercise only",
-        "module": "api.utils.Agent",
-        "name": "_UP_BACKGROUND_SENTENCE",
-    },
-    {
         "label": "onboarding_followup_rules",
         "applies": "general chat only",
         "module": "api.knowledge.followup",

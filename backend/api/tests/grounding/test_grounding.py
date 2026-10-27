@@ -347,7 +347,8 @@ class GroundingTests(TestCase):
         prompt = _prepare_prompt(session)
         self.assertIn("UNIQUE_NOTE_ALPHA", prompt)
         self.assertNotIn("do not name the source document", prompt)
-        self.assertIn("only as background", prompt)
+        self.assertNotIn("only as background", prompt)
+        self.assertNotIn("Do not apply cognitive restructuring", prompt)
         self.assertNotIn("Do not add one from memory", prompt)
 
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
