@@ -22,6 +22,17 @@ _CHIPS = {
     Constants.CHIP_NOT_YET,
     Constants.CHIP_FINISH,
 }
+# Questions about what Toni knows or remembers of this person. A topic after
+# "know about" or "remember" (anxiety, a breathing exercise) still searches.
+_ABOUT_THE_USER = re.compile(
+    r"(?:"
+    r"\b(?:know|remember)\b(?:\s+\w+){0,6}\s+about\s+me\b"
+    r"|\bremember\s+me\b"
+    r"|\bwhat\s+did\s+i\s+tell\s+you\b"
+    r"|\bwhat\s+have\s+we\s+talked\s+about\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def session_retrieval_enabled(session) -> bool:
@@ -157,6 +168,8 @@ def _skip(text: str) -> bool:
     if not stripped:
         return True
     if stripped in _CHIPS or _BEGIN_STEP.match(stripped) or _STEP_OPEN.match(stripped):
+        return True
+    if _ABOUT_THE_USER.search(stripped):
         return True
     return risk_prescreen(stripped) == Constants.LIVE_RISK_LEVEL_HIGH
 

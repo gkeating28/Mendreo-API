@@ -16,7 +16,7 @@ from ...grounding.embeddings import clear_embedder, set_embedder
 from ...grounding.indexing import index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
-from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
+from ...grounding.retrieval import _skip, augment_user_prompt, stamp_retrieval_enabled
 from ...grounding.search import search_chunks
 from ...image.models import Image
 from ...message.models import Message
@@ -442,6 +442,25 @@ class GroundingTests(TestCase):
         self.assertFalse(enabled)
         self.assertFalse(session.cached_prompt_meta.get("retrieval_enabled"))
         self.assertTrue(any("stamp save failed" in line for line in logs.output))
+
+    def test_questions_about_the_user_skip_retrieval(self):
+        skipped = [
+            "what do you know about me",
+            "anything else you remember about me",
+            "do you remember me",
+            "what did I tell you",
+            "what have we talked about",
+        ]
+        for phrase in skipped:
+            self.assertTrue(_skip(phrase), phrase)
+        kept = [
+            "what do you know about anxiety",
+            "can you remember this breathing exercise",
+            "how does cognitive flexibility work",
+            "I keep worrying about work and I can't switch off",
+        ]
+        for phrase in kept:
+            self.assertFalse(_skip(phrase), phrase)
 
     def test_short_query_is_prefixed_and_high_risk_skips_search(self):
         consumer = Auth.create_consumer()
