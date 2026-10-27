@@ -97,6 +97,39 @@ class TurnPromptTests(TestCase):
         ):
             return Agent.get_response(self.session, user_message)
 
+    def test_admin_reads_a_stored_prompt_and_404s_without_one(self):
+        agent = Participant.objects.get(session=self.session, agent__isnull=False)
+        assistant = Message.objects.create(
+            session=self.session,
+            sender=agent,
+            text="What is the conversation about?",
+        )
+        TurnPrompt.objects.create(
+            message=assistant,
+            model_name="gemini-2.5-pro",
+            system_prompt="system body",
+            user_prompt="user body",
+            history=[],
+        )
+        found = self._get(
+            f"/messages/{assistant.id}/prompt",
+            access_token=Auth.get_platform_admin_access_token(),
+        )
+        self.assertEqual(found.status_code, status.HTTP_200_OK)
+        self.assertEqual(found.json["system_prompt"], "system body")
+        self.assertEqual(found.json["user_prompt"], "user body")
+
+        bare = Message.objects.create(
+            session=self.session,
+            sender=agent,
+            text="no prompt stored",
+        )
+        missing = self._get(
+            f"/messages/{bare.id}/prompt",
+            access_token=Auth.get_platform_admin_access_token(),
+        )
+        self.assertEqual(missing.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_stores_the_prompt_on_the_assistant_message(self):
         self._enable(True)
         user_message = self._user_message()

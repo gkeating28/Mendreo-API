@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 
 from django.conf import settings
 from django.db import transaction
+from rest_framework.response import Response
 
 from .models import Message
 from .serializers import MessageDetailSerializer, MessageCreateSerializer, MessageListSerializer
