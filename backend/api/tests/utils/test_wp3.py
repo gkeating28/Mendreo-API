@@ -14,7 +14,9 @@ from ...utils import Constants
 from ...utils.Agent import GeneralResponse
 from ...utils.history import build_history
 from ...utils.risk import apply_turn_risk
+from ...summary.models import Summary
 from ...utils.turn_hint import (
+    ABOUT_THE_USER_HINT,
     ACCEPT_HINT,
     FOLLOW_UP_HINT,
     entry_quality,
@@ -154,6 +156,69 @@ class Wp3Tests(TestCase):
         )
         self.assertEqual(user_prompt_with_hint(session, closed_user), "yes")
         self.assertEqual(closed.question_kind, Constants.QUESTION_KIND_CLOSED)
+
+    def test_about_the_user_hint_names_client_blocks_and_skips_a_new_client(self):
+        consumer = Auth.create_consumer()
+        summary = Summary.get_or_create(consumer)
+        summary.detailed = "Worries about work presentations."
+        summary.save(update_fields=["detailed", "updated_at"])
+        session = Session.objects.create(consumer=consumer)
+        user_sender, agent_sender = Participant.create_participants(session)
+        expected = ABOUT_THE_USER_HINT.replace(
+            "{user_name}", consumer.user.first_name
+        )
+
+        first = Message.objects.create(
+            session=session,
+            sender=user_sender,
+            text="what do you know about me?",
+        )
+        first_prompt = user_prompt_with_hint(session, first)
+        self.assertIn(expected, first_prompt)
+        self.assertNotIn("Stay on this step", first_prompt)
+
+        Message.objects.create(
+            session=session,
+            sender=agent_sender,
+            text="What happened?",
+            question_kind=Constants.QUESTION_KIND_OPEN,
+            probe_count=0,
+        )
+        later = Message.objects.create(
+            session=session,
+            sender=user_sender,
+            text="what do you know about me?",
+        )
+        self.assertIn(expected, user_prompt_with_hint(session, later))
+
+        remembered = Message.objects.create(
+            session=session,
+            sender=user_sender,
+            text="remember me",
+        )
+        remembered_prompt = user_prompt_with_hint(session, remembered)
+        self.assertIn(expected, remembered_prompt)
+        self.assertNotIn(FOLLOW_UP_HINT, remembered_prompt)
+
+        anxiety = Message.objects.create(
+            session=session,
+            sender=user_sender,
+            text="what do you know about anxiety",
+        )
+        self.assertNotIn(
+            "Answer in two sentences from <CLIENT_SUMMARY>",
+            user_prompt_with_hint(session, anxiety),
+        )
+
+        new_consumer = Auth.create_consumer()
+        new_session = Session.objects.create(consumer=new_consumer)
+        new_user, _new_agent = Participant.create_participants(new_session)
+        new_message = Message.objects.create(
+            session=new_session,
+            sender=new_user,
+            text="what do you know about me?",
+        )
+        self.assertNotIn("<TURN_HINT>", user_prompt_with_hint(new_session, new_message))
 
     def test_high_risk_sets_resources_and_queues_notification(self):
         consumer = Auth.create_consumer()

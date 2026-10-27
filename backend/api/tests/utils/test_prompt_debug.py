@@ -126,6 +126,14 @@ class PromptDebugUnitTests(SimpleTestCase):
         )
         fallback = rows["on_step_fallback"]
         self.assertEqual(fallback["text"], ON_STEP_FALLBACK)
+        self.assertIn(
+            "Answer in two sentences from <CLIENT_SUMMARY>",
+            rows["about_the_user_hint"]["text"],
+        )
+        self.assertIn(
+            "a client block has something to name",
+            rows["about_the_user_hint"]["applies"],
+        )
         self.assertEqual(
             fallback["applies"],
             "replaces the model's reply when an off-script retry still leaves the step",
@@ -586,6 +594,14 @@ class PromptDebugApiTests(BaseTest):
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(rows["pending_question"]["applies"], "every turn")
         self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)
+        self.assertIn(
+            "Answer in two sentences from <CLIENT_SUMMARY>",
+            rows["about_the_user_hint"]["text"],
+        )
+        self.assertIn(
+            "a client block has something to name",
+            rows["about_the_user_hint"]["applies"],
+        )
         self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
         self.assertNotIn("virtual AI Therapist", rows["programming_instructions"]["text"])
         self.assertNotIn("<FEEDBACK>", rows["programming_instructions"]["text"])

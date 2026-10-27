@@ -105,6 +105,15 @@ _SPECS = (
         "name": "CHECK_IN_RULES",
     },
     {
+        "label": "about_the_user_hint",
+        "applies": (
+            "general chat, when they ask what Toni knows about them "
+            "and a client block has something to name"
+        ),
+        "module": "api.utils.turn_hint",
+        "name": "ABOUT_THE_USER_HINT",
+    },
+    {
         "label": "hidden_opener",
         "applies": (
             "start on a no-check-in step-1 open; the other lines after a "

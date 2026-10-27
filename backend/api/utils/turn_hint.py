@@ -31,6 +31,12 @@ STAY_ON_STEP_HINT = (
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
+ABOUT_THE_USER_HINT = (
+    "{user_name} is asking what you know about him.\n"
+    "Answer in two sentences from <CLIENT_SUMMARY>, <KNOWLEDGE> and <SESSION_CONTEXT>, "
+    "naming one or two specific things from them. Do not say you have no information. "
+    "Then ask one simple question."
+)
 
 
 def normalize_question_kind(value) -> str:
@@ -161,11 +167,54 @@ def goal_hint_text(missing: str) -> str:
     )
 
 
+def about_the_user_hint(session, text: str) -> str | None:
+    """General chat only. Skipped when the three client blocks are still empty."""
+    if getattr(session, "exercise_id", None):
+        return None
+    from ..grounding.retrieval import _ABOUT_THE_USER
+
+    if not _ABOUT_THE_USER.search(text or ""):
+        return None
+    if _client_blocks_are_new(session):
+        return None
+    consumer = session.consumer
+    user_name = ""
+    if consumer is not None:
+        user_name = getattr(getattr(consumer, "user", None), "first_name", "") or ""
+    return ABOUT_THE_USER_HINT.replace("{user_name}", user_name.strip() or "there")
+
+
+def _client_blocks_are_new(session) -> bool:
+    """True when summary, knowledge, and session context have nothing to name."""
+    from .prompt_blocks import render_client_summary, render_knowledge, render_session_context
+
+    consumer = session.consumer
+    summary = (render_client_summary(consumer) or "").strip()
+    knowledge = (render_knowledge(consumer, "general") or "").strip()
+    context = render_session_context(consumer, session) or ""
+    summary_new = (
+        not summary or summary == "No previous conversations exist with this user."
+    )
+    knowledge_new = not knowledge or (
+        "No structured knowledge recorded" in knowledge and "\n-" not in knowledge
+    )
+    context_new = (
+        "Days since last session: none" in context
+        and "Last exercise completed: none" in context
+        and "Exercises completed in the last 7 days: none" in context
+        and "Today's completed sessions: none" in context
+    )
+    return summary_new and knowledge_new and context_new
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     from ..message.models import Message
 
     text = user_message.text or ""
+    about = about_the_user_hint(session, text)
+    if about:
+        return f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
     goal = _consume_goal_hint(session)
     if goal:
         return f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
