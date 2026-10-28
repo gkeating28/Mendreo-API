@@ -68,6 +68,11 @@ class Setting(SmartModel):
         Setting.get_or_create_reply_length_instruction()
         Setting.get_or_create_one_question_instruction()
         Setting.get_or_create_client_knowledge_rule()
+        Setting.get_or_create_onboarding_followup_permission_ask()
+        Setting.get_or_create_onboarding_followup_decline()
+        Setting.get_or_create_onboarding_followup_reask()
+        Setting.get_or_create_onboarding_followup_chip_yes()
+        Setting.get_or_create_onboarding_followup_chip_no()
         Setting.get_or_create_run_summary_prompt()
         Setting.get_or_create_run_summary_tone_guide()
         Setting.get_or_create_run_summary_max_length()
@@ -565,6 +570,94 @@ class Setting(SmartModel):
             Setting.get_or_create_client_knowledge_rule,
         )
         return (raw or "").strip() or Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE
+
+    @staticmethod
+    def get_or_create_onboarding_followup_permission_ask():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_permission_ask() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK,
+            Setting.get_or_create_onboarding_followup_permission_ask,
+        )
+        text = (raw or "").strip()
+        default = Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK
+        if "{question}" not in text or "{answer}" not in text:
+            return default
+        try:
+            text.format(question="", answer="")
+        except (KeyError, IndexError, ValueError):
+            return default
+        return text
+
+    @staticmethod
+    def get_or_create_onboarding_followup_decline():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_decline() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE,
+            Setting.get_or_create_onboarding_followup_decline,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK
+
+    @staticmethod
+    def get_or_create_onboarding_followup_reask():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_REASK,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_reask() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_REASK,
+            Setting.get_or_create_onboarding_followup_reask,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK
+
+    @staticmethod
+    def get_or_create_onboarding_followup_chip_yes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_chip_yes() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES,
+            Setting.get_or_create_onboarding_followup_chip_yes,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES
+
+    @staticmethod
+    def get_or_create_onboarding_followup_chip_no():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_chip_no() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO,
+            Setting.get_or_create_onboarding_followup_chip_no,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO
 
     @staticmethod
     def get_or_create_run_summary_prompt():

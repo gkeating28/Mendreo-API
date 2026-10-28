@@ -93,6 +93,36 @@ _SPECS = (
         "name": "ONBOARDING_FOLLOWUP_RULES",
     },
     {
+        "label": "onboarding_followup_permission_ask",
+        "applies": "editable in Settings (onboarding_followup_permission_ask)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_ASK",
+    },
+    {
+        "label": "onboarding_followup_decline",
+        "applies": "editable in Settings (onboarding_followup_decline)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK",
+    },
+    {
+        "label": "onboarding_followup_reask",
+        "applies": "editable in Settings (onboarding_followup_reask)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_DIRECT_REASK",
+    },
+    {
+        "label": "onboarding_followup_chip_yes",
+        "applies": "editable in Settings (onboarding_followup_chip_yes)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_YES",
+    },
+    {
+        "label": "onboarding_followup_chip_no",
+        "applies": "editable in Settings (onboarding_followup_chip_no)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_NO",
+    },
+    {
         "label": "pending_question",
         "applies": "added when a knowledge question is pending in general chat",
         "module": "api.utils.pending_question",

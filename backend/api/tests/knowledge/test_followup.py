@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest import mock
 
 from django.test import override_settings
@@ -8,6 +9,11 @@ from ..TestCase import TestCase
 from ..utils.manager import Auth
 from ...knowledge.followup import (
     FollowupReply,
+    _decline_ack,
+    _is_decline_text,
+    _is_grant_text,
+    _permission_ask_text,
+    _permission_reply_for,
     activate_next_followup,
     ensure_onboarding_followups_classified,
     format_onboarding_followup_block,
@@ -20,6 +26,7 @@ from ...knowledge.followup import (
     should_inject_onboarding_followup,
     skip_vagueness_classification,
 )
+from ...setting.models import Setting
 from ...knowledge.models import KnowledgeEntry, KnowledgeField, KnowledgeQuestion
 from ...knowledge.services import write_knowledge_entry
 from ...message.models import Message
@@ -723,3 +730,138 @@ class FirstChatFollowupTests(TestCase):
         self.assertEqual(response.json["text"], Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK)
         self.entry.refresh_from_db()
         self.assertEqual(self.entry.followup_attempts, 2)
+
+
+class FollowupSettingTests(TestCase):
+    def _entry(self):
+        return SimpleNamespace(followup_prompt="How was work?", value="fine")
+
+    def test_defaults_match_todays_text(self):
+        self.assertEqual(
+            Setting.get_onboarding_followup_permission_ask(),
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK,
+        )
+        self.assertEqual(
+            Setting.get_onboarding_followup_decline(),
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK,
+        )
+        self.assertEqual(
+            Setting.get_onboarding_followup_reask(),
+            Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK,
+        )
+        self.assertEqual(
+            Setting.get_onboarding_followup_chip_yes(),
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES,
+        )
+        self.assertEqual(
+            Setting.get_onboarding_followup_chip_no(),
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO,
+        )
+        self.assertEqual(
+            _permission_ask_text(self._entry()),
+            'You answered "How was work?" with "fine". We can go into that now, or leave it.',
+        )
+        self.assertEqual(
+            _permission_reply_for(self._entry()).suggested_responses,
+            list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        )
+        self.assertEqual(_decline_ack().canned_text, "No problem.")
+
+    def test_edited_values_are_used(self):
+        ask = Setting.get_or_create_onboarding_followup_permission_ask()
+        ask.value = 'About "{question}", you said "{answer}".'
+        ask.save()
+        decline = Setting.get_or_create_onboarding_followup_decline()
+        decline.value = "Alright."
+        decline.save()
+        chip_yes = Setting.get_or_create_onboarding_followup_chip_yes()
+        chip_yes.value = "Go ahead"
+        chip_yes.save()
+        chip_no = Setting.get_or_create_onboarding_followup_chip_no()
+        chip_no.value = "Leave it"
+        chip_no.save()
+
+        self.assertEqual(
+            _permission_ask_text(self._entry()),
+            'About "How was work?", you said "fine".',
+        )
+        self.assertEqual(_decline_ack().canned_text, "Alright.")
+        self.assertEqual(
+            _permission_reply_for(self._entry()).suggested_responses,
+            ["Go ahead", "Leave it"],
+        )
+
+    def test_blank_or_broken_permission_ask_falls_back(self):
+        row = Setting.get_or_create_onboarding_followup_permission_ask()
+        for broken in ("", "   ", "Hello {question}", "Hello {question} {answer} {other}"):
+            row.value = broken
+            row.save()
+            self.assertEqual(
+                Setting.get_onboarding_followup_permission_ask(),
+                Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK,
+            )
+            self.assertEqual(
+                _permission_ask_text(self._entry()),
+                'You answered "How was work?" with "fine". We can go into that now, or leave it.',
+            )
+
+    def test_edited_chip_labels_still_grant_or_decline(self):
+        chip_yes = Setting.get_or_create_onboarding_followup_chip_yes()
+        chip_yes.value = "Go ahead"
+        chip_yes.save()
+        chip_no = Setting.get_or_create_onboarding_followup_chip_no()
+        chip_no.value = "Leave it"
+        chip_no.save()
+
+        self.assertTrue(_is_grant_text("Go ahead"))
+        self.assertTrue(_is_grant_text(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES))
+        self.assertTrue(_is_grant_text("yes"))
+        self.assertTrue(_is_decline_text("Leave it"))
+        self.assertTrue(_is_decline_text(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO))
+        self.assertTrue(_is_decline_text("no"))
+
+    def test_edited_reask_is_sent(self):
+        row = Setting.get_or_create_onboarding_followup_reask()
+        row.value = "One more detail?"
+        row.save()
+
+        consumer = Auth.create_consumer()
+        consumer.onboarded = True
+        consumer.onboarding_followup_classified_at = timezone.now()
+        consumer.save(update_fields=["onboarded", "onboarding_followup_classified_at"])
+        field = KnowledgeField.objects.create(key="main_worry", label="Main worry", active=True)
+        question = KnowledgeQuestion.objects.create(
+            prompt="What is worrying you most?",
+            target_field=field,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+            flows=[Constants.KNOWLEDGE_FLOW_INITIAL],
+            active=True,
+        )
+        write_knowledge_entry(
+            consumer=consumer,
+            field=field,
+            value="stuff",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_QUESTION,
+            knowledge_question=question,
+            needs_followup=True,
+            followup_prompt="What is worrying you most?",
+        )
+        session = Session.objects.create(consumer=consumer)
+        Participant.create_participants(session=session)
+        consumer.onboarding_followup_consumed_at = timezone.now()
+        consumer.onboarding_followup_session_id = session.id
+        consumer.onboarding_followup_consent = Constants.ONBOARDING_FOLLOWUP_CONSENT_GRANTED
+        consumer.save(
+            update_fields=[
+                "onboarding_followup_consumed_at",
+                "onboarding_followup_session_id",
+                "onboarding_followup_consent",
+            ]
+        )
+        activate_next_followup(consumer, session)
+        session.consumer = consumer
+        participant = Participant.objects.filter(session=session, consumer=consumer).first()
+        message = Message.objects.create(session=session, sender=participant, text="idk")
+        with mock.patch("api.knowledge.followup.is_answer_vague", return_value=True):
+            result = handle_onboarding_followup_reply(session, message)
+        self.assertEqual(result.canned_text, "One more detail?")

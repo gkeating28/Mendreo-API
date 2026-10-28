@@ -656,6 +656,14 @@ KNOWLEDGE_RESPONSE_TYPES = [
 KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 
 # First-chat re-ask of vague initial free-text onboarding answers.
+SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK = "onboarding_followup_permission_ask"
+SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE = "onboarding_followup_decline"
+SETTING_KEY_ONBOARDING_FOLLOWUP_REASK = "onboarding_followup_reask"
+SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES = "onboarding_followup_chip_yes"
+SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO = "onboarding_followup_chip_no"
+KNOWLEDGE_FOLLOWUP_PERMISSION_ASK = (
+    'You answered "{question}" with "{answer}". We can go into that now, or leave it.'
+)
 KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS = 2
 KNOWLEDGE_FOLLOWUP_DIRECT_REASK = "Tell me a bit more about that."
 KNOWLEDGE_FOLLOWUP_PERMISSION_YES = "Let's talk about it"

@@ -182,6 +182,30 @@ class PromptDebugUnitTests(SimpleTestCase):
             rows["client_knowledge_rule"]["applies"],
             "editable in Settings (client_knowledge_rule)",
         )
+        self.assertEqual(
+            rows["onboarding_followup_permission_ask"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_permission_ask"]["applies"],
+            "editable in Settings (onboarding_followup_permission_ask)",
+        )
+        self.assertEqual(
+            rows["onboarding_followup_decline"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_reask"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_chip_yes"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_chip_no"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO,
+        )
         self.assertEqual(rows["run_summary_prompt"]["text"], DEFAULT_RUN_SUMMARY_PROMPT)
         self.assertEqual(
             rows["run_summary_prompt"]["applies"],
@@ -588,6 +612,30 @@ class PromptDebugApiTests(BaseTest):
         self.assertIn(
             "editable in Settings (client_knowledge_rule)",
             rows["client_knowledge_rule"]["applies"],
+        )
+        self.assertEqual(
+            rows["onboarding_followup_permission_ask"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK,
+        )
+        self.assertIn(
+            "editable in Settings (onboarding_followup_permission_ask)",
+            rows["onboarding_followup_permission_ask"]["applies"],
+        )
+        self.assertEqual(
+            rows["onboarding_followup_decline"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_reask"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_chip_yes"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES,
+        )
+        self.assertEqual(
+            rows["onboarding_followup_chip_no"]["text"],
+            Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO,
         )
         self.assertNotIn("restructuring_rewrite", rows)
         self.assertNotIn("description_prefix", rows)

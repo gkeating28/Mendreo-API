@@ -56,6 +56,11 @@ class SettingCreateSerializer(serializers.Serializer):
     reply_length = serializers.CharField(required=False, allow_blank=True)
     one_question = serializers.CharField(required=False, allow_blank=True)
     client_knowledge_rule = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_permission_ask = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_decline = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_reask = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_chip_yes = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_chip_no = serializers.CharField(required=False, allow_blank=True)
     run_summary_prompt = serializers.CharField(required=False, allow_blank=True)
     run_summary_tone_guide = serializers.CharField(required=False, allow_blank=True)
     run_summary_max_length = serializers.IntegerField(
@@ -185,6 +190,31 @@ class SettingCreateSerializer(serializers.Serializer):
             rule.value = validated_data.get("client_knowledge_rule") or ""
             rule.save()
 
+        if "onboarding_followup_permission_ask" in incoming:
+            permission_ask = Setting.get_or_create_onboarding_followup_permission_ask()
+            permission_ask.value = validated_data.get("onboarding_followup_permission_ask") or ""
+            permission_ask.save()
+
+        if "onboarding_followup_decline" in incoming:
+            decline = Setting.get_or_create_onboarding_followup_decline()
+            decline.value = validated_data.get("onboarding_followup_decline") or ""
+            decline.save()
+
+        if "onboarding_followup_reask" in incoming:
+            reask = Setting.get_or_create_onboarding_followup_reask()
+            reask.value = validated_data.get("onboarding_followup_reask") or ""
+            reask.save()
+
+        if "onboarding_followup_chip_yes" in incoming:
+            chip_yes = Setting.get_or_create_onboarding_followup_chip_yes()
+            chip_yes.value = validated_data.get("onboarding_followup_chip_yes") or ""
+            chip_yes.save()
+
+        if "onboarding_followup_chip_no" in incoming:
+            chip_no = Setting.get_or_create_onboarding_followup_chip_no()
+            chip_no.value = validated_data.get("onboarding_followup_chip_no") or ""
+            chip_no.save()
+
         if "run_summary_prompt" in incoming:
             run_prompt = Setting.get_or_create_run_summary_prompt()
             run_prompt.value = validated_data.get("run_summary_prompt") or ""
@@ -225,6 +255,11 @@ class SettingCreateSerializer(serializers.Serializer):
             "reply_length": Setting.get_reply_length_instruction(),
             "one_question": Setting.get_one_question_instruction(),
             "client_knowledge_rule": Setting.get_client_knowledge_rule(),
+            "onboarding_followup_permission_ask": Setting.get_onboarding_followup_permission_ask(),
+            "onboarding_followup_decline": Setting.get_onboarding_followup_decline(),
+            "onboarding_followup_reask": Setting.get_onboarding_followup_reask(),
+            "onboarding_followup_chip_yes": Setting.get_onboarding_followup_chip_yes(),
+            "onboarding_followup_chip_no": Setting.get_onboarding_followup_chip_no(),
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),
