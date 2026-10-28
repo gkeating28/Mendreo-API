@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from rest_framework import status
 
 from freezegun import freeze_time
@@ -68,6 +70,35 @@ class CreateTest(TestCase):
         self.assertIsNotNone(summary.observations)
 
         self.assertIsNotNone(summary.next_steps)
+
+    def test_model_fields_are_saved_as_written(self):
+        self.consumer = Auth.create_consumer()
+        summary = self.consumer.summary
+        summary.detailed = "Previous overview."
+        summary.observations = "Previous observations."
+        summary.next_steps = "Previous next steps."
+        summary.save()
+
+        written = {
+            "detailed": "Amira feels socially isolated and sad about work.",
+            "observations": "The clinician noted a vignette that the user never said.",
+            "next_steps": "Recommend a new exercise the user did not mention.",
+        }
+        with patch("api.utils.Agent.AI.ask", return_value=written):
+            update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, written["detailed"])
+        self.assertEqual(summary.observations, written["observations"])
+        self.assertEqual(summary.next_steps, written["next_steps"])
+
+        with patch("api.utils.Agent.AI.ask", return_value={"detailed": "Updated overview only."}):
+            update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, "Updated overview only.")
+        self.assertEqual(summary.observations, written["observations"])
+        self.assertEqual(summary.next_steps, written["next_steps"])
 
     def test_chat_log_file_created_with_expected_text(self):
         yesterday = DateUtils.yesterday().date()
