@@ -144,11 +144,26 @@ def _accept_uploaded_file(file):
     return file
 
 
+def case_material_submission_block(source: KnowledgeSource) -> str | None:
+    """Block submit and approve when the source text is case material."""
+    from .case_material import case_material_block
+    from .chunking import chunk_markdown
+    from .indexing import read_source_text
+
+    text = read_source_text(source)
+    if not text.strip():
+        return None
+    return case_material_block(chunk_markdown(text))
+
+
 def approve_block(source: KnowledgeSource, _admin: Admin) -> str | None:
     # Temporary: the submitter may approve their own source.
     # Restore the submitted_by != approver check before this is final.
     if source.submitted_by_id is None:
         return "Submit the source before approving it."
+    blocked = case_material_submission_block(source)
+    if blocked:
+        return blocked
     if source.kind == Constants.KNOWLEDGE_SOURCE_KIND_UP_SOURCE and not (
         source.licence_note or ""
     ).strip():

@@ -600,18 +600,39 @@ def _run_observation_ai(consumer) -> ObservationResult:
         text: str = Field(description="Second-person observation paragraph")
         topic_tag: str = Field(description="Short topic tag, e.g. work anxiety")
 
+    from ..utils.user_grounding import USER_FACT_RULE, keep_grounded_prose
+
     prompt = (
         f"{instruction}\n\n"
+        f"{USER_FACT_RULE}\n\n"
         f"Tone guide: {tone}\n"
         f"Max length: about {max_words} words.\n\n"
         f"<KNOWLEDGE>\n{knowledge}\n</KNOWLEDGE>\n\n"
         f"<RECENT_TRANSCRIPTS>\n{transcript}\n</RECENT_TRANSCRIPTS>\n"
     )
     data = AI.ask(prompt, Schema, temperature=0.4)
+    text = keep_grounded_prose(data.get("text", ""), _recent_user_text(consumer))
     return ObservationResult(
-        text=data.get("text", ""),
-        topic_tag=data.get("topic_tag", ""),
+        text=text,
+        topic_tag=data.get("topic_tag", "") if text else "",
     )
+
+
+def _recent_user_text(consumer, days: int = 7) -> str:
+    from ..message.models import Message
+
+    start = timezone.now() - timedelta(days=days)
+    texts = (
+        Message.objects.filter(
+            session__consumer=consumer,
+            session__authoring_test=False,
+            sender__consumer__isnull=False,
+            created_at__gte=start,
+        )
+        .order_by("created_at")
+        .values_list("text", flat=True)[:200]
+    )
+    return "\n".join(text for text in texts if text)
 
 
 def _recent_transcript_excerpt(consumer, days: int = 7) -> str:

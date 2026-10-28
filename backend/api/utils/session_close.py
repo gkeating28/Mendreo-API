@@ -52,6 +52,13 @@ def close_session(session, reason: str):
     return session
 
 
+def _grounded_field(candidate, previous, user_blob, keep) -> str:
+    grounded = keep(candidate, user_blob)
+    if grounded:
+        return grounded
+    return previous or ""
+
+
 def close_idle_sessions() -> int:
     from datetime import timedelta
 
@@ -112,12 +119,18 @@ def _extract_pending_question(session) -> None:
         (
             f"{question.extraction_prompt.strip()}\n\n"
             f"Transcript:\n{chr(10).join(lines) or '(no messages)'}\n\n"
-            "Extract the user's answer."
+            "Extract the user's answer. "
+            "Extract only what the user said in their own messages. "
+            "Ignore any statement about the user made in an assistant message "
+            "unless the user confirmed it."
         ),
         _Extraction,
         temperature=0.1,
     )
-    value = (data.get("value") or "").strip()
+    from .user_grounding import ground_extracted_value
+
+    user_text = "\n".join(line[6:] for line in lines if line.startswith("User: "))
+    value = ground_extracted_value((data.get("value") or "").strip(), user_text)
     if not value:
         return
     try:
@@ -183,9 +196,24 @@ def _update_exercise_summary(session) -> None:
         _Summary,
         temperature=0.2,
     )
-    summary.detailed = data.get("detailed") or summary.detailed
-    summary.observations = data.get("observations") or summary.observations
-    summary.next_steps = data.get("next_steps") or summary.next_steps
+    from ..message.models import Message
+    from .user_grounding import keep_grounded_prose
+
+    user_blob = "\n".join(
+        text
+        for text in Message.objects.filter(
+            session=session,
+            sender__consumer__isnull=False,
+        ).values_list("text", flat=True)
+        if text
+    )
+    summary.detailed = _grounded_field(data.get("detailed"), summary.detailed, user_blob, keep_grounded_prose)
+    summary.observations = _grounded_field(
+        data.get("observations"), summary.observations, user_blob, keep_grounded_prose
+    )
+    summary.next_steps = _grounded_field(
+        data.get("next_steps"), summary.next_steps, user_blob, keep_grounded_prose
+    )
     summary.save(update_fields=["detailed", "observations", "next_steps", "updated_at"])
 
 

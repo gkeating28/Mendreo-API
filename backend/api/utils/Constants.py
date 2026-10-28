@@ -262,7 +262,14 @@ DEFAULT_CLIENT_KNOWLEDGE_RULE = (
     "or that you have not been told. "
     "If <CLIENT_SUMMARY> says no previous conversations exist and "
     "<KNOWLEDGE> says no structured knowledge is recorded, this is a new client: "
-    "say you are just getting to know them and do not invent anything about them."
+    "say you are just getting to know them and do not invent anything about them. "
+    "Only <KNOWLEDGE>, <CLIENT_SUMMARY>, and the user's own messages in this conversation "
+    "describe {user_name}. An assistant message is not a fact about them, including "
+    "earlier replies in this chat. When they ask what you know about them or what you "
+    "have talked about, answer only from those. If they hold little, say so plainly and "
+    "invite them to tell you more. Never guess or fill gaps about them. When <KNOWLEDGE> "
+    "lists a fact they asked about, answer from that value. Do not invent conversations "
+    "that are not written in <CLIENT_SUMMARY>."
 )
 SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
 SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"
@@ -441,15 +448,34 @@ UP_MEMORY_TECHNIQUE_RULE = (
 )
 
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
-    "        Some turns include a <RETRIEVED> block of approved Mendreo reference material "
-    "related to the user's message. Use it when it helps you explain how or why the approach "
-    "works, in your own words and usual voice. Ignore it when it is not relevant. Do not quote "
-    "more than a sentence, do not name the source document and do not use it to diagnose. "
-    "Retrieved material is general reference and is never about the user. "
-    "Never present it as something the user said or something you remember about them. "
-    "When the user asks what you know or remember about them, answer only from "
-    "<KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>.\n"
+    "        Some turns include a <RETRIEVED> block of general reference material "
+    "from Mendreo's library. Use it only to explain how or why the approach "
+    "works, in your own words and usual voice. It never describes the user: never "
+    "present anything in it as something the user said, felt or experienced, or as "
+    "part of your history with them. Ignore it when it is not relevant. Do not quote "
+    "more than a sentence, do not name the source document and do not use it to diagnose.\n"
 )
+
+RETRIEVAL_SKIP_PHRASES = (
+    "about me",
+    "know about me",
+    "about myself",
+    "who am i",
+    "remember",
+    "what did i say",
+    "what have i said",
+    "did i tell you",
+    "i told you",
+    "have we talked",
+    "what have we talked",
+    "we talked about",
+    "last time",
+    "my history",
+    "my progress",
+    "do you know me",
+)
+
+RETRIEVAL_SKIP_ABOUT_USER = "about_user"
 
 PROMPT_STEP = """<STEP>
                 <TITLE>

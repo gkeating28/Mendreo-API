@@ -184,12 +184,21 @@ def about_the_user_hint(session, text: str) -> str | None:
     return ABOUT_THE_USER_HINT.replace("{user_name}", user_name.strip() or "there")
 
 
+def _summary_without_account_name(summary: str) -> str:
+    """Drop the leading account-name line so a new client still looks new."""
+    text = (summary or "").strip()
+    lines = text.splitlines()
+    if lines and lines[0].startswith("Name:"):
+        return "\n".join(lines[1:]).strip()
+    return text
+
+
 def _client_blocks_are_new(session) -> bool:
     """True when summary, knowledge, and session context have nothing to name."""
     from .prompt_blocks import render_client_summary, render_knowledge, render_session_context
 
     consumer = session.consumer
-    summary = (render_client_summary(consumer) or "").strip()
+    summary = _summary_without_account_name(render_client_summary(consumer) or "")
     knowledge = (render_knowledge(consumer, "general") or "").strip()
     context = render_session_context(consumer, session) or ""
     summary_new = (

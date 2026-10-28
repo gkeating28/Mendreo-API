@@ -56,7 +56,10 @@ def check_done_when(session, step) -> dict | None:
             "If DONE_WHEN requires the user to confirm a summary, met is true only when "
             "an assistant message stated that summary and the user agreed afterwards. "
             "Set met true only when those elements are present. "
-            "When met is false, missing names the element that is still absent."
+            "When met is false, missing names the element that is still absent. "
+            "Extract only what the user said in their own messages. "
+            "Ignore any statement about the user made in an assistant message "
+            "unless the user confirmed it."
         ),
         _GoalCheck,
         temperature=0.1,
@@ -78,7 +81,10 @@ def extract_step_result(session, step) -> dict | None:
             f"{prompt_text}\n\n"
             "Transcript of this step:\n"
             f"{transcript or '(no messages)'}\n\n"
-            "Extract the user's result for this step."
+            "Extract the user's result for this step. "
+            "Extract only what the user said in their own messages. "
+            "Ignore any statement about the user made in an assistant message "
+            "unless the user confirmed it."
         ),
         _Extraction,
         temperature=0.1,
@@ -89,6 +95,11 @@ def extract_step_result(session, step) -> dict | None:
     except (TypeError, ValueError):
         confidence = 0.0
     confidence = min(1.0, max(0.0, confidence))
+    from .user_grounding import ground_extracted_value
+
+    value = ground_extracted_value(value, _user_text(session, step))
+    if not value:
+        confidence = 0.0
 
     if value and getattr(step, "result_field_id", None):
         _write_result_knowledge(session, step, value, confidence)
@@ -96,7 +107,18 @@ def extract_step_result(session, step) -> dict | None:
     return {"value": value, "confidence": confidence}
 
 
-def _step_transcript(session, step) -> str:
+def _user_text(session, step) -> str:
+    messages = _step_messages(session, step)
+    lines = []
+    for message in messages:
+        if message.sender_id and message.sender.consumer_id:
+            text = (message.text or "").strip()
+            if text:
+                lines.append(text)
+    return "\n".join(lines)
+
+
+def _step_messages(session, step):
     from ..message.models import Message
 
     boundary = None
@@ -113,7 +135,11 @@ def _step_transcript(session, step) -> str:
     messages = Message.objects.filter(session=session).select_related("sender").order_by("created_at")
     if boundary is not None:
         messages = messages.filter(created_at__gt=boundary)
+    return messages
 
+
+def _step_transcript(session, step) -> str:
+    messages = _step_messages(session, step)
     lines = []
     for message in messages:
         who = "User" if message.sender_id and message.sender.consumer_id else "Assistant"

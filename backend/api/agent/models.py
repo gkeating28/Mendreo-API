@@ -212,9 +212,16 @@ class Agent(SmartModel):
         )
 
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
-        retrieval = getattr(session, "_pending_retrieval", None) or None
+        skipped = getattr(session, "_retrieval_skipped", "") or ""
+        pending = getattr(session, "_pending_retrieval", None)
+        if skipped:
+            retrieval = pending if isinstance(pending, list) else []
+        else:
+            retrieval = pending or None
         if hasattr(session, "_pending_retrieval"):
             del session._pending_retrieval
+        if hasattr(session, "_retrieval_skipped"):
+            del session._retrieval_skipped
         agent_message = Message.objects.create(
             usage=usage,
             asset=asset,
@@ -229,6 +236,7 @@ class Agent(SmartModel):
             probe_count=probe_count,
             resources=resources,
             retrieval=retrieval,
+            retrieval_skipped=skipped,
         )
         from ..message.turn_prompt import save_pending_turn_prompt
 

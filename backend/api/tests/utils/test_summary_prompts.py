@@ -45,4 +45,5 @@ class SummaryPromptTests(SimpleTestCase):
         self.assertIn("Check-in summary:\nfelt tense", prompt)
         self.assertIn("Step results:\nName the Worry: deadlines", prompt)
         self.assertIn("Previous notes:\nprevious plan", prompt)
+        self.assertIn("Use only what the user said in their own messages.", prompt)
         self.assertNotIn(DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT, prompt)

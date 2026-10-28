@@ -16,6 +16,7 @@ from .serializers import (
     KnowledgeSourceListSerializer,
     approve_block,
     mark_approved,
+    case_material_submission_block,
     mark_submitted,
 )
 
@@ -61,6 +62,9 @@ class SourceSubmit(SmartAPIView):
         source = KnowledgeSource.objects.filter(id=id).first()
         if source is None:
             return self.not_found()
+        blocked = case_material_submission_block(source)
+        if blocked:
+            return self.respond_with(blocked, status_code=status.HTTP_400_BAD_REQUEST)
         mark_submitted(source, request.user.admin)
         return Response(KnowledgeSourceDetailSerializer(source).data)
 
