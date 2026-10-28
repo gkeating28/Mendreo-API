@@ -592,7 +592,10 @@ class PromptDebugApiTests(BaseTest):
         self.assertNotIn("restructuring_rewrite", rows)
         self.assertNotIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
-        self.assertEqual(rows["pending_question"]["applies"], "every turn")
+        self.assertEqual(
+            rows["pending_question"]["applies"],
+            "added when a knowledge question is pending in general chat",
+        )
         self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)
         self.assertIn(
             "Answer in two sentences from <CLIENT_SUMMARY>",

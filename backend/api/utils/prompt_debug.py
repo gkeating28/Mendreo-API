@@ -94,7 +94,7 @@ _SPECS = (
     },
     {
         "label": "pending_question",
-        "applies": "every turn",
+        "applies": "added when a knowledge question is pending in general chat",
         "module": "api.utils.pending_question",
         "name": "PENDING_QUESTION_RULE",
     },
