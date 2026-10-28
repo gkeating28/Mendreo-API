@@ -277,15 +277,9 @@ def update_summary(summary, date=None, freezer=None):
         user_text_from_messages(session_data["messages"]) for session_data in sessions_data
     )
     try:
-        summary.detailed = _grounded_or_previous(
-            ai_response.get("detailed"), summary.detailed, user_blob, keep_grounded_prose
-        )
-        summary.observations = _grounded_or_previous(
-            ai_response.get("observations"), summary.observations, user_blob, keep_grounded_prose
-        )
-        summary.next_steps = _grounded_or_previous(
-            ai_response.get("next_steps"), summary.next_steps, user_blob, keep_grounded_prose
-        )
+        summary.detailed = ai_response.get("detailed", summary.detailed)
+        summary.observations = ai_response.get("observations", summary.observations)
+        summary.next_steps = ai_response.get("next_steps", summary.next_steps)
 
     except json.JSONDecodeError:
         # If AI doesn't return JSON, treat as plain text notes update
