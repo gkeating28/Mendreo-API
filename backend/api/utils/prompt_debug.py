@@ -153,6 +153,62 @@ _SPECS = (
         "name": "HIDDEN_OPENER_STEP_ONE",
         "text_fn": "hidden_opener_catalogue_text",
     },
+    {
+        "label": "depth_hint",
+        "applies": (
+            "added to the next turn after a failed depth check, "
+            "exercises with depth_check on"
+        ),
+        "module": "api.utils.turn_hint",
+        "name": "DEPTH_HINT",
+    },
+    {
+        "label": "risk_fallback_resources",
+        "applies": "used when the admin's resources links are blank",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_RESOURCES",
+        "text_fn": "default_resources_catalogue_text",
+    },
+    {
+        "label": "check_in_summary_fallback",
+        "applies": (
+            "stored as the check-in summary when check_in_summary_prompt "
+            "is blank or the model returns nothing or fails"
+        ),
+        "module": "api.exercise.pre_exercise",
+        "name": "CHECK_IN_SUMMARY_FALLBACK",
+    },
+    {
+        "label": "default_success_title",
+        "applies": "default success title for a step when success_title is blank",
+        "module": "api.utils.SessionStateMachine",
+        "name": "DEFAULT_SUCCESS_TITLE",
+    },
+    {
+        "label": "qa_skip_step",
+        "applies": "replies sent when a test message is qa skip step",
+        "module": "api.agent.models",
+        "name": "STEP_AUTO_SKIPPED_REPLY",
+        "text_fn": "qa_skip_step_catalogue_text",
+    },
+    {
+        "label": "user_fact_rule",
+        "applies": (
+            "added to the observation prompt; client and exercise summary "
+            "prompts append the same sentences"
+        ),
+        "module": "api.utils.user_grounding",
+        "name": "USER_FACT_RULE",
+    },
+    {
+        "label": "case_material_filter",
+        "applies": (
+            "blocks these from being indexed as Unified Protocol reference"
+        ),
+        "module": "api.grounding.case_material",
+        "name": "case_material_reason",
+        "text_fn": "case_material_catalogue_text",
+    },
 )
 
 

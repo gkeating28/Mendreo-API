@@ -17,6 +17,8 @@ from . import Constants
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SUCCESS_TITLE = "Well Done!"
+
 
 def enabled() -> bool:
     return True
@@ -494,7 +496,7 @@ def _confirm(
     value = (extracted or {}).get("value")
     confidence = (extracted or {}).get("confidence")
     label = step.completion_label if step else None
-    title = (step.success_title if step else None) or "Well Done!"
+    title = (step.success_title if step else None) or DEFAULT_SUCCESS_TITLE
 
     if session_step:
         session_step.completed = True

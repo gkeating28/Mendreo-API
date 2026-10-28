@@ -8,7 +8,12 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 from rest_framework import status
 
-from ...exercise.pre_exercise import CHECK_IN_RULES
+from ...agent.models import qa_skip_step_catalogue_text
+from ...exercise.pre_exercise import CHECK_IN_RULES, CHECK_IN_SUMMARY_FALLBACK
+from ...grounding.case_material import case_material_catalogue_text
+from ...utils.SessionStateMachine import DEFAULT_SUCCESS_TITLE
+from ...utils.turn_hint import DEPTH_HINT
+from ...utils.user_grounding import USER_FACT_RULE
 from ...message.models import TurnPrompt
 from ...session.models import Session
 from ...utils import Constants
@@ -206,6 +211,19 @@ class PromptDebugUnitTests(SimpleTestCase):
             rows["onboarding_followup_chip_no"]["text"],
             Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO,
         )
+        self.assertEqual(rows["depth_hint"]["text"], DEPTH_HINT)
+        self.assertIn("failed depth check", rows["depth_hint"]["applies"])
+        self.assertEqual(
+            rows["risk_fallback_resources"]["text"],
+            Constants.default_resources_catalogue_text(),
+        )
+        self.assertIn("resources links are blank", rows["risk_fallback_resources"]["applies"])
+        self.assertEqual(rows["check_in_summary_fallback"]["text"], CHECK_IN_SUMMARY_FALLBACK)
+        self.assertEqual(rows["default_success_title"]["text"], DEFAULT_SUCCESS_TITLE)
+        self.assertEqual(rows["qa_skip_step"]["text"], qa_skip_step_catalogue_text())
+        self.assertEqual(rows["user_fact_rule"]["text"], USER_FACT_RULE)
+        self.assertEqual(rows["case_material_filter"]["text"], case_material_catalogue_text())
+        self.assertNotIn("Amira", rows["case_material_filter"]["text"])
         self.assertEqual(rows["run_summary_prompt"]["text"], DEFAULT_RUN_SUMMARY_PROMPT)
         self.assertEqual(
             rows["run_summary_prompt"]["applies"],
@@ -637,6 +655,18 @@ class PromptDebugApiTests(BaseTest):
             rows["onboarding_followup_chip_no"]["text"],
             Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO,
         )
+        self.assertEqual(rows["depth_hint"]["text"], DEPTH_HINT)
+        self.assertIn("failed depth check", rows["depth_hint"]["applies"])
+        self.assertEqual(
+            rows["risk_fallback_resources"]["text"],
+            Constants.default_resources_catalogue_text(),
+        )
+        self.assertEqual(rows["check_in_summary_fallback"]["text"], CHECK_IN_SUMMARY_FALLBACK)
+        self.assertEqual(rows["default_success_title"]["text"], DEFAULT_SUCCESS_TITLE)
+        self.assertEqual(rows["qa_skip_step"]["text"], qa_skip_step_catalogue_text())
+        self.assertIn("Step Skipped", rows["qa_skip_step"]["text"])
+        self.assertEqual(rows["user_fact_rule"]["text"], USER_FACT_RULE)
+        self.assertEqual(rows["case_material_filter"]["text"], case_material_catalogue_text())
         self.assertNotIn("restructuring_rewrite", rows)
         self.assertNotIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)

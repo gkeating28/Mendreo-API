@@ -299,6 +299,13 @@ DEFAULT_RESOURCES = {
     ],
 }
 
+
+def default_resources_catalogue_text() -> str:
+    """Live fallback card. Built from DEFAULT_RESOURCES."""
+    import json
+
+    return json.dumps(DEFAULT_RESOURCES, indent=2)
+
 EVAL_CASE_KIND_TRIAGE = "triage"
 EVAL_CASE_KIND_EXERCISE = "exercise"
 EVAL_CASE_KIND_RISK = "risk"

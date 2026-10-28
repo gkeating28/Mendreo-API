@@ -12,16 +12,31 @@ _REPORTED = re.compile(
 )
 _VIGNETTE_NAMES = re.compile(r"\b(?:Amira|Kevin|Marco|Rachel)\b")
 
+REASON_SESSION_DIALOGUE = "session dialogue"
+REASON_CASE_VIGNETTE = "case vignette"
+REASON_NAMED_PATIENT = "named patient story"
+
+
+def case_material_catalogue_text() -> str:
+    """What indexing refuses. The patterns stay in this module."""
+    return "\n".join(
+        (
+            REASON_SESSION_DIALOGUE,
+            REASON_CASE_VIGNETTE,
+            REASON_NAMED_PATIENT,
+        )
+    )
+
 
 def case_material_reason(heading_path: str, text: str) -> str | None:
     """Why this chunk is case material, or None when it may be indexed."""
     blob = f"{heading_path or ''}\n{text or ''}"
     if _DIALOGUE.search(blob):
-        return "session dialogue"
+        return REASON_SESSION_DIALOGUE
     if _CASE.search(blob):
-        return "case vignette"
+        return REASON_CASE_VIGNETTE
     if _AGE.search(blob) or _REPORTED.search(blob) or _VIGNETTE_NAMES.search(blob):
-        return "named patient story"
+        return REASON_NAMED_PATIENT
     return None
 
 
