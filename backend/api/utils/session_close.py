@@ -52,13 +52,6 @@ def close_session(session, reason: str):
     return session
 
 
-def _grounded_field(candidate, previous, user_blob, keep) -> str:
-    grounded = keep(candidate, user_blob)
-    if grounded:
-        return grounded
-    return previous or ""
-
-
 def close_idle_sessions() -> int:
     from datetime import timedelta
 
@@ -196,23 +189,25 @@ def _update_exercise_summary(session) -> None:
         _Summary,
         temperature=0.2,
     )
-    from ..message.models import Message
-    from .user_grounding import keep_grounded_prose
+    from .Agent import _summary_field_or_keep
 
-    user_blob = "\n".join(
-        text
-        for text in Message.objects.filter(
-            session=session,
-            sender__consumer__isnull=False,
-        ).values_list("text", flat=True)
-        if text
+    summary.detailed = _summary_field_or_keep(
+        summary.detailed,
+        data.get("detailed") or summary.detailed,
+        consumer_id=summary.consumer_id,
+        field_name="detailed",
     )
-    summary.detailed = _grounded_field(data.get("detailed"), summary.detailed, user_blob, keep_grounded_prose)
-    summary.observations = _grounded_field(
-        data.get("observations"), summary.observations, user_blob, keep_grounded_prose
+    summary.observations = _summary_field_or_keep(
+        summary.observations,
+        data.get("observations") or summary.observations,
+        consumer_id=summary.consumer_id,
+        field_name="observations",
     )
-    summary.next_steps = _grounded_field(
-        data.get("next_steps"), summary.next_steps, user_blob, keep_grounded_prose
+    summary.next_steps = _summary_field_or_keep(
+        summary.next_steps,
+        data.get("next_steps") or summary.next_steps,
+        consumer_id=summary.consumer_id,
+        field_name="next_steps",
     )
     summary.save(update_fields=["detailed", "observations", "next_steps", "updated_at"])
 
