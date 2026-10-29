@@ -100,6 +100,97 @@ class CreateTest(TestCase):
         self.assertEqual(summary.observations, written["observations"])
         self.assertEqual(summary.next_steps, written["next_steps"])
 
+    def test_shrink_guard_keeps_a_long_field_when_the_reply_is_under_half(self):
+        stored = "a" * 400
+        returned = "b" * 100
+        self.consumer = Auth.create_consumer()
+        summary = self.consumer.summary
+        summary.detailed = stored
+        summary.observations = stored
+        summary.next_steps = stored
+        summary.save()
+
+        with self.assertLogs("api.utils.Agent", level="WARNING") as captured:
+            with patch(
+                "api.utils.Agent.AI.ask",
+                return_value={
+                    "detailed": returned,
+                    "observations": returned,
+                    "next_steps": returned,
+                },
+            ):
+                update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, stored)
+        self.assertEqual(summary.observations, stored)
+        self.assertEqual(summary.next_steps, stored)
+        logged = "\n".join(captured.output)
+        self.assertNotIn(stored, logged)
+        self.assertNotIn(returned, logged)
+        self.assertIn("field=detailed", logged)
+        self.assertIn("previous_len=400", logged)
+        self.assertIn("new_len=100", logged)
+
+    def test_shrink_guard_stores_a_normal_length_reply(self):
+        stored = "a" * 400
+        returned = "c" * 250
+        self.consumer = Auth.create_consumer()
+        summary = self.consumer.summary
+        summary.detailed = stored
+        summary.observations = stored
+        summary.next_steps = stored
+        summary.save()
+
+        with patch(
+            "api.utils.Agent.AI.ask",
+            return_value={
+                "detailed": returned,
+                "observations": returned,
+                "next_steps": returned,
+            },
+        ):
+            update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, returned)
+        self.assertEqual(summary.observations, returned)
+        self.assertEqual(summary.next_steps, returned)
+
+    def test_shrink_guard_replaces_a_short_stored_field(self):
+        stored = "d" * 50
+        returned = "e" * 10
+        self.consumer = Auth.create_consumer()
+        summary = self.consumer.summary
+        summary.detailed = stored
+        summary.save()
+
+        with patch("api.utils.Agent.AI.ask", return_value={"detailed": returned}):
+            update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, returned)
+
+    def test_shrink_guard_keeps_a_long_field_when_the_reply_is_empty(self):
+        stored = "f" * 400
+        self.consumer = Auth.create_consumer()
+        summary = self.consumer.summary
+        summary.detailed = stored
+        summary.observations = stored
+        summary.next_steps = stored
+        summary.save()
+
+        with patch(
+            "api.utils.Agent.AI.ask",
+            return_value={"detailed": "", "observations": "", "next_steps": ""},
+        ):
+            update_chat_summary(self.consumer.user_id)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, stored)
+        self.assertEqual(summary.observations, stored)
+        self.assertEqual(summary.next_steps, stored)
+
     def test_chat_log_file_created_with_expected_text(self):
         yesterday = DateUtils.yesterday().date()
         with freeze_time(yesterday):

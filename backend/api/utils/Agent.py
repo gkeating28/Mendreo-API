@@ -200,6 +200,29 @@ def coerce_completion_result(
     )
 
 
+_SUMMARY_SHRINK_MIN_LENGTH = 300
+_SUMMARY_SHRINK_MAX_RATIO = 0.5
+
+
+def _summary_field_or_keep(stored, returned, *, consumer_id, field_name):
+    """Keep a long stored field when the reply is under half its length."""
+    previous = (stored or "").strip()
+    new = (returned if returned is not None else "").strip()
+    if (
+        len(previous) >= _SUMMARY_SHRINK_MIN_LENGTH
+        and len(new) < _SUMMARY_SHRINK_MAX_RATIO * len(previous)
+    ):
+        logger.warning(
+            "Refused summary shrink consumer_id=%s field=%s previous_len=%s new_len=%s",
+            consumer_id,
+            field_name,
+            len(previous),
+            len(new),
+        )
+        return stored
+    return returned
+
+
 def update_summary(summary, date=None, freezer=None):
     """
     Updates the summary with yesterday's messages using AI,
@@ -277,9 +300,24 @@ def update_summary(summary, date=None, freezer=None):
         user_text_from_messages(session_data["messages"]) for session_data in sessions_data
     )
     try:
-        summary.detailed = ai_response.get("detailed", summary.detailed)
-        summary.observations = ai_response.get("observations", summary.observations)
-        summary.next_steps = ai_response.get("next_steps", summary.next_steps)
+        summary.detailed = _summary_field_or_keep(
+            summary.detailed,
+            ai_response.get("detailed", summary.detailed),
+            consumer_id=summary.consumer_id,
+            field_name="detailed",
+        )
+        summary.observations = _summary_field_or_keep(
+            summary.observations,
+            ai_response.get("observations", summary.observations),
+            consumer_id=summary.consumer_id,
+            field_name="observations",
+        )
+        summary.next_steps = _summary_field_or_keep(
+            summary.next_steps,
+            ai_response.get("next_steps", summary.next_steps),
+            consumer_id=summary.consumer_id,
+            field_name="next_steps",
+        )
 
     except json.JSONDecodeError:
         # If AI doesn't return JSON, treat as plain text notes update

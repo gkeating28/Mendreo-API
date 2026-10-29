@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 DEFAULT_UPDATE_SUMMARY_PROMPT = (
-    "You are a helpful assistant training in the Unified Protocol that keeps detailed notes and observations\n"
-    "about your client {name}.\n"
+    "You are a helpful assistant training in the Unified Protocol that keeps a continuous summary of your client {name}.\n"
     "\n"
-    "Your task is to update your existing summary and observations for {name} while factoring in the most\n"
-    "recent sessions you have had.\n"
+    "The summary covers {name} from their first session up to today. Each night you receive the previous overview, observations and next steps, plus the client's activity from the day. Update all three by incorporating the new information into them. Do not replace them. Keep everything already recorded that is still true, weigh each day against the whole history, and add what the day newly shows. Return each section in full.\n"
     "\n"
-    "Update the detailed notes and observations based on the new conversation.\n"
+    "If the day adds nothing new, return the previous text unchanged.\n"
     "\n"
-    "Observations are detailed notes on what exercises the user has completed, whether or not they enjoy doing the exercise\n"
-    "along with any insights into the state of mind / any other relevant clinical observations."
+    "Observations are notes on exercises completed, whether the client wanted to do them, their state of mind, and any other relevant clinical observations. Next steps must always be included. Keep existing ones, and drop one only when the day shows it is done or no longer needed."
 )
 
 DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT = (
