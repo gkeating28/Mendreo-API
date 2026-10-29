@@ -51,6 +51,7 @@ class SettingCreateSerializer(serializers.Serializer):
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
+    chat_debug_enabled = serializers.BooleanField(required=False)
     update_summary = serializers.CharField(required=False, allow_blank=True)
     update_exercise_summary = serializers.CharField(required=False, allow_blank=True)
     reply_length = serializers.CharField(required=False, allow_blank=True)
@@ -154,6 +155,11 @@ class SettingCreateSerializer(serializers.Serializer):
             capture.value = str(validated_data["store_turn_prompts"]).lower()
             capture.save()
 
+        if "chat_debug_enabled" in validated_data:
+            chat_debug = Setting.get_or_create_chat_debug_enabled()
+            chat_debug.value = str(validated_data["chat_debug_enabled"]).lower()
+            chat_debug.save()
+
         if "ai_retrieval_enabled" in validated_data:
             chat_retrieval = Setting.get_or_create_ai_retrieval_enabled()
             chat_retrieval.value = str(validated_data["ai_retrieval_enabled"]).lower()
@@ -248,6 +254,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
+            "chat_debug_enabled": Setting.get_chat_debug_enabled(),
             "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
             "update_summary": Setting.get_update_summary(),

@@ -34,6 +34,7 @@ class ListCreate(SmartAPIView):
                 "survey_enabled",
                 "observations_enabled",
                 Constants.SETTING_KEY_STORE_TURN_PROMPTS,
+                Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
             ):
@@ -89,6 +90,7 @@ class ListCreate(SmartAPIView):
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
+            "chat_debug_enabled": Setting.get_chat_debug_enabled(),
             "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
             "update_summary": Setting.get_update_summary(),

@@ -59,6 +59,7 @@ class Setting(SmartModel):
         Setting.get_or_create_ai_retrieval_enabled()
         Setting.get_or_create_ai_retrieval_exercise_enabled()
         Setting.get_or_create_store_turn_prompts()
+        Setting.get_or_create_chat_debug_enabled()
         Setting.get_or_create_retrieval_min_similarity()
         Setting.get_or_create_retrieval_max_chunks()
         Setting.get_or_create_retrieval_max_tokens()
@@ -391,6 +392,24 @@ class Setting(SmartModel):
         raw = Setting._cached_value(
             Constants.SETTING_KEY_STORE_TURN_PROMPTS,
             Setting.get_or_create_store_turn_prompts,
+        )
+        if str(raw).strip().lower() in {"1", "true", "yes"}:
+            return True
+        return Setting.get_chat_debug_enabled()
+
+    @staticmethod
+    def get_or_create_chat_debug_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_chat_debug_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
+            Setting.get_or_create_chat_debug_enabled,
         )
         return str(raw).strip().lower() in {"1", "true", "yes"}
 

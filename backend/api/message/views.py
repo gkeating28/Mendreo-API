@@ -121,6 +121,103 @@ class ListCreate(SmartPaginationAPIView):
         return self.post_response(request, instance, data)
 
 
+_DEBUG_SECTIONS = (
+    "THERAPEUTIC_INSTRUCTIONS",
+    "PROGRAMMING_INSTRUCTIONS",
+    "EXERCISES",
+    "GOALS",
+    "TRIAGE",
+    "SESSION_CONTEXT",
+    "KNOWLEDGE",
+    "ONBOARDING_FOLLOW_UP",
+    "CLIENT_SUMMARY",
+    "DATE",
+    "PENDING_QUESTION",
+)
+_DEBUG_USER_SECTIONS = ("RETRIEVED", "TURN_HINT")
+
+
+def _tags_present(text, tags):
+    body = text or ""
+    return [tag for tag in tags if f"<{tag}>" in body]
+
+
+def _is_assistant_message(message) -> bool:
+    sender = message.sender
+    return bool(getattr(sender, "agent_id", None)) and not getattr(sender, "consumer_id", None)
+
+
+def _retrieved_sources(message):
+    from ..grounding.models import KnowledgeSource
+
+    source_ids = []
+    for item in message.retrieval or []:
+        if not isinstance(item, dict):
+            continue
+        source_id = item.get("source_id")
+        if not source_id or source_id in source_ids:
+            continue
+        source_ids.append(source_id)
+    titles = dict(
+        KnowledgeSource.objects.filter(id__in=source_ids).values_list("id", "title")
+    )
+    return [
+        {"id": source_id, "title": titles.get(source_id, source_id)}
+        for source_id in source_ids
+    ]
+
+
+class MessageDebug(SmartAPIView):
+    """Test-only read of the prompt stored for one assistant reply."""
+
+    permission_classes = [IsAdminPermission | IsConsumerPermission]
+
+    def get(self, request, id):
+        from ..setting.models import Setting
+
+        if not Setting.get_chat_debug_enabled():
+            return self.not_found()
+
+        message = (
+            Message.objects.filter(id=id)
+            .select_related("sender", "session")
+            .first()
+        )
+        if message is None or not _is_assistant_message(message):
+            return self.not_found()
+        if self.is_consumer_request():
+            consumer = self.get_consumer_from_request()
+            if message.session.consumer_id != consumer.user_id:
+                return self.not_found()
+
+        from .models import TurnPrompt
+
+        prompt = TurnPrompt.objects.filter(message=message).first()
+        if prompt is None:
+            return self.not_found(
+                "No stored prompt for this message. Replies are only stored while chat debug is on."
+            )
+
+        meta = message.session.cached_prompt_meta or {}
+        history = prompt.history or []
+        return Response(
+            {
+                "message_id": message.id,
+                "model_name": prompt.model_name,
+                "retrieval_enabled": bool(meta.get("retrieval_enabled")),
+                "sections": _tags_present(prompt.system_prompt, _DEBUG_SECTIONS),
+                "user_prompt_sections": {
+                    tag: f"<{tag}>" in (prompt.user_prompt or "")
+                    for tag in _DEBUG_USER_SECTIONS
+                },
+                "retrieved_sources": _retrieved_sources(message),
+                "history_turns": len(history) if isinstance(history, list) else 0,
+                "system_prompt": prompt.system_prompt,
+                "user_prompt": prompt.user_prompt,
+            }
+        )
+
+
 class MessagePrompt(SmartAPIView):
     """Admin read of the prompt stored for one assistant message."""
 
