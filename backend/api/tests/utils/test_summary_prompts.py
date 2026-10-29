@@ -19,8 +19,8 @@ class SummaryPromptTests(SimpleTestCase):
             "old observations",
             "old steps",
         )
-        self.assertIn("about your client Michael.", prompt)
-        self.assertIn("observations for Michael", prompt)
+        self.assertIn("continuous summary of your client Michael.", prompt)
+        self.assertIn("The summary covers Michael from their first session up to today.", prompt)
         self.assertNotIn("{name}", prompt)
         self.assertIn("<NEW_SESSIONS>\n<Session>today</Session>\n</NEW_SESSIONS>", prompt)
         self.assertIn("<PREVIOUS_SUMMARY>\nold notes\n</PREVIOUS_SUMMARY>", prompt)
