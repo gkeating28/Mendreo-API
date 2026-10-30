@@ -115,10 +115,10 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertIn("or 'It sounds like'", programming["text"])
         self.assertEqual(programming["text"].count("Never thank the user for sharing"), 1)
         self.assertEqual(programming["text"].count("Never open with 'Thanks for sharing'"), 1)
-        self.assertNotIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
-        self.assertNotIn("0 to 10 scale", rows["step_scope_rules"]["text"])
-        self.assertNotIn("balanced or more accurate thought", rows["step_scope_rules"]["text"])
-        self.assertNotIn("brainstorm solutions", rows["step_scope_rules"]["text"])
+        self.assertIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
+        self.assertIn("0 to 10 scale", rows["step_scope_rules"]["text"])
+        self.assertIn("balanced or more accurate thought", rows["step_scope_rules"]["text"])
+        self.assertIn("brainstorm solutions", rows["step_scope_rules"]["text"])
         self.assertIn(
             "Your first message must be the first question in those instructions.",
             rows["step_scope_rules"]["text"],
@@ -687,7 +687,7 @@ class PromptDebugApiTests(BaseTest):
         self.assertNotIn("virtual AI Therapist", rows["programming_instructions"]["text"])
         self.assertNotIn("<FEEDBACK>", rows["programming_instructions"]["text"])
         self.assertNotIn("<ASSETS>", rows["programming_instructions"]["text"])
-        self.assertNotIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
+        self.assertIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
         self.assertIn(
             "Your first message must be the first question in those instructions.",
             rows["step_scope_rules"]["text"],
