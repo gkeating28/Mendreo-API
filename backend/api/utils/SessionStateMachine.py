@@ -172,6 +172,7 @@ def on_model_turn(session, agent_message, response) -> None:
     model_asks = bool(getattr(response, "asks_readiness", False))
     goal_met = model_goal
     asks = model_asks
+    inferred_asks = model_asks
     accepted_goal = goal_met
     session._step_check_result = None
     session._step_goal_hint_written = None
@@ -181,8 +182,12 @@ def on_model_turn(session, agent_message, response) -> None:
             session.save(update_fields=["state", "updated_at"])
 
         session_step = _live_step(session)
+        text = (getattr(agent_message, "text", None) or "").strip()
+        if model_goal and not asks and _ends_with_readiness_question(text):
+            asks = True
+            inferred_asks = True
         # A question is still waiting for the user's answer, so the goal is not met yet.
-        if (getattr(agent_message, "text", None) or "").strip().endswith("?") and not asks:
+        if text.endswith("?") and not asks:
             goal_met = False
 
         accepted_goal = goal_met
@@ -201,6 +206,7 @@ def on_model_turn(session, agent_message, response) -> None:
             agent_message,
             model_goal=model_goal,
             model_asks=model_asks,
+            inferred_asks=inferred_asks,
             accepted_goal=accepted_goal,
             accepted_asks=asks,
         )
@@ -571,6 +577,7 @@ def _confirm(
         meta = dict(session.cached_prompt_meta or {})
         meta.pop("goal_hint", None)
         meta.pop("depth_hint_step_id", None)
+        meta.pop("done_when_rejections", None)
         session.cached_prompt_meta = meta
         session.save(
             update_fields=[
@@ -618,31 +625,91 @@ def _accept_goal(session, session_step, agent_message) -> bool:
     return True
 
 
+_INFERRED_READINESS = re.compile(
+    r"(?:"
+    r"ready to conclude"
+    r"|ready to finish"
+    r"|ready to wrap up"
+    r"|ready to put"
+    r"|ready to summari[sz]e"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _closing_sentence(text: str) -> str:
+    raw = (text or "").strip()
+    parts = re.split(r"(?<=[.!])\s+", raw)
+    return parts[-1] if parts else ""
+
+
+def _ends_with_readiness_question(text: str) -> bool:
+    """True when the reply's last sentence is a readiness question."""
+    closing = _closing_sentence(text)
+    if not closing.endswith("?"):
+        return False
+    from .StepProgress import is_advance_gate_text
+
+    if is_advance_gate_text(closing):
+        return True
+    return bool(_INFERRED_READINESS.search(closing))
+
+
+def _done_when_rejection_count(session) -> int:
+    record = (session.cached_prompt_meta or {}).get("done_when_rejections")
+    if not isinstance(record, dict):
+        return 0
+    try:
+        return int(record.get(str(session.current_step_no or 1)) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _note_done_when_rejection(session) -> None:
+    meta = dict(session.cached_prompt_meta or {})
+    record = dict(meta.get("done_when_rejections") or {})
+    step_no = str(session.current_step_no or 1)
+    try:
+        count = int(record.get(step_no) or 0)
+    except (TypeError, ValueError):
+        count = 0
+    record[step_no] = count + 1
+    meta["done_when_rejections"] = record
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
 def _done_when_passed(session, session_step, agent_message) -> bool:
     from .extraction import check_done_when
 
-    try:
-        result = check_done_when(session, session_step.step)
-    except Exception:
-        logger.exception(
-            "done_when check failed for session=%s step=%s",
-            getattr(session, "id", None),
-            getattr(session_step, "id", None),
-        )
-        result = {"met": True}
+    if _done_when_rejection_count(session) >= 2:
+        result = {"met": True, "missing": "", "forced": True}
+    else:
+        try:
+            result = check_done_when(session, session_step.step)
+        except Exception:
+            logger.exception(
+                "done_when check failed for session=%s step=%s",
+                getattr(session, "id", None),
+                getattr(session_step, "id", None),
+            )
+            result = {"met": True}
     _remember_check_result(session, result)
     done_when = getattr(session_step.step, "done_when", None) or ""
     from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
 
     if (result is None or result.get("met")) and summary_confirmation_required(done_when):
         if not summary_was_confirmed(session, session_step.step):
-            _downgrade_readiness(agent_message)
-            _store_summary_hint(session)
-            return False
+            if not result.get("forced"):
+                _downgrade_readiness(agent_message)
+                _store_summary_hint(session)
+                _note_done_when_rejection(session)
+                return False
     if result is None or result.get("met"):
         return True
     _downgrade_readiness(agent_message)
     _store_goal_hint(session, result.get("missing") or "")
+    _note_done_when_rejection(session)
     return False
 
 
@@ -675,10 +742,13 @@ def _remember_check_result(session, result) -> None:
     if not isinstance(result, dict):
         session._step_check_result = None
         return
-    session._step_check_result = {
+    recorded = {
         "met": bool(result.get("met")),
         "missing": result.get("missing") or "",
     }
+    if result.get("forced"):
+        recorded["forced"] = True
+    session._step_check_result = recorded
 
 
 def _record_step_decision(
@@ -687,6 +757,7 @@ def _record_step_decision(
     *,
     model_goal: bool,
     model_asks: bool,
+    inferred_asks: bool,
     accepted_goal: bool,
     accepted_asks: bool,
 ) -> None:
@@ -701,6 +772,7 @@ def _record_step_decision(
             "step_goal_met": model_goal,
             "asks_readiness": model_asks,
         },
+        "inferred_asks_readiness": inferred_asks,
         "accepted": {
             "step_goal_met": accepted_goal,
             "asks_readiness": accepted_asks,

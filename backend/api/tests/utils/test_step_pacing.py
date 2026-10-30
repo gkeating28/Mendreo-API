@@ -496,6 +496,211 @@ class GoalGateTests(BaseTest):
             reasoning="test",
         )
 
+    def _plain_two_steps(self):
+        session = self._session()
+        exercise = session.exercise
+        exercise.steps_no = 2
+        exercise.save(update_fields=["steps_no", "updated_at"])
+        next_step = Step.objects.create(
+            exercise=exercise,
+            title="Next",
+            description="Next",
+            instructions="Ask for a plan.",
+            order=1,
+        )
+        SessionStep.objects.create(
+            session=session,
+            step=next_step,
+            order=1,
+            completed=False,
+        )
+        session.total_steps_no = 2
+        session.save(update_fields=["total_steps_no", "updated_at"])
+        return session
+
+    def _claimed_without_flag(self, session, text):
+        message = self._ask(session, text)
+        message.question_kind = Constants.QUESTION_KIND_NONE
+        message.suggested_responses = []
+        message.save(update_fields=["question_kind", "suggested_responses", "updated_at"])
+        response = ExerciseStateResponse(
+            text=text,
+            reasoning="test",
+            suggested_responses=[],
+            step_goal_met=True,
+            asks_readiness=False,
+            question_kind=Constants.QUESTION_KIND_NONE,
+        )
+        return message, response
+
+    def test_readiness_wording_without_the_flag_runs_the_check(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to wrap up?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        session.refresh_from_db()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertEqual(decision["model"]["asks_readiness"], False)
+        self.assertTrue(decision["inferred_asks_readiness"])
+        self.assertEqual(decision["accepted"]["asks_readiness"], True)
+        self.assertEqual(decision["check_done_when"], {"met": True, "missing": ""})
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+
+    def test_inferred_readiness_stores_a_hint_when_the_check_fails(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to continue?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        session.refresh_from_db()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertTrue(decision["inferred_asks_readiness"])
+        self.assertFalse(decision["accepted"]["asks_readiness"])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+
+    def test_third_done_when_check_is_forced_after_two_rejections(self):
+        session = self._plain_two_steps()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in ("Are you ready to continue?", "Are you ready to wrap up?"):
+                message, response = self._claimed_without_flag(session, text)
+                on_model_turn(session, message, response)
+            session.refresh_from_db()
+            self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 2})
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+            third, third_response = self._claimed_without_flag(
+                session, "Are you ready to conclude?"
+            )
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        session.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(
+            third.usage["step_decision"]["check_done_when"],
+            {"met": True, "missing": "", "forced": True},
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            third.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+
+    def test_a_first_pass_does_not_force_or_count_a_rejection(self):
+        session = self._session()
+        message, response = self._reply(session)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        session.refresh_from_db()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertEqual(decision["check_done_when"], {"met": True, "missing": ""})
+        self.assertTrue(decision["model"]["asks_readiness"])
+        self.assertTrue(decision["inferred_asks_readiness"])
+        self.assertNotIn("forced", decision["check_done_when"])
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+
+    def test_done_when_rejection_count_clears_when_the_step_advances(self):
+        session = self._plain_two_steps()
+        session.cached_prompt_meta = {"done_when_rejections": {"1": 2}, "goal_hint": "old"}
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to continue?"
+        )
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, message, response)
+        checker.assert_not_called()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session, sender=user, text=Constants.CHIP_READY_YES
+        )
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = consume_chip(user_message, True)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+
+    def test_a_plain_question_does_not_infer_readiness(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(session, "What is the worry?")
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, message, response)
+        checker.assert_not_called()
+        session.refresh_from_db()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertFalse(decision["model"]["asks_readiness"])
+        self.assertFalse(decision["inferred_asks_readiness"])
+        self.assertIsNone(decision["check_done_when"])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+
+    def test_ready_to_put_this_strategy_into_practice_is_inferred(self):
+        session = self._plain_two_steps()
+        text = (
+            "To wrap up, your strategy is to rely on the facts of your solid "
+            "performance and to review your tasks before bed. Are you ready to "
+            "put this strategy into practice?"
+        )
+        message, response = self._claimed_without_flag(session, text)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertFalse(decision["model"]["asks_readiness"])
+        self.assertTrue(decision["inferred_asks_readiness"])
+
+    def test_ready_to_explore_is_not_inferred(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to explore whether this is serving you?"
+        )
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, message, response)
+        checker.assert_not_called()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertFalse(decision["model"]["asks_readiness"])
+        self.assertFalse(decision["inferred_asks_readiness"])
+
     def test_yes_after_ready_to_continue_completes_the_step(self):
         session = self._two_steps()
         self._ask(
