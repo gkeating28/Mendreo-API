@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import traceback
 from datetime import timedelta
@@ -338,6 +339,29 @@ def _grounded_or_previous(candidate, previous, user_blob, keep) -> str:
     return previous or ""
 
 
+# A non-last step must not be closed as if the exercise were over.
+# "for today" / "for now" count only inside a readiness question.
+_OFFERS_TO_END = re.compile(
+    r"\bready to finish\b"
+    r"|\bready to wrap up\b"
+    r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
+    r"|\bwrapping up\b"
+    r"|\bfinish (?:this|the|our) (?:exercise|session)\b"
+    r"|\bconclude (?:this|the|our)\b"
+    r"|\bfinal (?:part|stage) of (?:this|the|our) exercise\b"
+    r"|[^.!?\n]*\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+    r"[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*\?"
+    r"|[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*"
+    r"\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+    r"[^.!?\n]*\?",
+    re.IGNORECASE,
+)
+
+
+def _reply_offers_to_end_the_exercise(text: str | None) -> bool:
+    return bool(_OFFERS_TO_END.search(text or ""))
+
+
 def _hold_on_step(response_data) -> None:
     """Replace an off-script reply so the user is not offered another technique."""
     from .turn_hint import ON_STEP_FALLBACK
@@ -491,26 +515,36 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                     getattr(consumer_message, "id", None),
                 )
         instructions = _current_step_instructions(session)
-        if instructions is not None and reply_leaves_the_step(
-            getattr(response_data, "text", None), instructions
-        ):
-            from .turn_hint import STAY_ON_STEP_HINT
+        reply_text = getattr(response_data, "text", None)
+        left = instructions is not None and reply_leaves_the_step(reply_text, instructions)
+        from .SessionStateMachine import _is_last_step
+
+        ending = (
+            instructions is not None
+            and not _is_last_step(session)
+            and _reply_offers_to_end_the_exercise(reply_text)
+        )
+        if left or ending:
+            from .turn_hint import NOT_THE_LAST_STEP_HINT, STAY_ON_STEP_HINT
 
             logger.warning(
                 "reply left the live step for session=%s message=%s; retrying once",
                 getattr(session, "id", None),
                 getattr(consumer_message, "id", None),
             )
-            steer[0] = STAY_ON_STEP_HINT
+            steer[0] = NOT_THE_LAST_STEP_HINT if ending else STAY_ON_STEP_HINT
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
                 on_step_retried = True
                 debug_result = retry
                 retry_data = retry.output
-                if not reply_leaves_the_step(
-                    getattr(retry_data, "text", None), instructions
-                ):
+                retry_text = getattr(retry_data, "text", None)
+                if ending:
+                    result = retry
+                    response_data = retry_data
+                    stayed = True
+                elif not reply_leaves_the_step(retry_text, instructions):
                     result = retry
                     response_data = retry_data
                     stayed = True

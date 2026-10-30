@@ -1,10 +1,27 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 
+from ...message.models import Message
+from ...participant.models import Participant
+from ...session.models import Session, SessionStep
+from ...step.models import Step
+from ...utils import Constants
+from ...utils.Agent import (
+    ExerciseStateResponse,
+    _OFFERS_TO_END,
+    _reply_offers_to_end_the_exercise,
+    get_response,
+)
 from ...utils.reply_style import (
     normalise_reply,
     reply_ends_mid_sentence,
     reply_leaves_the_step,
 )
+from ...utils.turn_hint import NOT_THE_LAST_STEP_HINT, ON_STEP_FALLBACK
+from ..utils.BaseTest import BaseTest
+from ..utils.manager import General
 
 
 class ReplyStyleTests(SimpleTestCase):
@@ -218,3 +235,165 @@ class ReplyStyleTests(SimpleTestCase):
             normalise_reply("You said it sounds like a lot. What is one part of it?"),
             "You said it sounds like a lot. What is one part of it?",
         )
+
+
+class OffersToEndTests(SimpleTestCase):
+    def test_finish_phrasing_matches_and_the_next_step_does_not(self):
+        for text in (
+            "Are you ready to finish?",
+            "Are you ready to finish this exercise?",
+            "Are you ready to wrap up?",
+            "Let's wrap up this exercise.",
+            "Let's wrap up the session.",
+            "We're wrapping up.",
+            "We can finish our session here.",
+            "Shall we conclude this part?",
+            "This is the final part of this exercise.",
+            "This is the final stage of our exercise.",
+            "Shall we stop for today?",
+            "Are you ready to pause for now?",
+            "For today, shall we leave it there?",
+        ):
+            self.assertTrue(_reply_offers_to_end_the_exercise(text), text)
+        self.assertFalse(
+            _reply_offers_to_end_the_exercise("Are you ready for the next step?")
+        )
+        self.assertFalse(
+            _reply_offers_to_end_the_exercise("I will think about this for today.")
+        )
+        self.assertFalse(
+            _reply_offers_to_end_the_exercise("What is the plan for today?")
+        )
+        self.assertEqual(
+            _OFFERS_TO_END.pattern,
+            (
+                r"\bready to finish\b"
+                r"|\bready to wrap up\b"
+                r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
+                r"|\bwrapping up\b"
+                r"|\bfinish (?:this|the|our) (?:exercise|session)\b"
+                r"|\bconclude (?:this|the|our)\b"
+                r"|\bfinal (?:part|stage) of (?:this|the|our) exercise\b"
+                r"|[^.!?\n]*\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+                r"[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*\?"
+                r"|[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*"
+                r"\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+                r"[^.!?\n]*\?"
+            ),
+        )
+
+
+class FinishEarlyRetryTests(BaseTest):
+    def endpoint(self):
+        return "sessions"
+
+    def _session(self, current):
+        exercise = General.create_exercise()
+        exercise.steps.all().delete()
+        exercise.steps_no = 5
+        exercise.save(update_fields=["steps_no", "updated_at"])
+        for order in range(5):
+            Step.objects.create(
+                exercise=exercise,
+                title=f"Step {order + 1}",
+                description="Describe it",
+                instructions="Ask what the worry is.",
+                completion_label="Named",
+                done_when="The user has named the worry.",
+                order=order,
+            )
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            current_step_no=current,
+            total_steps_no=5,
+            state=Constants.SESSION_STATE_STEP_ACTIVE,
+        )
+        SessionStep.create(session, exercise)
+        Participant.create_participants(session)
+        return session
+
+    def _ask(self, session, replies):
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        calls = []
+
+        class _FakeAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def tool(self, func=None, **kwargs):
+                if func is None:
+                    return lambda fn: fn
+                return func
+
+            def run_sync(self, user_prompt="", **kwargs):
+                calls.append(user_prompt)
+                text = replies[min(len(calls) - 1, len(replies) - 1)]
+                output = ExerciseStateResponse(
+                    text=text,
+                    reasoning="test",
+                    suggested_responses=[],
+                )
+                return SimpleNamespace(
+                    output=output,
+                    usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+                )
+
+        with (
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", _FakeAgent),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+        return calls, response
+
+    def test_a_non_last_finish_question_retries_once_with_the_new_hint(self):
+        session = self._session(2)
+        calls, response = self._ask(
+            session,
+            [
+                "Are you ready to finish this exercise?",
+                "Are you ready for the next step?",
+            ],
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn(NOT_THE_LAST_STEP_HINT, calls[0])
+        self.assertIn(NOT_THE_LAST_STEP_HINT, calls[1])
+        self.assertEqual(response.text, "Are you ready for the next step?")
+
+    def test_the_last_step_keeps_a_finish_question(self):
+        session = self._session(5)
+        calls, response = self._ask(
+            session,
+            ["Are you ready to finish this exercise?"],
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn(NOT_THE_LAST_STEP_HINT, calls[0])
+        self.assertEqual(response.text, "Are you ready to finish this exercise?")
+
+    def test_a_next_step_question_does_not_retry(self):
+        session = self._session(2)
+        calls, response = self._ask(
+            session,
+            ["Are you ready for the next step?"],
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(response.text, "Are you ready for the next step?")
+
+    def test_a_second_finish_question_is_sent_as_it_is(self):
+        session = self._session(2)
+        calls, response = self._ask(
+            session,
+            [
+                "Are you ready to finish this exercise?",
+                "Are you ready to finish this exercise?",
+                "Are you ready for the next step?",
+            ],
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.text, "Are you ready to finish this exercise?")
+        self.assertNotIn(ON_STEP_FALLBACK, response.text)

@@ -28,6 +28,11 @@ STAY_ON_STEP_HINT = (
     "If they have already confirmed the summary, ask whether they are ready for the next step. "
     "Do not start another technique."
 )
+NOT_THE_LAST_STEP_HINT = (
+    "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
+    "If this step's work is done, ask only whether they are ready for the next step. "
+    "Otherwise ask this step's next question."
+)
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
