@@ -622,13 +622,20 @@ class GoalGateTests(BaseTest):
         with patch(
             "api.utils.extraction.check_done_when",
             return_value={"met": False, "missing": "the location"},
-        ):
+        ) as checker:
             on_model_turn(session, message, response)
+        checker.assert_called_once()
         session.refresh_from_db()
         message.refresh_from_db()
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-        self.assertEqual(message.suggested_responses, [])
-        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+        self.assertEqual(
+            message.usage["step_decision"]["check_done_when"],
+            {"met": False, "missing": "the location"},
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
 
     def test_two_user_replies_show_the_chip_when_done_when_fails(self):
         session = self._plain_two_steps()
