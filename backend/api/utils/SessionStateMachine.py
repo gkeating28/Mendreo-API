@@ -568,11 +568,16 @@ def _confirm(
     else:
         session.state = Constants.SESSION_STATE_STEP_ACTIVE
         session.current_step_no = step_no + 1
+        meta = dict(session.cached_prompt_meta or {})
+        meta.pop("goal_hint", None)
+        meta.pop("depth_hint_step_id", None)
+        session.cached_prompt_meta = meta
         session.save(
             update_fields=[
                 "state",
                 "current_step_no",
                 "cached_prompt",
+                "cached_prompt_meta",
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",

@@ -12,6 +12,7 @@ from ...utils.Agent import ExerciseStateResponse
 from ...utils.SessionStateMachine import (
     confirm_readiness_reply,
     confirm_summary_if_done,
+    consume_chip,
     is_model_ready_chip,
     on_model_turn,
     prepare_model_readiness,
@@ -523,6 +524,102 @@ class GoalGateTests(BaseTest):
         self.assertEqual(step.completion_result, "not good enough before a presentation")
         self.assertEqual(session.current_step_no, 2)
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def _greeting_prompt(self, prompts):
+        def greeting(session, synthetic_text=None):
+            sender = Participant.objects.filter(
+                session=session, consumer__isnull=False
+            ).first()
+            synthetic = Message(
+                session=session, sender=sender, text=synthetic_text or ""
+            )
+            prompts.append(user_prompt_with_hint(session, synthetic))
+            return None
+
+        return greeting
+
+    def test_typed_yes_drops_the_previous_steps_goal_hint(self):
+        session = self._two_steps()
+        hint = "Ask one question that would supply what is still missing: the location"
+        session.cached_prompt_meta = {
+            "goal_hint": hint,
+            "depth_hint_step_id": "ssnstp_old",
+        }
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        self._ask(session, "Are you ready to continue?")
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="yes")
+        prompts = []
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch(
+                "api.utils.AIWorkerClient.request_session_greeting",
+                side_effect=self._greeting_prompt(prompts),
+            ),
+        ):
+            outcome = confirm_readiness_reply(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+        self.assertNotIn("depth_hint_step_id", session.cached_prompt_meta or {})
+        self.assertEqual(len(prompts), 1)
+        self.assertNotIn("<TURN_HINT>", prompts[0])
+        self.assertNotIn("the location", prompts[0])
+
+    def test_goal_hint_is_still_consumed_inside_the_same_step(self):
+        session = self._session()
+        hint = "Ask one question that would supply what is still missing: the situation"
+        session.cached_prompt_meta = {"goal_hint": hint}
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(session=session, sender=user, text="ok")
+        prompted = user_prompt_with_hint(session, user_message)
+        self.assertIn("<TURN_HINT>", prompted)
+        self.assertIn("the situation", prompted)
+        session.refresh_from_db()
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+        self.assertEqual(session.current_step_no, 1)
+
+    def test_ready_chip_drops_the_previous_steps_goal_hint(self):
+        session = self._two_steps()
+        hint = "Ask one question that would supply what is still missing: the plan"
+        session.cached_prompt_meta = {"goal_hint": hint}
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text="Are you ready to continue?",
+            suggested_responses=[Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+            suggested_responses_kind=Constants.SUGGESTED_RESPONSES_KIND_READY,
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session, sender=user, text=Constants.CHIP_READY_YES
+        )
+        prompts = []
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch(
+                "api.utils.AIWorkerClient.request_session_greeting",
+                side_effect=self._greeting_prompt(prompts),
+            ),
+        ):
+            outcome = consume_chip(user_message, True)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+        self.assertEqual(len(prompts), 1)
+        self.assertNotIn("<TURN_HINT>", prompts[0])
+        self.assertNotIn("the plan", prompts[0])
 
     def test_yes_completes_when_the_completion_prompt_fails(self):
         session = self._two_steps()
