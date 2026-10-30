@@ -141,6 +141,82 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
 
+    def test_step_decision_records_met_rejected_and_no_readiness(self):
+        session = self._session()
+        met_message, met_response = self._reply(session)
+        met_message.usage = {"input_tokens": 5, "output_tokens": 2}
+        met_message.save(update_fields=["usage", "updated_at"])
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, met_message, met_response)
+        met_message.refresh_from_db()
+        met = met_message.usage["step_decision"]
+        self.assertEqual(met_message.usage["input_tokens"], 5)
+        self.assertEqual(met_message.usage["output_tokens"], 2)
+        self.assertEqual(met["step_no"], 1)
+        self.assertEqual(met["model"], {"step_goal_met": True, "asks_readiness": True})
+        self.assertEqual(met["accepted"], {"step_goal_met": True, "asks_readiness": True})
+        self.assertEqual(met["check_done_when"], {"met": True, "missing": ""})
+        self.assertIsNone(met["goal_hint"])
+
+        session = self._session()
+        rejected, rejected_response = self._reply(session)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the situation"},
+        ):
+            on_model_turn(session, rejected, rejected_response)
+        rejected.refresh_from_db()
+        gap = rejected.usage["step_decision"]
+        self.assertEqual(gap["model"], {"step_goal_met": True, "asks_readiness": True})
+        self.assertEqual(gap["accepted"], {"step_goal_met": False, "asks_readiness": False})
+        self.assertEqual(gap["check_done_when"], {"met": False, "missing": "the situation"})
+        self.assertIn("the situation", gap["goal_hint"])
+
+        session = self._session()
+        quiet, quiet_response = self._reply(session, goal=False, asks=False)
+        quiet.text = "Noted."
+        quiet.save(update_fields=["text", "updated_at"])
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, quiet, quiet_response)
+        checker.assert_not_called()
+        quiet.refresh_from_db()
+        none = quiet.usage["step_decision"]
+        self.assertEqual(
+            none["model"], {"step_goal_met": False, "asks_readiness": False}
+        )
+        self.assertEqual(
+            none["accepted"], {"step_goal_met": False, "asks_readiness": False}
+        )
+        self.assertIsNone(none["check_done_when"])
+        self.assertIsNone(none["goal_hint"])
+
+    def test_token_totals_ignore_step_decision(self):
+        from ...utils.Agent import update_session
+
+        session = self._session()
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        message = Message.objects.create(
+            session=session,
+            sender=agent,
+            text="Noted.",
+            usage={
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "step_decision": {"step_no": 1},
+            },
+        )
+        with patch("api.utils.Agent.AI.ask", return_value={}):
+            update_session("prompt", session)
+        session.refresh_from_db()
+        message.refresh_from_db()
+        self.assertNotIn("step_decision", session.usage)
+        self.assertIsInstance(session.usage["input_tokens"], int)
+        self.assertEqual(message.usage["input_tokens"], 5)
+        self.assertEqual(message.usage["step_decision"]["step_no"], 1)
+
     def test_passed_goal_with_readiness_waits_for_the_chip(self):
         session = self._session()
         message, response = self._reply(session)

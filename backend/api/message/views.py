@@ -167,6 +167,12 @@ def _retrieved_sources(message):
     ]
 
 
+def _step_decision(message):
+    usage = message.usage if isinstance(message.usage, dict) else {}
+    decision = usage.get("step_decision")
+    return decision if isinstance(decision, dict) else None
+
+
 class MessageDebug(SmartAPIView):
     """Test-only read of the prompt stored for one assistant reply."""
 
@@ -214,6 +220,7 @@ class MessageDebug(SmartAPIView):
                 "history_turns": len(history) if isinstance(history, list) else 0,
                 "system_prompt": prompt.system_prompt,
                 "user_prompt": prompt.user_prompt,
+                "step_decision": _step_decision(message),
             }
         )
 

@@ -321,3 +321,32 @@ class ChatDebugTests(TestCase):
         response = self._get(f"/messages/{message.id}/debug", access_token=self.token)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn("chat debug", response.json["message"].lower())
+
+    def test_step_decision_is_returned_and_null_when_absent(self):
+        self._debug(True)
+        message, _source = self._assistant()
+        message.usage = {"input_tokens": 4, "output_tokens": 1}
+        message.save(update_fields=["usage", "updated_at"])
+        missing = self._get(f"/messages/{message.id}/debug", access_token=self.token)
+        self.assertEqual(missing.status_code, status.HTTP_200_OK, missing.json)
+        self.assertIsNone(missing.json["step_decision"])
+
+        message.usage = {
+            "input_tokens": 4,
+            "output_tokens": 1,
+            "step_decision": {
+                "step_no": 1,
+                "model": {"step_goal_met": True, "asks_readiness": True},
+                "accepted": {"step_goal_met": False, "asks_readiness": False},
+                "check_done_when": {"met": False, "missing": "the situation"},
+                "goal_hint": "Ask one question.",
+            },
+        }
+        message.save(update_fields=["usage", "updated_at"])
+        found = self._get(f"/messages/{message.id}/debug", access_token=self.token)
+        self.assertEqual(found.status_code, status.HTTP_200_OK, found.json)
+        self.assertEqual(found.json["step_decision"]["step_no"], 1)
+        self.assertEqual(found.json["step_decision"]["check_done_when"]["missing"], "the situation")
+        message.refresh_from_db()
+        self.assertEqual(message.usage["input_tokens"], 4)
+        self.assertEqual(message.usage["output_tokens"], 1)

@@ -165,26 +165,45 @@ def on_model_turn(session, agent_message, response) -> None:
     """Apply asks_readiness / step_goal_met after the agent message is saved."""
     if session.in_pre_exercise_phase():
         return
-
-    if session.state == Constants.SESSION_STATE_CHECK_IN:
-        session.state = Constants.SESSION_STATE_STEP_ACTIVE
-        session.save(update_fields=["state", "updated_at"])
-
-    session_step = _live_step(session)
-    goal_met = bool(getattr(response, "step_goal_met", False))
-    asks = bool(getattr(response, "asks_readiness", False))
-    # A question is still waiting for the user's answer, so the goal is not met yet.
-    if (getattr(agent_message, "text", None) or "").strip().endswith("?") and not asks:
-        goal_met = False
-
-    if session_step and goal_met and session_step.goal_met_at is None:
-        if not _accept_goal(session, session_step, agent_message):
-            asks = False
-
-    if not asks or session_step is None or session_step.goal_met_at is None:
+    if not getattr(session, "exercise_id", None):
         return
 
-    _enter_awaiting_ready(session, agent_message, session_step)
+    model_goal = bool(getattr(response, "step_goal_met", False))
+    model_asks = bool(getattr(response, "asks_readiness", False))
+    goal_met = model_goal
+    asks = model_asks
+    accepted_goal = goal_met
+    session._step_check_result = None
+    session._step_goal_hint_written = None
+    try:
+        if session.state == Constants.SESSION_STATE_CHECK_IN:
+            session.state = Constants.SESSION_STATE_STEP_ACTIVE
+            session.save(update_fields=["state", "updated_at"])
+
+        session_step = _live_step(session)
+        # A question is still waiting for the user's answer, so the goal is not met yet.
+        if (getattr(agent_message, "text", None) or "").strip().endswith("?") and not asks:
+            goal_met = False
+
+        accepted_goal = goal_met
+        if session_step and goal_met and session_step.goal_met_at is None:
+            if not _accept_goal(session, session_step, agent_message):
+                asks = False
+                accepted_goal = False
+
+        if not asks or session_step is None or session_step.goal_met_at is None:
+            return
+
+        _enter_awaiting_ready(session, agent_message, session_step)
+    finally:
+        _record_step_decision(
+            session,
+            agent_message,
+            model_goal=model_goal,
+            model_asks=model_asks,
+            accepted_goal=accepted_goal,
+            accepted_asks=asks,
+        )
 
 
 def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | None:
@@ -606,6 +625,7 @@ def _done_when_passed(session, session_step, agent_message) -> bool:
             getattr(session_step, "id", None),
         )
         result = {"met": True}
+    _remember_check_result(session, result)
     done_when = getattr(session_step.step, "done_when", None) or ""
     from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
 
@@ -627,6 +647,7 @@ def _store_summary_hint(session) -> None:
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
     meta["goal_hint"] = SUMMARY_CONFIRM_HINT
+    session._step_goal_hint_written = SUMMARY_CONFIRM_HINT
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
@@ -637,9 +658,53 @@ def _store_goal_hint(session, missing: str) -> None:
     session._debug_goal_missing = missing or ""
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
-    meta["goal_hint"] = goal_hint_text(missing)
+    hint = goal_hint_text(missing)
+    session._step_goal_hint_written = hint
+    meta["goal_hint"] = hint
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
+def _remember_check_result(session, result) -> None:
+    """Keep the verdict this turn already computed. Does not call the checker again."""
+    if not isinstance(result, dict):
+        session._step_check_result = None
+        return
+    session._step_check_result = {
+        "met": bool(result.get("met")),
+        "missing": result.get("missing") or "",
+    }
+
+
+def _record_step_decision(
+    session,
+    agent_message,
+    *,
+    model_goal: bool,
+    model_asks: bool,
+    accepted_goal: bool,
+    accepted_asks: bool,
+) -> None:
+    """Store this reply's step outcome on Message.usage. Other usage keys stay put."""
+    if agent_message is None or not getattr(agent_message, "pk", None):
+        return
+    usage = agent_message.usage if isinstance(agent_message.usage, dict) else {}
+    usage = dict(usage)
+    usage["step_decision"] = {
+        "step_no": session.current_step_no,
+        "model": {
+            "step_goal_met": model_goal,
+            "asks_readiness": model_asks,
+        },
+        "accepted": {
+            "step_goal_met": accepted_goal,
+            "asks_readiness": accepted_asks,
+        },
+        "check_done_when": getattr(session, "_step_check_result", None),
+        "goal_hint": getattr(session, "_step_goal_hint_written", None),
+    }
+    agent_message.usage = usage
+    agent_message.save(update_fields=["usage", "updated_at"])
 
 
 def _downgrade_readiness(agent_message) -> None:
