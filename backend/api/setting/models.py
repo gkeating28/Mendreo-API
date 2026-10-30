@@ -59,12 +59,24 @@ class Setting(SmartModel):
         Setting.get_or_create_ai_retrieval_enabled()
         Setting.get_or_create_ai_retrieval_exercise_enabled()
         Setting.get_or_create_store_turn_prompts()
+        Setting.get_or_create_chat_debug_enabled()
         Setting.get_or_create_retrieval_min_similarity()
         Setting.get_or_create_retrieval_max_chunks()
         Setting.get_or_create_retrieval_max_tokens()
         Setting.get_or_create_retrieval_context_min_words()
         Setting.get_or_create_update_summary()
         Setting.get_or_create_update_exercise_summary()
+        Setting.get_or_create_reply_length_instruction()
+        Setting.get_or_create_one_question_instruction()
+        Setting.get_or_create_client_knowledge_rule()
+        Setting.get_or_create_onboarding_followup_permission_ask()
+        Setting.get_or_create_onboarding_followup_decline()
+        Setting.get_or_create_onboarding_followup_reask()
+        Setting.get_or_create_onboarding_followup_chip_yes()
+        Setting.get_or_create_onboarding_followup_chip_no()
+        Setting.get_or_create_run_summary_prompt()
+        Setting.get_or_create_run_summary_tone_guide()
+        Setting.get_or_create_run_summary_max_length()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -381,6 +393,24 @@ class Setting(SmartModel):
             Constants.SETTING_KEY_STORE_TURN_PROMPTS,
             Setting.get_or_create_store_turn_prompts,
         )
+        if str(raw).strip().lower() in {"1", "true", "yes"}:
+            return True
+        return Setting.get_chat_debug_enabled()
+
+    @staticmethod
+    def get_or_create_chat_debug_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_chat_debug_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
+            Setting.get_or_create_chat_debug_enabled,
+        )
         return str(raw).strip().lower() in {"1", "true", "yes"}
 
     @staticmethod
@@ -509,6 +539,205 @@ class Setting(SmartModel):
             Setting.get_or_create_update_exercise_summary,
         )
         return (raw or "").strip() or DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT
+
+    @staticmethod
+    def get_or_create_reply_length_instruction():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_REPLY_LENGTH,
+            defaults={"value": Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION},
+        )
+        return setting
+
+    @staticmethod
+    def get_reply_length_instruction() -> str:
+        """Stored reply-length line. Blank means the line is left out of the prompt."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_REPLY_LENGTH,
+            Setting.get_or_create_reply_length_instruction,
+        )
+        return (raw or "").strip()
+
+    @staticmethod
+    def get_or_create_one_question_instruction():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONE_QUESTION,
+            defaults={"value": Constants.DEFAULT_ONE_QUESTION_INSTRUCTION},
+        )
+        return setting
+
+    @staticmethod
+    def get_one_question_instruction() -> str:
+        """Stored one-question line. Blank means the line is left out of the prompt."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONE_QUESTION,
+            Setting.get_or_create_one_question_instruction,
+        )
+        return (raw or "").strip()
+
+    @staticmethod
+    def get_or_create_client_knowledge_rule():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_CLIENT_KNOWLEDGE_RULE,
+            defaults={"value": Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE},
+        )
+        return setting
+
+    @staticmethod
+    def get_client_knowledge_rule() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_CLIENT_KNOWLEDGE_RULE,
+            Setting.get_or_create_client_knowledge_rule,
+        )
+        return (raw or "").strip() or Constants.DEFAULT_CLIENT_KNOWLEDGE_RULE
+
+    @staticmethod
+    def get_or_create_onboarding_followup_permission_ask():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_permission_ask() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK,
+            Setting.get_or_create_onboarding_followup_permission_ask,
+        )
+        text = (raw or "").strip()
+        default = Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_ASK
+        if "{question}" not in text or "{answer}" not in text:
+            return default
+        try:
+            text.format(question="", answer="")
+        except (KeyError, IndexError, ValueError):
+            return default
+        return text
+
+    @staticmethod
+    def get_or_create_onboarding_followup_decline():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_decline() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE,
+            Setting.get_or_create_onboarding_followup_decline,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK
+
+    @staticmethod
+    def get_or_create_onboarding_followup_reask():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_REASK,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_reask() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_REASK,
+            Setting.get_or_create_onboarding_followup_reask,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK
+
+    @staticmethod
+    def get_or_create_onboarding_followup_chip_yes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_chip_yes() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES,
+            Setting.get_or_create_onboarding_followup_chip_yes,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_YES
+
+    @staticmethod
+    def get_or_create_onboarding_followup_chip_no():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO,
+            defaults={"value": Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO},
+        )
+        return setting
+
+    @staticmethod
+    def get_onboarding_followup_chip_no() -> str:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO,
+            Setting.get_or_create_onboarding_followup_chip_no,
+        )
+        return (raw or "").strip() or Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_NO
+
+    @staticmethod
+    def get_or_create_run_summary_prompt():
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_PROMPT
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_PROMPT,
+            defaults={"value": DEFAULT_RUN_SUMMARY_PROMPT},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_prompt() -> str:
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_PROMPT
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_PROMPT,
+            Setting.get_or_create_run_summary_prompt,
+        )
+        return (raw or "").strip() or DEFAULT_RUN_SUMMARY_PROMPT
+
+    @staticmethod
+    def get_or_create_run_summary_tone_guide():
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_TONE_GUIDE
+
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_TONE_GUIDE,
+            defaults={"value": DEFAULT_RUN_SUMMARY_TONE_GUIDE},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_tone_guide() -> str:
+        from ..utils.summary_prompts import DEFAULT_RUN_SUMMARY_TONE_GUIDE
+
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_TONE_GUIDE,
+            Setting.get_or_create_run_summary_tone_guide,
+        )
+        if raw is None:
+            return DEFAULT_RUN_SUMMARY_TONE_GUIDE
+        return str(raw).strip()
+
+    @staticmethod
+    def get_or_create_run_summary_max_length():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+            defaults={"value": str(Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH)},
+        )
+        return setting
+
+    @staticmethod
+    def get_run_summary_max_length() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+            Setting.get_or_create_run_summary_max_length,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH
 
     @staticmethod
     def _cached_value(key: str, loader):

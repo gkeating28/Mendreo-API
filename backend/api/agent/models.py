@@ -12,6 +12,22 @@ from ..participant.models import Participant
 from ..utils.Models import SmartModel
 from ..utils.Fields import CharIDField
 
+CHECK_IN_SKIP_REPLY = "Cannot skip during pre-exercise check-in"
+STEP_AUTO_SKIPPED_REPLY = "Step Auto Skipped"
+
+
+def qa_skip_step_catalogue_text() -> str:
+    """The three fixed replies a qa skip step message can produce."""
+    from ..utils.Agent import SKIP_COMPLETION_RESULT
+
+    return "\n".join(
+        (
+            STEP_AUTO_SKIPPED_REPLY,
+            SKIP_COMPLETION_RESULT,
+            CHECK_IN_SKIP_REPLY,
+        )
+    )
+
 
 class Agent(SmartModel):
     """
@@ -79,7 +95,7 @@ class Agent(SmartModel):
             if session.in_pre_exercise_phase():
                 response = AgentUtils.ExerciseResponse(
                     is_step_complete=False,
-                    text="Cannot skip during pre-exercise check-in",
+                    text=CHECK_IN_SKIP_REPLY,
                     step_no=0,
                     completion_result=None,
                     reasoning="Skip step ignored during pre-exercise check-in",
@@ -88,7 +104,7 @@ class Agent(SmartModel):
             else:
                 response = AgentUtils.ExerciseResponse(
                     is_step_complete=True,
-                    text="Step Auto Skipped",
+                    text=STEP_AUTO_SKIPPED_REPLY,
                     step_no=session.current_step_no,
                     completion_result=AgentUtils.SKIP_COMPLETION_RESULT,
                     reasoning="Skip step triggered",

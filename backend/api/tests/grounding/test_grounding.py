@@ -16,7 +16,11 @@ from ...grounding.embeddings import clear_embedder, set_embedder
 from ...grounding.indexing import index_source
 from ...grounding.models import KnowledgeChunk, KnowledgeSource
 from ...grounding.posts import sync_post_source
-from ...grounding.retrieval import augment_user_prompt, stamp_retrieval_enabled
+from ...grounding.retrieval import (
+    asks_about_user,
+    augment_user_prompt,
+    stamp_retrieval_enabled,
+)
 from ...grounding.search import search_chunks
 from ...image.models import Image
 from ...message.models import Message
@@ -348,7 +352,8 @@ class GroundingTests(TestCase):
         prompt = _prepare_prompt(session)
         self.assertIn("UNIQUE_NOTE_ALPHA", prompt)
         self.assertNotIn("do not name the source document", prompt)
-        self.assertIn("only as background", prompt)
+        self.assertNotIn("only as background", prompt)
+        self.assertNotIn("Do not apply cognitive restructuring", prompt)
         self.assertNotIn("Do not add one from memory", prompt)
 
         self._setting(Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED, "true")
@@ -369,8 +374,19 @@ class GroundingTests(TestCase):
         enabled = _prepare_prompt(stamped)
         self.assertIn("UNIQUE_NOTE_ALPHA", enabled)
         self.assertIn("do not name the source document", enabled)
-        self.assertIn("Do not add one from memory", enabled)
-        self.assertIn("do not take one from the <RETRIEVED> block", enabled)
+        self.assertNotIn("Do not add one from memory", enabled)
+        self.assertNotIn("do not take one from the <RETRIEVED> block", enabled)
+        self.assertNotIn("must already be named", enabled)
+        self.assertIn("Use it only to explain how or why the approach", enabled)
+        self.assertIn("Ignore it when it is not relevant", enabled)
+        self.assertIn(
+            "It never describes the user: never "
+            "present anything in it as something the user said, felt or experienced, or as "
+            "part of your history with them.",
+            enabled,
+        )
+        self.assertNotIn("never about the user", general_prompt)
+        self.assertNotIn("never about the user", prompt)
         self.assertNotIn("evidence-based strategies", enabled)
         self.assertNotIn("only as background", enabled)
         self.assertIn("<REFERENCE>", enabled)
@@ -430,6 +446,25 @@ class GroundingTests(TestCase):
         self.assertFalse(enabled)
         self.assertFalse(session.cached_prompt_meta.get("retrieval_enabled"))
         self.assertTrue(any("stamp save failed" in line for line in logs.output))
+
+    def test_questions_about_the_user_skip_retrieval(self):
+        skipped = [
+            "what do you know about me",
+            "anything else you remember about me",
+            "do you remember me",
+            "what did I tell you",
+            "what have we talked about",
+        ]
+        for phrase in skipped:
+            self.assertTrue(asks_about_user(phrase), phrase)
+        kept = [
+            "what do you know about anxiety",
+            # main's RETRIEVAL_SKIP_PHRASES skips on the bare word "remember" (known over-skip, to discuss with Geoff)
+            "how does cognitive flexibility work",
+            "I keep worrying about work and I can't switch off",
+        ]
+        for phrase in kept:
+            self.assertFalse(asks_about_user(phrase), phrase)
 
     def test_short_query_is_prefixed_and_high_risk_skips_search(self):
         consumer = Auth.create_consumer()

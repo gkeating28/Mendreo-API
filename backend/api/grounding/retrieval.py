@@ -22,6 +22,16 @@ _CHIPS = {
     Constants.CHIP_NOT_YET,
     Constants.CHIP_FINISH,
 }
+# Turn hint only. Retrieval skip is asks_about_user, not this pattern.
+_ABOUT_THE_USER = re.compile(
+    r"(?:"
+    r"\b(?:know|remember)\b(?:\s+\w+){0,6}\s+about\s+me\b"
+    r"|\bremember\s+me\b"
+    r"|\bwhat\s+did\s+i\s+tell\s+you\b"
+    r"|\bwhat\s+have\s+we\s+talked\s+about\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def session_retrieval_enabled(session) -> bool:

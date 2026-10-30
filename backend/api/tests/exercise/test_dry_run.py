@@ -10,6 +10,7 @@ from ...message.models import Message
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils.Agent import _get_formatted_exercise_steps_text
+from ...utils.session_close import _update_exercise_summary
 
 
 class StepDryRunTests(BaseTest):
@@ -134,3 +135,79 @@ class StepDryRunTests(BaseTest):
             ExerciseSummary.all_objects.filter(consumer=consumer, exercise=exercise).count(),
             summaries_before,
         )
+
+
+class ExerciseSummaryCloseTests(BaseTest):
+    def endpoint(self):
+        return "exercises"
+
+    def _session(self, detailed, observations, next_steps):
+        exercise = General.create_exercise()
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            completed=True,
+        )
+        summary = ExerciseSummary.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            detailed=detailed,
+            observations=observations,
+            next_steps=next_steps,
+        )
+        return session, summary
+
+    def test_reply_is_saved_as_written(self):
+        session, summary = self._session(
+            "Stored notes.",
+            "Stored observations.",
+            "Stored next steps.",
+        )
+        written = {
+            "detailed": "The clinician noted a vignette the user never said.",
+            "observations": "A case example that was not in the user's messages.",
+            "next_steps": "Recommend an exercise the user did not mention.",
+        }
+        with mock.patch("api.utils.AI.AI.ask", return_value=written):
+            _update_exercise_summary(session)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, written["detailed"])
+        self.assertEqual(summary.observations, written["observations"])
+        self.assertEqual(summary.next_steps, written["next_steps"])
+
+    def test_long_stored_field_is_kept_when_the_reply_is_under_half(self):
+        stored = "a" * 400
+        returned = "b" * 100
+        session, summary = self._session(stored, stored, stored)
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={
+                "detailed": returned,
+                "observations": returned,
+                "next_steps": returned,
+            },
+        ):
+            _update_exercise_summary(session)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, stored)
+        self.assertEqual(summary.observations, stored)
+        self.assertEqual(summary.next_steps, stored)
+
+    def test_empty_reply_keeps_the_stored_field(self):
+        session, summary = self._session(
+            "Stored notes.",
+            "Stored observations.",
+            "Stored next steps.",
+        )
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={"detailed": "", "observations": "", "next_steps": ""},
+        ):
+            _update_exercise_summary(session)
+
+        summary.refresh_from_db()
+        self.assertEqual(summary.detailed, "Stored notes.")
+        self.assertEqual(summary.observations, "Stored observations.")
+        self.assertEqual(summary.next_steps, "Stored next steps.")

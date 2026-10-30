@@ -89,7 +89,7 @@ def _already_answered(consumer, question) -> bool:
     return bool(pending)
 
 
-PENDING_QUESTION_RULE = "Ask this when it fits the conversation. One question only."
+PENDING_QUESTION_RULE = "Ask this when it fits the conversation."
 
 
 def _block(question, session) -> str:

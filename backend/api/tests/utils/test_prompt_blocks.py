@@ -1,3 +1,5 @@
+import re
+
 from django.utils import timezone
 from freezegun import freeze_time
 
@@ -14,9 +16,10 @@ from ..utils.manager import Auth, General
 
 
 def _assert_in_order(test, prompt, markers):
+    """Order the rendered blocks, not a mention of the tag name in a sentence."""
     positions = []
     for marker in markers:
-        index = prompt.find(marker)
+        index = prompt.find(marker + "\n")
         test.assertGreaterEqual(index, 0, marker)
         positions.append(index)
     test.assertEqual(positions, sorted(positions))
@@ -167,7 +170,12 @@ class PromptBlockTests(TestCase):
 
         self.assertIn("cognitive restructuring as appropriate", general_a)
         self.assertNotIn("cognitive restructuring as appropriate", exercise_a)
-        self.assertIn("only as background", exercise_a)
+        self.assertNotIn("only as background", exercise_a)
+        self.assertNotIn("Do not apply cognitive restructuring", exercise_a)
+        self.assertEqual(
+            [line for line in exercise_a.splitlines() if re.fullmatch(r"\s*- ", line)],
+            [],
+        )
 
         for prompt in (general_a, exercise_a):
             self.assertIn("rested nights", prompt)

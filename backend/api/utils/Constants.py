@@ -233,12 +233,49 @@ SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
 SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
 SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED = "ai_retrieval_exercise_enabled"
 SETTING_KEY_STORE_TURN_PROMPTS = "store_turn_prompts"
+SETTING_KEY_CHAT_DEBUG_ENABLED = "chat_debug_enabled"
 SETTING_KEY_RETRIEVAL_MIN_SIMILARITY = "retrieval_min_similarity"
 SETTING_KEY_RETRIEVAL_MAX_CHUNKS = "retrieval_max_chunks"
 SETTING_KEY_RETRIEVAL_MAX_TOKENS = "retrieval_max_tokens"
 SETTING_KEY_RETRIEVAL_CONTEXT_MIN_WORDS = "retrieval_context_min_words"
 SETTING_KEY_UPDATE_SUMMARY = "update_summary"
 SETTING_KEY_UPDATE_EXERCISE_SUMMARY = "update_exercise_summary"
+SETTING_KEY_REPLY_LENGTH = "reply_length"
+SETTING_KEY_ONE_QUESTION = "one_question"
+
+# Seed text for the two style lines. A blank setting omits that line.
+DEFAULT_REPLY_LENGTH_INSTRUCTION = (
+    "- Keep your responses short and to the point, ideally these should be no more than 2 sentences"
+)
+DEFAULT_ONE_QUESTION_INSTRUCTION = (
+    "- Do not ask compound questions. Only ask one simple, single question at a time."
+)
+SETTING_KEY_CLIENT_KNOWLEDGE_RULE = "client_knowledge_rule"
+DEFAULT_CLIENT_KNOWLEDGE_RULE = (
+    "Use <CLIENT_SUMMARY> for notes on previous conversations with {user_name}. "
+    "Do not invent conversations that are not written there. "
+    "Use <KNOWLEDGE> for facts {user_name} has already recorded. "
+    "Use <SESSION_CONTEXT> for earlier sessions. "
+    "When {user_name} asks what you know about them, whether you know who they are, "
+    "or about past sessions, answer from <KNOWLEDGE>, <CLIENT_SUMMARY> and <SESSION_CONTEXT>. "
+    "If any of those blocks has real content, you already know {user_name}. "
+    "Do not say you have no information, that you have never spoken to them, "
+    "or that you have not been told. "
+    "If <CLIENT_SUMMARY> says no previous conversations exist and "
+    "<KNOWLEDGE> says no structured knowledge is recorded, this is a new client: "
+    "say you are just getting to know them and do not invent anything about them. "
+    "Only <KNOWLEDGE>, <CLIENT_SUMMARY>, and the user's own messages in this conversation "
+    "describe {user_name}. An assistant message is not a fact about them, including "
+    "earlier replies in this chat. When they ask what you know about them or what you "
+    "have talked about, answer only from those. If they hold little, say so plainly and "
+    "invite them to tell you more. Never guess or fill gaps about them. When <KNOWLEDGE> "
+    "lists a fact they asked about, answer from that value. Do not invent conversations "
+    "that are not written in <CLIENT_SUMMARY>."
+)
+SETTING_KEY_RUN_SUMMARY_PROMPT = "run_summary_prompt"
+SETTING_KEY_RUN_SUMMARY_TONE_GUIDE = "run_summary_tone_guide"
+SETTING_KEY_RUN_SUMMARY_MAX_LENGTH = "run_summary_max_length"
+DEFAULT_RUN_SUMMARY_MAX_LENGTH = 120
 
 RETRIEVAL_MIN_SIMILARITY_DEFAULT = 0.5
 RETRIEVAL_MAX_CHUNKS_DEFAULT = 4
@@ -262,6 +299,13 @@ DEFAULT_RESOURCES = {
         {"label": "Emergency services", "url": "https://www.112.ie/"},
     ],
 }
+
+
+def default_resources_catalogue_text() -> str:
+    """Live fallback card. Built from DEFAULT_RESOURCES."""
+    import json
+
+    return json.dumps(DEFAULT_RESOURCES, indent=2)
 
 EVAL_CASE_KIND_TRIAGE = "triage"
 EVAL_CASE_KIND_EXERCISE = "exercise"
@@ -351,31 +395,20 @@ PROMPT_THERAPEUTIC_INSTRUCTIONS = """
 """
 
 PROMPT_PROGRAMMING_INSTRUCTIONS = """
-        You are a virtual AI Therapist trained on the Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition), supporting your client through therapeutic conversations.
+        You are trained on the Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition), supporting your client through therapeutic conversations.
         The current date and local time are in the <DATE> block at the end of this prompt.
 
         Time-of-day greetings and sign-offs must match that clock. Never say goodnight, good evening, or other night/evening closings in the morning or afternoon. If you are wrapping up, do not use a time-of-day farewell.
         
         Your task is to respond to your client’s messages using the data provided in the <DATA> section.
         
-        - Only <KNOWLEDGE>, <CLIENT_SUMMARY>, and the user's own messages in this conversation describe {user_name}.
-          An assistant message is not a fact about them, including earlier replies in this chat.
-          When they ask what you know about them or what you have talked about, answer only from those.
-          If they hold little, say so plainly and invite them to tell you more. Never guess or fill gaps about them.
-          When <KNOWLEDGE> lists a fact they asked about, answer from that value.
-          Do not invent conversations that are not written in <CLIENT_SUMMARY>.
-        
-        - Use the <FEEDBACK> section to adjust tone, clinical direction, and communication style.
-        
-        - Access <ASSETS> to suggest relevant images or audio.
+        - {client_knowledge_rule}
         
         - Your client is {user_name}. You deal with no other clients.
         
         - {up_technique_rule}
         
         - Do not give diagnoses or emergency instructions.
-        
-        - Maintain a calm, warm, and professional tone.
 
         - Write in British English: recognised, behaviour, favour, colour.
           Do not use em dashes or en dashes. Use commas, full stops, or hyphens.
@@ -388,24 +421,16 @@ PROMPT_PROGRAMMING_INSTRUCTIONS = """
         - Do not role-play with the user / answer questions outside therapeutic sessions, if a user asks an irrelevant
           question respond politely and professionally that you can only help them with therapeutic matters.
         
-        - Maintain a calm, warm, and professional tone.
-        
-        - Keep your responses short and to the point, ideally these should be no more than 2 sentences
-        
         - When explaining a concept / exercise keep your initial response short and concise and offer a 'suggested_response' of
           where you can add further information.
         
         - Do not repeat the users queries to ask for clarification
 
-        - Do not ask compound questions. Only ask one simple, single question at a time.
-
         - Always refer to {user_name} by their name. Never refer to them as "the user" or "the client".
         
         - Avoid 'learned helplessness'. Do not tell the user it takes courage to do something or that sounds hard / terrible etc...
         
-        - Never thank the user for sharing, or for their reply. Never open with 'Thanks for sharing', 'Thank you for sharing', or 'Thank you for'.
-        
-        - Never open with 'Thanks for sharing' or 'It sounds like'. Be confident, concise and assertive.
+        - Never thank the user for sharing, or for their reply. Never open with 'Thanks for sharing', 'Thank you for sharing', 'Thank you for', or 'It sounds like'.
         
         - Instead of asking the user if something makes sense in your text, instead use the 'suggested_responses' to offer the
           user an option to say they don't understand.
@@ -430,15 +455,6 @@ UP_MEMORY_TECHNIQUE_RULE = (
     "          and cognitive restructuring as appropriate."
 )
 
-UP_SOURCE_ONLY_TECHNIQUE_RULE = (
-    "A technique, breathing practice, grounding sequence, or other step-by-step activity "
-    "must already be named in the current step's <INSTRUCTIONS> or <REFERENCE>. "
-    "Do not add one from memory, and do not take one from the <RETRIEVED> block. "
-    "Use <RETRIEVED> only to explain the activity those instructions already name. "
-    "If it describes a different exercise or activity, ignore it. "
-    "If the step instructions do not name a fitting activity, stay with what the user said and ask one question."
-)
-
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "        Some turns include a <RETRIEVED> block of general reference material "
     "from Mendreo's library. Use it only to explain how or why the approach "
@@ -446,8 +462,6 @@ RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "present anything in it as something the user said, felt or experienced, or as "
     "part of your history with them. Ignore it when it is not relevant. Do not quote "
     "more than a sentence, do not name the source document and do not use it to diagnose.\n"
-    "        "
-    + UP_SOURCE_ONLY_TECHNIQUE_RULE
 )
 
 RETRIEVAL_SKIP_PHRASES = (
@@ -650,6 +664,14 @@ KNOWLEDGE_RESPONSE_TYPES = [
 KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 
 # First-chat re-ask of vague initial free-text onboarding answers.
+SETTING_KEY_ONBOARDING_FOLLOWUP_PERMISSION_ASK = "onboarding_followup_permission_ask"
+SETTING_KEY_ONBOARDING_FOLLOWUP_DECLINE = "onboarding_followup_decline"
+SETTING_KEY_ONBOARDING_FOLLOWUP_REASK = "onboarding_followup_reask"
+SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_YES = "onboarding_followup_chip_yes"
+SETTING_KEY_ONBOARDING_FOLLOWUP_CHIP_NO = "onboarding_followup_chip_no"
+KNOWLEDGE_FOLLOWUP_PERMISSION_ASK = (
+    'You answered "{question}" with "{answer}". We can go into that now, or leave it.'
+)
 KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS = 2
 KNOWLEDGE_FOLLOWUP_DIRECT_REASK = "Tell me a bit more about that."
 KNOWLEDGE_FOLLOWUP_PERMISSION_YES = "Let's talk about it"

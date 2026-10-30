@@ -367,11 +367,13 @@ def _pending_entry(consumer):
 
 
 def _permission_ask_text(entry) -> str:
+    from ..setting.models import Setting
+
     question = (entry.followup_prompt or "").strip() or "that"
     answer = (entry.value or "").strip() or "that"
-    return (
-        f'You answered "{question}" with "{answer}". '
-        "We can go into that now, or leave it."
+    return Setting.get_onboarding_followup_permission_ask().format(
+        question=question,
+        answer=answer,
     )
 
 
@@ -428,9 +430,7 @@ def _followup_phase(consumer, entry) -> str:
     return "stay_on_opener"
 
 
-ONBOARDING_FOLLOWUP_RULES = """                - While this block is present: do not run a daily check-in,
-                  do not call get_exercise, do not offer an exercise.
-                - One question only. Two sentences max.
+ONBOARDING_FOLLOWUP_RULES = """                - One question only. Two sentences max.
 
                 PHASE stay_on_opener (first message is already a real topic):
                 - Reply only to what they just said.
@@ -439,7 +439,6 @@ ONBOARDING_FOLLOWUP_RULES = """                - While this block is present: do
 
                 PHASE permission (server may send this as a canned line):
                 - If you speak: one permission ask about PRIOR_ANSWER only.
-                - Do not also check in or triage.
 
                 PHASE followup (they agreed, or they started answering it):
                 - Attempt 1: weave a warm follow-up that invites more
@@ -464,7 +463,6 @@ def format_onboarding_followup_block(session) -> str:
     attempt = entry.followup_attempts or 0
     return f"""
         <ONBOARDING_FOLLOW_UP>
-            <!-- Outranks Daily Check-in and Triage until this block is gone. -->
             <FIELD>{label}</FIELD>
             <QUESTION>{question}</QUESTION>
             <PRIOR_ANSWER>{answer}</PRIOR_ANSWER>
@@ -488,28 +486,51 @@ def maybe_start_onboarding_followup(session):
     return None
 
 
+def _permission_chips() -> list[str]:
+    from ..setting.models import Setting
+
+    return [
+        Setting.get_onboarding_followup_chip_yes(),
+        Setting.get_onboarding_followup_chip_no(),
+    ]
+
+
 def _permission_reply_for(entry) -> FollowupReply:
     return FollowupReply(
         canned_text=_permission_ask_text(entry),
-        suggested_responses=list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        suggested_responses=_permission_chips(),
         reasoning="onboarding_followup_permission",
     )
 
 
 def _decline_ack() -> FollowupReply:
+    from ..setting.models import Setting
+
     return FollowupReply(
-        canned_text=Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK,
+        canned_text=Setting.get_onboarding_followup_decline(),
         suggested_responses=[],
         reasoning="onboarding_followup_declined",
     )
 
 
 def _is_grant_text(text: str) -> bool:
-    return _normalize_answer(text) in _GRANT_ALIASES
+    normalized = _normalize_answer(text)
+    if normalized in _GRANT_ALIASES:
+        return True
+    from ..setting.models import Setting
+
+    current = _normalize_chip(Setting.get_onboarding_followup_chip_yes())
+    return bool(current) and normalized == current
 
 
 def _is_decline_text(text: str) -> bool:
-    return _normalize_answer(text) in _DECLINE_ALIASES
+    normalized = _normalize_answer(text)
+    if normalized in _DECLINE_ALIASES:
+        return True
+    from ..setting.models import Setting
+
+    current = _normalize_chip(Setting.get_onboarding_followup_chip_no())
+    return bool(current) and normalized == current
 
 
 def _handle_first_user_message(session, consumer, user_text: str, pending) -> FollowupReply:
@@ -574,8 +595,10 @@ def _classify_followup_answer(session, user_message, pending) -> FollowupReply:
     if active.followup_attempts < Constants.KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS:
         _save_followup_state(active, followup_attempts=Constants.KNOWLEDGE_FOLLOWUP_MAX_ATTEMPTS)
         _invalidate_session_prompt(session)
+        from ..setting.models import Setting
+
         return FollowupReply(
-            canned_text=Constants.KNOWLEDGE_FOLLOWUP_DIRECT_REASK,
+            canned_text=Setting.get_onboarding_followup_reask(),
             suggested_responses=[],
             reasoning="onboarding_followup_direct_reask",
         )

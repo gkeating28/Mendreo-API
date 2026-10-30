@@ -17,6 +17,8 @@ from . import Constants
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SUCCESS_TITLE = "Well Done!"
+
 
 def enabled() -> bool:
     return True
@@ -163,26 +165,56 @@ def on_model_turn(session, agent_message, response) -> None:
     """Apply asks_readiness / step_goal_met after the agent message is saved."""
     if session.in_pre_exercise_phase():
         return
-
-    if session.state == Constants.SESSION_STATE_CHECK_IN:
-        session.state = Constants.SESSION_STATE_STEP_ACTIVE
-        session.save(update_fields=["state", "updated_at"])
-
-    session_step = _live_step(session)
-    goal_met = bool(getattr(response, "step_goal_met", False))
-    asks = bool(getattr(response, "asks_readiness", False))
-    # A question is still waiting for the user's answer, so the goal is not met yet.
-    if (getattr(agent_message, "text", None) or "").strip().endswith("?") and not asks:
-        goal_met = False
-
-    if session_step and goal_met and session_step.goal_met_at is None:
-        if not _accept_goal(session, session_step, agent_message):
-            asks = False
-
-    if not asks or session_step is None or session_step.goal_met_at is None:
+    if not getattr(session, "exercise_id", None):
         return
 
-    _enter_awaiting_ready(session, agent_message, session_step)
+    model_goal = bool(getattr(response, "step_goal_met", False))
+    model_asks = bool(getattr(response, "asks_readiness", False))
+    goal_met = model_goal
+    asks = model_asks
+    inferred_asks = model_asks
+    accepted_goal = goal_met
+    session._step_check_result = None
+    session._step_goal_hint_written = None
+    try:
+        if session.state == Constants.SESSION_STATE_CHECK_IN:
+            session.state = Constants.SESSION_STATE_STEP_ACTIVE
+            session.save(update_fields=["state", "updated_at"])
+
+        session_step = _live_step(session)
+        text = (getattr(agent_message, "text", None) or "").strip()
+        if model_goal and not asks and _ends_with_readiness_question(text):
+            asks = True
+            inferred_asks = True
+        # A question is still waiting for the user's answer, so the goal is not met yet.
+        if text.endswith("?") and not asks:
+            goal_met = False
+
+        accepted_goal = goal_met
+        advisory = (
+            model_goal
+            and _ends_with_readiness_question(text)
+            and not _is_last_step(session)
+        )
+        if session_step and goal_met and session_step.goal_met_at is None:
+            if not _accept_goal(session, session_step, agent_message, advisory=advisory):
+                asks = False
+                accepted_goal = False
+
+        if not asks or session_step is None or session_step.goal_met_at is None:
+            return
+
+        _enter_awaiting_ready(session, agent_message, session_step)
+    finally:
+        _record_step_decision(
+            session,
+            agent_message,
+            model_goal=model_goal,
+            model_asks=model_asks,
+            inferred_asks=inferred_asks,
+            accepted_goal=accepted_goal,
+            accepted_asks=asks,
+        )
 
 
 def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | None:
@@ -251,9 +283,14 @@ def is_ready_affirmation(text: str) -> bool:
 
 
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
-    """An affirmation that meets done_when completes the step. The chat model does not run."""
+    """An affirmation that meets done_when completes a step that is not the last.
+
+    The last step returns here so the chat model can ask whether they are ready to finish.
+    """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
+        return None
+    if _is_last_step(session):
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
@@ -355,22 +392,31 @@ HIDDEN_OPENER_GREET_REPEAT = (
     "Hi, I'd like to practise this exercise again. "
     "Please start with the pre-exercise check-in before we begin Step 1."
 )
-HIDDEN_OPENER_GREET_FIRST = (
-    "Hi, I'd like to practise this exercise. "
-    "Can you greet me and explain the exercise please?"
-)
+# No instruction. The step 1 text in the system prompt is what the model follows.
+HIDDEN_OPENER_START = "start"
 
 
 def hidden_opener_catalogue_text() -> str:
     """Every hidden opener the runner can send. Built from the constants above."""
     return "\n\n".join(
         (
-            HIDDEN_OPENER_STEP_ONE,
-            HIDDEN_OPENER_LATER,
-            HIDDEN_OPENER_GREET_REPEAT,
-            HIDDEN_OPENER_GREET_FIRST,
+            "No-check-in step-1 open:\n" + HIDDEN_OPENER_START,
+            "After a check-in, step 1:\n" + HIDDEN_OPENER_STEP_ONE,
+            "Later step:\n" + HIDDEN_OPENER_LATER,
+            "Check-in:\n" + HIDDEN_OPENER_GREET_REPEAT,
         )
     )
+
+
+def greeting_text(session, synthetic_text=None) -> str:
+    """Hidden user turn for a session greeting. Not shown in the chat."""
+    if synthetic_text:
+        return synthetic_text
+    if session.in_pre_exercise_phase():
+        return HIDDEN_OPENER_GREET_REPEAT
+    if (session.current_step_no or 1) <= 1:
+        return HIDDEN_OPENER_START
+    return opening_turn(session.current_step_no)
 
 
 def opening_turn(step_no: int) -> str:
@@ -485,7 +531,7 @@ def _confirm(
     value = (extracted or {}).get("value")
     confidence = (extracted or {}).get("confidence")
     label = step.completion_label if step else None
-    title = (step.success_title if step else None) or "Well Done!"
+    title = (step.success_title if step else None) or DEFAULT_SUCCESS_TITLE
 
     if session_step:
         session_step.completed = True
@@ -538,11 +584,17 @@ def _confirm(
     else:
         session.state = Constants.SESSION_STATE_STEP_ACTIVE
         session.current_step_no = step_no + 1
+        meta = dict(session.cached_prompt_meta or {})
+        meta.pop("goal_hint", None)
+        meta.pop("depth_hint_step_id", None)
+        meta.pop("done_when_rejections", None)
+        session.cached_prompt_meta = meta
         session.save(
             update_fields=[
                 "state",
                 "current_step_no",
                 "cached_prompt",
+                "cached_prompt_meta",
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",
@@ -571,9 +623,9 @@ def _confirm(
     return ChipOutcome(display, build_session_state(session, completion_card=card))
 
 
-def _accept_goal(session, session_step, agent_message) -> bool:
+def _accept_goal(session, session_step, agent_message, *, advisory: bool = False) -> bool:
     """Stamp goal_met_at only after done_when, and depth when it is due, both pass."""
-    if not _done_when_passed(session, session_step, agent_message):
+    if not _done_when_passed(session, session_step, agent_message, advisory=advisory):
         return False
     if _depth_check_due(session, session_step) and not _depth_check_passed(session, session_step):
         _downgrade_readiness(agent_message)
@@ -583,30 +635,91 @@ def _accept_goal(session, session_step, agent_message) -> bool:
     return True
 
 
-def _done_when_passed(session, session_step, agent_message) -> bool:
+_INFERRED_READINESS = re.compile(
+    r"(?:"
+    r"ready to conclude"
+    r"|ready to finish"
+    r"|ready to wrap up"
+    r"|ready to put"
+    r"|ready to summari[sz]e"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _closing_sentence(text: str) -> str:
+    raw = (text or "").strip()
+    parts = re.split(r"(?<=[.!])\s+", raw)
+    return parts[-1] if parts else ""
+
+
+def _ends_with_readiness_question(text: str) -> bool:
+    """True when the reply's last sentence is a readiness question."""
+    closing = _closing_sentence(text)
+    if not closing.endswith("?"):
+        return False
+    from .StepProgress import is_advance_gate_text
+
+    if is_advance_gate_text(closing):
+        return True
+    return bool(_INFERRED_READINESS.search(closing))
+
+
+def _done_when_rejection_count(session) -> int:
+    record = (session.cached_prompt_meta or {}).get("done_when_rejections")
+    if not isinstance(record, dict):
+        return 0
+    try:
+        return int(record.get(str(session.current_step_no or 1)) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _note_done_when_rejection(session) -> None:
+    meta = dict(session.cached_prompt_meta or {})
+    record = dict(meta.get("done_when_rejections") or {})
+    step_no = str(session.current_step_no or 1)
+    try:
+        count = int(record.get(step_no) or 0)
+    except (TypeError, ValueError):
+        count = 0
+    record[step_no] = count + 1
+    meta["done_when_rejections"] = record
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
+def _done_when_passed(session, session_step, agent_message, *, advisory: bool = False) -> bool:
     from .extraction import check_done_when
 
-    try:
-        result = check_done_when(session, session_step.step)
-    except Exception:
-        logger.exception(
-            "done_when check failed for session=%s step=%s",
-            getattr(session, "id", None),
-            getattr(session_step, "id", None),
-        )
-        result = {"met": True}
+    if not advisory and _done_when_rejection_count(session) >= 2:
+        result = {"met": True, "missing": "", "forced": True}
+    else:
+        try:
+            result = check_done_when(session, session_step.step)
+        except Exception:
+            logger.exception(
+                "done_when check failed for session=%s step=%s",
+                getattr(session, "id", None),
+                getattr(session_step, "id", None),
+            )
+            result = {"met": True}
+    _remember_check_result(session, result)
     done_when = getattr(session_step.step, "done_when", None) or ""
     from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
 
     if (result is None or result.get("met")) and summary_confirmation_required(done_when):
         if not summary_was_confirmed(session, session_step.step):
-            _downgrade_readiness(agent_message)
-            _store_summary_hint(session)
-            return False
-    if result is None or result.get("met"):
+            if not result.get("forced"):
+                _downgrade_readiness(agent_message)
+                _store_summary_hint(session)
+                _note_done_when_rejection(session)
+                return False
+    if result is None or result.get("met") or advisory:
         return True
     _downgrade_readiness(agent_message)
     _store_goal_hint(session, result.get("missing") or "")
+    _note_done_when_rejection(session)
     return False
 
 
@@ -616,6 +729,7 @@ def _store_summary_hint(session) -> None:
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
     meta["goal_hint"] = SUMMARY_CONFIRM_HINT
+    session._step_goal_hint_written = SUMMARY_CONFIRM_HINT
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
@@ -626,9 +740,58 @@ def _store_goal_hint(session, missing: str) -> None:
     session._debug_goal_missing = missing or ""
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
-    meta["goal_hint"] = goal_hint_text(missing)
+    hint = goal_hint_text(missing)
+    session._step_goal_hint_written = hint
+    meta["goal_hint"] = hint
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
+def _remember_check_result(session, result) -> None:
+    """Keep the verdict this turn already computed. Does not call the checker again."""
+    if not isinstance(result, dict):
+        session._step_check_result = None
+        return
+    recorded = {
+        "met": bool(result.get("met")),
+        "missing": result.get("missing") or "",
+    }
+    if result.get("forced"):
+        recorded["forced"] = True
+    session._step_check_result = recorded
+
+
+def _record_step_decision(
+    session,
+    agent_message,
+    *,
+    model_goal: bool,
+    model_asks: bool,
+    inferred_asks: bool,
+    accepted_goal: bool,
+    accepted_asks: bool,
+) -> None:
+    """Store this reply's step outcome on Message.usage. Other usage keys stay put."""
+    if agent_message is None or not getattr(agent_message, "pk", None):
+        return
+    usage = agent_message.usage if isinstance(agent_message.usage, dict) else {}
+    usage = dict(usage)
+    usage["step_decision"] = {
+        "step_no": session.current_step_no,
+        "model": {
+            "step_goal_met": model_goal,
+            "asks_readiness": model_asks,
+        },
+        "inferred_asks_readiness": inferred_asks,
+        "accepted": {
+            "step_goal_met": accepted_goal,
+            "asks_readiness": accepted_asks,
+        },
+        "check_done_when": getattr(session, "_step_check_result", None),
+        "goal_hint": getattr(session, "_step_goal_hint_written", None),
+    }
+    agent_message.usage = usage
+    agent_message.save(update_fields=["usage", "updated_at"])
 
 
 def _downgrade_readiness(agent_message) -> None:

@@ -29,10 +29,37 @@ _SPECS = (
         "name": "PROMPT_PROGRAMMING_INSTRUCTIONS",
     },
     {
+        "label": "reply_length",
+        "applies": "editable in Settings (reply_length)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_REPLY_LENGTH_INSTRUCTION",
+    },
+    {
+        "label": "one_question",
+        "applies": "editable in Settings (one_question)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_ONE_QUESTION_INSTRUCTION",
+    },
+    {
+        "label": "client_knowledge_rule",
+        "applies": "editable in Settings (client_knowledge_rule)",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_CLIENT_KNOWLEDGE_RULE",
+    },
+    {
         "label": "step_scope_rules",
-        "applies": "exercise only",
+        "applies": (
+            "exercise only; the first-message sentence is omitted "
+            "on the no-check-in opening turn"
+        ),
         "module": "api.utils.Agent",
         "name": "STEP_SCOPE_RULES",
+    },
+    {
+        "label": "description_prefix",
+        "applies": "exercise only",
+        "module": "api.utils.Agent",
+        "name": "DESCRIPTION_PREFIX",
     },
     {
         "label": "on_step_fallback",
@@ -60,16 +87,10 @@ _SPECS = (
         "name": "DEFAULT_UPDATE_EXERCISE_SUMMARY_PROMPT",
     },
     {
-        "label": "description_prefix",
-        "applies": "exercise only",
-        "module": "api.utils.Agent",
-        "name": "DESCRIPTION_PREFIX",
-    },
-    {
-        "label": "restructuring_rewrite",
-        "applies": "exercise only",
-        "module": "api.utils.Agent",
-        "name": "_UP_BACKGROUND_SENTENCE",
+        "label": "run_summary_prompt",
+        "applies": "editable in Settings (run_summary_prompt)",
+        "module": "api.utils.summary_prompts",
+        "name": "DEFAULT_RUN_SUMMARY_PROMPT",
     },
     {
         "label": "onboarding_followup_rules",
@@ -78,8 +99,38 @@ _SPECS = (
         "name": "ONBOARDING_FOLLOWUP_RULES",
     },
     {
+        "label": "onboarding_followup_permission_ask",
+        "applies": "editable in Settings (onboarding_followup_permission_ask)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_ASK",
+    },
+    {
+        "label": "onboarding_followup_decline",
+        "applies": "editable in Settings (onboarding_followup_decline)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK",
+    },
+    {
+        "label": "onboarding_followup_reask",
+        "applies": "editable in Settings (onboarding_followup_reask)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_DIRECT_REASK",
+    },
+    {
+        "label": "onboarding_followup_chip_yes",
+        "applies": "editable in Settings (onboarding_followup_chip_yes)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_YES",
+    },
+    {
+        "label": "onboarding_followup_chip_no",
+        "applies": "editable in Settings (onboarding_followup_chip_no)",
+        "module": "api.utils.Constants",
+        "name": "KNOWLEDGE_FOLLOWUP_PERMISSION_NO",
+    },
+    {
         "label": "pending_question",
-        "applies": "every turn",
+        "applies": "added when a knowledge question is pending in general chat",
         "module": "api.utils.pending_question",
         "name": "PENDING_QUESTION_RULE",
     },
@@ -90,11 +141,79 @@ _SPECS = (
         "name": "CHECK_IN_RULES",
     },
     {
+        "label": "about_the_user_hint",
+        "applies": (
+            "general chat, when they ask what Toni knows about them "
+            "and a client block has something to name"
+        ),
+        "module": "api.utils.turn_hint",
+        "name": "ABOUT_THE_USER_HINT",
+    },
+    {
         "label": "hidden_opener",
-        "applies": "exercise only",
+        "applies": (
+            "start on a no-check-in step-1 open; the other lines after a "
+            "check-in or on a later step"
+        ),
         "module": "api.utils.SessionStateMachine",
         "name": "HIDDEN_OPENER_STEP_ONE",
         "text_fn": "hidden_opener_catalogue_text",
+    },
+    {
+        "label": "depth_hint",
+        "applies": (
+            "added to the next turn after a failed depth check, "
+            "exercises with depth_check on"
+        ),
+        "module": "api.utils.turn_hint",
+        "name": "DEPTH_HINT",
+    },
+    {
+        "label": "risk_fallback_resources",
+        "applies": "used when the admin's resources links are blank",
+        "module": "api.utils.Constants",
+        "name": "DEFAULT_RESOURCES",
+        "text_fn": "default_resources_catalogue_text",
+    },
+    {
+        "label": "check_in_summary_fallback",
+        "applies": (
+            "stored as the check-in summary when check_in_summary_prompt "
+            "is blank or the model returns nothing or fails"
+        ),
+        "module": "api.exercise.pre_exercise",
+        "name": "CHECK_IN_SUMMARY_FALLBACK",
+    },
+    {
+        "label": "default_success_title",
+        "applies": "default success title for a step when success_title is blank",
+        "module": "api.utils.SessionStateMachine",
+        "name": "DEFAULT_SUCCESS_TITLE",
+    },
+    {
+        "label": "qa_skip_step",
+        "applies": "replies sent when a test message is qa skip step",
+        "module": "api.agent.models",
+        "name": "STEP_AUTO_SKIPPED_REPLY",
+        "text_fn": "qa_skip_step_catalogue_text",
+    },
+    {
+        "label": "user_fact_rule",
+        "applies": (
+            "added to the observation prompt; client and exercise summary "
+            "prompts append the same sentences"
+        ),
+        "module": "api.utils.user_grounding",
+        "name": "USER_FACT_RULE",
+    },
+    {
+        "label": "case_material_filter",
+        "applies": (
+            "blocks these from being indexed as Unified Protocol reference"
+        ),
+        "module": "api.grounding.case_material",
+        "name": "case_material_reason",
+        "text_fn": "case_material_catalogue_text",
     },
 )
 
@@ -315,9 +434,9 @@ def _spec_in(spec, module, blob: str) -> bool:
 def _hidden_opener_in(module, blob: str) -> bool:
     step_one = module.HIDDEN_OPENER_STEP_ONE
     later = module.HIDDEN_OPENER_LATER
-    if step_one in blob or module.HIDDEN_OPENER_GREET_FIRST in blob:
+    if step_one in blob or module.HIDDEN_OPENER_GREET_REPEAT in blob:
         return True
-    if module.HIDDEN_OPENER_GREET_REPEAT in blob:
+    if any(line.strip() == module.HIDDEN_OPENER_START for line in blob.splitlines()):
         return True
     head, _, tail = later.partition("{step_no}")
     return bool(head and tail and head in blob and tail in blob)

@@ -41,14 +41,15 @@ def close_session(session, reason: str):
             _update_exercise_summary(session)
         except Exception:
             logger.exception("Exercise summary failed for %s", session.id)
+        try:
+            _update_run_summary(session)
+        except Exception as exc:
+            logger.warning(
+                "Run summary failed for %s (%s)",
+                session.id,
+                type(exc).__name__,
+            )
     return session
-
-
-def _grounded_field(candidate, previous, user_blob, keep) -> str:
-    grounded = keep(candidate, user_blob)
-    if grounded:
-        return grounded
-    return previous or ""
 
 
 def close_idle_sessions() -> int:
@@ -188,22 +189,152 @@ def _update_exercise_summary(session) -> None:
         _Summary,
         temperature=0.2,
     )
-    from ..message.models import Message
-    from .user_grounding import keep_grounded_prose
+    from .Agent import _summary_field_or_keep
 
-    user_blob = "\n".join(
-        text
-        for text in Message.objects.filter(
-            session=session,
-            sender__consumer__isnull=False,
-        ).values_list("text", flat=True)
-        if text
+    summary.detailed = _summary_field_or_keep(
+        summary.detailed,
+        data.get("detailed") or summary.detailed,
+        consumer_id=summary.consumer_id,
+        field_name="detailed",
     )
-    summary.detailed = _grounded_field(data.get("detailed"), summary.detailed, user_blob, keep_grounded_prose)
-    summary.observations = _grounded_field(
-        data.get("observations"), summary.observations, user_blob, keep_grounded_prose
+    summary.observations = _summary_field_or_keep(
+        summary.observations,
+        data.get("observations") or summary.observations,
+        consumer_id=summary.consumer_id,
+        field_name="observations",
     )
-    summary.next_steps = _grounded_field(
-        data.get("next_steps"), summary.next_steps, user_blob, keep_grounded_prose
+    summary.next_steps = _summary_field_or_keep(
+        summary.next_steps,
+        data.get("next_steps") or summary.next_steps,
+        consumer_id=summary.consumer_id,
+        field_name="next_steps",
     )
     summary.save(update_fields=["detailed", "observations", "next_steps", "updated_at"])
+
+
+_TRANSCRIPT_CLIP_MESSAGES = 12
+_TRANSCRIPT_CLIP_CHARS = 240
+
+
+def _take_words(text: str, budget: int) -> tuple[str, int]:
+    words = (text or "").split()
+    if budget <= 0 or not words:
+        return "", max(0, budget)
+    kept = words[:budget]
+    return " ".join(kept), budget - len(kept)
+
+
+def shape_run_summary(data: dict | None, max_words: int) -> dict | None:
+    """Cap at five bullets and keep the line plus bullets inside max_words."""
+    payload = data or {}
+    line = str(payload.get("line") or "").strip()
+    raw_bullets = payload.get("bullets") or []
+    bullets = []
+    if isinstance(raw_bullets, list):
+        for item in raw_bullets:
+            text = str(item or "").strip()
+            if text:
+                bullets.append(text)
+    bullets = bullets[:5]
+    if not line and not bullets:
+        return None
+    budget = max(1, int(max_words))
+    line, budget = _take_words(line, budget)
+    trimmed = []
+    for bullet in bullets:
+        if budget <= 0:
+            break
+        text, budget = _take_words(bullet, budget)
+        if text:
+            trimmed.append(text)
+    if not line and not trimmed:
+        return None
+    return {"line": line, "bullets": trimmed}
+
+
+def _run_summary_blocked(session) -> bool:
+    from ..utils import Constants
+
+    if getattr(session, "authoring_test", False):
+        return True
+    if not getattr(session, "exercise_id", None):
+        return True
+    if not getattr(session, "completed", False):
+        return True
+    live = (getattr(session, "live_risk_level", None) or "").strip().lower()
+    risk = (getattr(session, "risk_level", None) or "").strip().lower()
+    if live == Constants.LIVE_RISK_LEVEL_HIGH:
+        return True
+    if risk in (Constants.RISK_LEVEL_HIGH, Constants.RISK_LEVEL_CRITICAL):
+        return True
+    return False
+
+
+def _transcript_clip(session) -> str:
+    from ..message.models import Message
+
+    messages = list(
+        Message.objects.filter(session=session)
+        .select_related("sender")
+        .order_by("-created_at")[:_TRANSCRIPT_CLIP_MESSAGES]
+    )
+    messages.reverse()
+    lines = []
+    for message in messages:
+        text = (message.text or "").strip()
+        if not text:
+            continue
+        if len(text) > _TRANSCRIPT_CLIP_CHARS:
+            text = text[:_TRANSCRIPT_CLIP_CHARS].rstrip() + "…"
+        sender = getattr(message, "sender", None)
+        who = "Client" if sender is not None and getattr(sender, "consumer_id", None) else "Toni"
+        lines.append(f"{who}: {text}")
+    return "\n".join(lines)
+
+
+def _run_summary_inputs(session) -> tuple[str, str, str]:
+    results = []
+    for row in session.session_steps.select_related("step").filter(completed=True).order_by("order"):
+        title = row.step.title if row.step_id else "Step"
+        results.append(f"{title}: {row.completion_result or ''}")
+    return (
+        session.pre_exercise_prompt_summary or "",
+        "\n".join(results),
+        _transcript_clip(session),
+    )
+
+
+def _update_run_summary(session) -> None:
+    from pydantic import BaseModel
+
+    from ..setting.models import Setting
+    from .AI import AI
+    from .summary_prompts import run_summary_prompt
+
+    if _run_summary_blocked(session):
+        return
+
+    class _RunSummary(BaseModel):
+        line: str
+        bullets: list[str]
+
+    check_in, step_results, transcript = _run_summary_inputs(session)
+    name = session.consumer.user.first_name
+    data = AI.ask(
+        run_summary_prompt(
+            Setting.get_run_summary_prompt(),
+            name,
+            Setting.get_run_summary_tone_guide(),
+            Setting.get_run_summary_max_length(),
+            check_in,
+            step_results,
+            transcript,
+        ),
+        _RunSummary,
+        temperature=0.2,
+    )
+    shaped = shape_run_summary(data, Setting.get_run_summary_max_length())
+    if not shaped:
+        return
+    session.run_summary = shaped
+    session.save(update_fields=["run_summary", "updated_at"])

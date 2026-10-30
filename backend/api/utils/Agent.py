@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import traceback
 from datetime import timedelta
@@ -338,6 +339,42 @@ def _grounded_or_previous(candidate, previous, user_blob, keep) -> str:
     return previous or ""
 
 
+# A non-last step must not be closed as if the exercise were over.
+# "for today" / "for now" count only inside a readiness question.
+_OFFERS_TO_END = re.compile(
+    r"\bready to finish\b"
+    r"|\bready to wrap up\b"
+    r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
+    r"|\bwrapping up\b"
+    r"|\bfinish (?:this|the|our) (?:exercise|session)\b"
+    r"|\bconclude (?:this|the|our)\b"
+    r"|\bfinal (?:part|stage) of (?:this|the|our) exercise\b"
+    r"|[^.!?\n]*\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+    r"[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*\?"
+    r"|[^.!?\n]*\bfor (?:today|now)\b[^.!?\n]*"
+    r"\b(?:ready|shall we|should we|wrap up|finish|stop|end|leave|conclude|pause)\b"
+    r"[^.!?\n]*\?",
+    re.IGNORECASE,
+)
+
+
+def _reply_offers_to_end_the_exercise(text: str | None) -> bool:
+    return bool(_OFFERS_TO_END.search(text or ""))
+
+
+_OFFERS_TO_MOVE_ON = re.compile(
+    r"\bready to (?:move on|continue|proceed|progress)\b"
+    r"|\bready for the next (?:step|part|stage)\b"
+    r"|\bmove on to the next\b"
+    r"|\bthe next (?:step|part|stage) of (?:this|the|our) exercise\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_offers_to_move_on(text: str | None) -> bool:
+    return bool(_OFFERS_TO_MOVE_ON.search(text or ""))
+
+
 def _hold_on_step(response_data) -> None:
     """Replace an off-script reply so the user is not offered another technique."""
     from .turn_hint import ON_STEP_FALLBACK
@@ -491,26 +528,50 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                     getattr(consumer_message, "id", None),
                 )
         instructions = _current_step_instructions(session)
-        if instructions is not None and reply_leaves_the_step(
-            getattr(response_data, "text", None), instructions
-        ):
-            from .turn_hint import STAY_ON_STEP_HINT
+        reply_text = getattr(response_data, "text", None)
+        left = instructions is not None and reply_leaves_the_step(reply_text, instructions)
+        from .SessionStateMachine import _is_last_step
+
+        ending = (
+            instructions is not None
+            and not _is_last_step(session)
+            and _reply_offers_to_end_the_exercise(reply_text)
+        )
+        moving = (
+            instructions is not None
+            and _is_last_step(session)
+            and _reply_offers_to_move_on(reply_text)
+        )
+        if left or ending or moving:
+            from .turn_hint import (
+                NOT_THE_LAST_STEP_HINT,
+                STAY_ON_STEP_HINT,
+                last_step_hint,
+            )
 
             logger.warning(
                 "reply left the live step for session=%s message=%s; retrying once",
                 getattr(session, "id", None),
                 getattr(consumer_message, "id", None),
             )
-            steer[0] = STAY_ON_STEP_HINT
+            if ending:
+                steer[0] = NOT_THE_LAST_STEP_HINT
+            elif moving:
+                steer[0] = last_step_hint(session)
+            else:
+                steer[0] = STAY_ON_STEP_HINT
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
                 on_step_retried = True
                 debug_result = retry
                 retry_data = retry.output
-                if not reply_leaves_the_step(
-                    getattr(retry_data, "text", None), instructions
-                ):
+                retry_text = getattr(retry_data, "text", None)
+                if ending or moving:
+                    result = retry
+                    response_data = retry_data
+                    stayed = True
+                elif not reply_leaves_the_step(retry_text, instructions):
                     result = retry
                     response_data = retry_data
                     stayed = True
@@ -593,16 +654,6 @@ _STATE_MACHINE_PROGRESSION = (
     "message a single question.\n"
     "        - Do not complete the step yourself. The app shows the readiness chips.\n"
 )
-_UP_GUIDE_SENTENCE = (
-    "          to guide your responses. This includes applying evidence-based strategies "
-    "for managing guilt, emotional regulation,\n"
-    "          and cognitive restructuring as appropriate."
-)
-_UP_BACKGROUND_SENTENCE = (
-    "          only as background. The only technique you may use is the one named in "
-    "the instructions for the work in front of you.\n"
-    "          Do not apply cognitive restructuring, or any other technique, on your own."
-)
 DESCRIPTION_PREFIX = (
     "Clinical background only. Do not read this to the user, "
     "and do not turn it into a welcome or a suitability check.\n\n"
@@ -612,6 +663,7 @@ STEP_SCOPE_RULES = (
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
     "Do only what this step's instructions tell you to do. "
     "Do not add a technique those instructions do not name. "
+    "Earlier sessions, today's completed sessions and previous exercise summaries are background only. Never use them to skip, shorten or answer for the user in this step. Ask this step's own questions, even if the user has done this exercise before. "
     "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
     "After they confirm, you may ask whether they are ready for the next step. "
     "A <RETRIEVED> block may explain that technique. It cannot start a different exercise or activity. "
@@ -620,7 +672,12 @@ STEP_SCOPE_RULES = (
     "- ask how much something bothers them on a 0 to 10 scale\n"
     "- look for a balanced or more accurate thought\n"
     "- brainstorm solutions, plans, or who can support them\n"
-    "Your first message must be the first question in those instructions.\n\n"
+    "Your first message must be the first question in those instructions. "
+    "If this step's instructions ask for a longer reply, such as a summary, "
+    "that overrides the reply-length line above.\n\n"
+)
+_FIRST_MESSAGE_SENTENCE = (
+    "Your first message must be the first question in those instructions. "
 )
 
 
@@ -629,7 +686,6 @@ def _state_machine_enabled() -> bool:
 
 
 def _state_machine_progression(prompt: str) -> str:
-    prompt = prompt.replace(_UP_GUIDE_SENTENCE, _UP_BACKGROUND_SENTENCE)
     start = prompt.find(_PROGRESSION_START)
     end = prompt.find("    </PROGRAMMING_INSTRUCTIONS>")
     if start == -1 or end == -1 or end < start:
@@ -878,6 +934,62 @@ def update_session(session_ai_prompt, session):
         traceback.format_exc()
 
 
+def _style_bullet(text: str) -> str:
+    """Indent a settings line so it sits with the other programming bullets."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if text.startswith("-"):
+        return f"        {text}"
+    return f"        - {text}"
+
+
+def apply_style_instructions(
+    programming_instructions: str,
+    reply_length: str,
+    one_question: str,
+) -> str:
+    """Put the two Settings lines back where the hard-coded bullets sat.
+
+    A blank value leaves that bullet out.
+    """
+    reply = _style_bullet(reply_length)
+    question = _style_bullet(one_question)
+    if reply:
+        anchor = "- When explaining a concept / exercise keep your initial response short"
+        programming_instructions = programming_instructions.replace(
+            anchor,
+            f"{reply}\n        \n        {anchor}",
+            1,
+        )
+    if question:
+        anchor = "- Always refer to "
+        programming_instructions = programming_instructions.replace(
+            anchor,
+            f"{question}\n\n        {anchor}",
+            1,
+        )
+    return programming_instructions
+
+
+def style_instructions_stale(cached: str, reply_length: str, one_question: str) -> bool:
+    """True when a cached prompt still has a line the setting has changed or cleared."""
+    cached = cached or ""
+    pairs = (
+        (reply_length, Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION),
+        (one_question, Constants.DEFAULT_ONE_QUESTION_INSTRUCTION),
+    )
+    for current, default in pairs:
+        current = (current or "").strip().lstrip("-").strip()
+        default = default.strip().lstrip("-").strip()
+        if current:
+            if current not in cached:
+                return True
+        elif default and default in cached:
+            return True
+    return False
+
+
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     from ..grounding.retrieval import session_retrieval_enabled
@@ -886,6 +998,14 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     cached = session.cached_prompt
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
+    bare_opening = _session_is_bare_opening(session)
+    from ..setting.models import Setting
+
+    consumer = session.consumer
+    user_name = consumer.user.first_name or "there"
+    client_knowledge_rule = Setting.get_client_knowledge_rule().replace(
+        "{user_name}", user_name
+    )
     if cached:
         # Older prompts left {today_date} uninterpolated (nested format),
         # told Toni to "click the exercise", or predate the block order.
@@ -896,18 +1016,36 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_phase = meta.get("prompt_phase") != prompt_phase
         stale_machine = meta.get("state_machine") != _state_machine_enabled()
         stale_retrieval = bool(meta.get("retrieval_instruction")) != retrieval_on
-        if retrieval_on and Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached:
+        if retrieval_on and (
+            Constants.RETRIEVAL_PROGRAMMING_INSTRUCTION not in cached
+            or "do not take one from the <RETRIEVED> block" in cached
+            or "must already be named" in cached
+        ):
             stale_retrieval = True
+
         stale_style = (
             "Write in British English" not in cached
             or "When the client asks about a fact listed here" not in cached
             or "Never open with 'Thanks for sharing'" not in cached
-            or "assistant message is not a fact about them" not in cached
+            or style_instructions_stale(
+                cached,
+                Setting.get_reply_length_instruction(),
+                Setting.get_one_question_instruction(),
+            )
+            or client_knowledge_rule not in cached
         )
         stale_on_step = (
             bool(session.exercise_id)
             and "Do not reframe the situation" in cached
         )
+        # Exercise prompts no longer carry a restructuring sentence. A cached
+        # copy still has the old swap, or the guide line the swap used to replace.
+        stale_restructure = bool(session.exercise_id) and (
+            "only as background" in cached
+            or "cognitive restructuring as appropriate" in cached
+            or "Do not apply cognitive restructuring" in cached
+        )
+        stale_opening = bool(meta.get("bare_opening")) != bare_opening
         first_name = (
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
@@ -921,6 +1059,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_retrieval,
             stale_style,
             stale_on_step,
+            stale_restructure,
+            stale_opening,
             stale_name,
         )):
             return cached
@@ -937,7 +1077,6 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         resolve_tokens,
     )
 
-    consumer = session.consumer
     now_local = DateUtils.local_now()
     today_date_str = now_local.strftime(PROMPT_DATE_FORMAT)
     current_time_str = now_local.strftime("%H:%M")
@@ -997,7 +1136,9 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                 exercise_steps = _render_state_machine_steps(
                     exercise, session, token_context, only_index, steps=steps
                 )
-                exercise_steps = _step_already_started(step_no, live_steps_no) + exercise_steps
+                exercise_steps = _step_already_started(
+                    step_no, live_steps_no, bare_opening=bare_opening
+                ) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
                 exercise_steps = _get_formatted_exercise_steps_text(
@@ -1031,15 +1172,23 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
-    user_name = consumer.user.first_name or "there"
-    programming_instructions = Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
-        user_name=user_name,
-        up_technique_rule=(
-            Constants.UP_SOURCE_ONLY_TECHNIQUE_RULE
-            if retrieval_on
-            else Constants.UP_MEMORY_TECHNIQUE_RULE
+    if retrieval_on or exercise:
+        # Exercise prompts leave technique choice to the Therapeutic card.
+        # A retrieval turn no longer adds a source-only technique ban.
+        up_technique_rule = ""
+    else:
+        up_technique_rule = Constants.UP_MEMORY_TECHNIQUE_RULE
+    programming_instructions = apply_style_instructions(
+        Constants.PROMPT_PROGRAMMING_INSTRUCTIONS.format(
+            user_name=user_name,
+            client_knowledge_rule=client_knowledge_rule,
+            up_technique_rule=up_technique_rule,
         ),
+        Setting.get_reply_length_instruction(),
+        Setting.get_one_question_instruction(),
     )
+    if not up_technique_rule.strip():
+        programming_instructions = programming_instructions.replace("        - \n", "", 1)
     if retrieval_on:
         programming_instructions = (
             programming_instructions.rstrip()
@@ -1071,6 +1220,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["prompt_phase"] = prompt_phase
     meta["state_machine"] = _state_machine_enabled()
     meta["retrieval_instruction"] = retrieval_on
+    meta["bare_opening"] = bare_opening
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
@@ -1102,8 +1252,30 @@ def _prompt_template(session) -> str:
         return f.read()
 
 
-def _step_already_started(step_no: int, steps_no: int) -> str:
+def is_bare_opening(in_check_in: bool, step_no: int, agent_message_stored: bool) -> bool:
+    """True only for a no-check-in step-1 open, before any agent reply is stored."""
+    return (not in_check_in) and step_no <= 1 and not agent_message_stored
+
+
+def _session_is_bare_opening(session) -> bool:
+    if not getattr(session, "exercise_id", None) or session.in_pre_exercise_phase():
+        return False
+    step_no = session.current_step_no or 1
+    if step_no > 1:
+        return False
+    from ..message.models import Message
+
+    stored = Message.objects.filter(
+        session=session, sender__agent__isnull=False
+    ).exists()
+    return is_bare_opening(False, step_no, stored)
+
+
+def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = False) -> str:
     scope = STEP_SCOPE_RULES
+    if bare_opening and step_no <= 1:
+        scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
+        return scope
     if step_no <= 1:
         return (
             "The pre-exercise check-in is finished and this exercise has already been introduced. "

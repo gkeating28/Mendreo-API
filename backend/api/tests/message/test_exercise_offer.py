@@ -44,6 +44,7 @@ class ExerciseOfferTest(TestCase):
             text=f"Would you like to start {self.exercise.title}?",
             exercise=self.exercise,
             suggested_responses=suggested_responses,
+            suggested_responses_kind=Constants.SUGGESTED_RESPONSES_KIND_OFFER,
             reasoning="triage",
         )
 
@@ -191,7 +192,11 @@ class ExerciseOfferTest(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         ai.assert_not_called()
-        self.assertIn("I'll leave", response.json["text"])
+        self.assertEqual(
+            response.json["text"],
+            f"Okay. I'll leave {self.exercise.title} here until you want it.",
+        )
+        self.assertNotIn("Tap the card", response.json["text"])
         self.assertIsNotNone(response.json["sender"]["agent"])
 
         offer.refresh_from_db()

@@ -28,8 +28,27 @@ STAY_ON_STEP_HINT = (
     "If they have already confirmed the summary, ask whether they are ready for the next step. "
     "Do not start another technique."
 )
+NOT_THE_LAST_STEP_HINT = (
+    "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
+    "If this step's work is done, ask only whether they are ready for the next step. "
+    "Otherwise ask this step's next question."
+)
+LAST_STEP_HINT = (
+    "This is the last step. Do not talk about moving on or a next step. "
+    "If {name} has not yet confirmed your summary, summarise their decisions "
+    "and their alternative action in their own words and ask if you have it right. "
+    "If they have confirmed it, ask only whether they are ready to finish the exercise."
+)
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
+)
+ABOUT_THE_USER_HINT = (
+    "{user_name} is asking what you know about them. "
+    "Everything you know is written between the <ABOUT_CLIENT> tags below, "
+    "plus anything {user_name} has told you earlier in this chat. Use only that. "
+    "Do not guess or add anything else, such as age, hobbies, routines or feelings "
+    "that are not written there. Answer in two sentences, naming one or two specific "
+    "things from it. Do not say you have no information. Then ask one simple question."
 )
 
 
@@ -161,11 +180,124 @@ def goal_hint_text(missing: str) -> str:
     )
 
 
+def about_the_user_hint(session, text: str) -> str | None:
+    """General chat only. Skipped when the three client blocks are still empty."""
+    if getattr(session, "exercise_id", None):
+        return None
+    from ..grounding.retrieval import _ABOUT_THE_USER
+
+    if not _ABOUT_THE_USER.search(text or ""):
+        return None
+    if _client_blocks_are_new(session):
+        return None
+    consumer = session.consumer
+    user_name = ""
+    if consumer is not None:
+        user_name = getattr(getattr(consumer, "user", None), "first_name", "") or ""
+    name = user_name.strip() or "there"
+    wording = ABOUT_THE_USER_HINT.replace("{user_name}", name)
+    return f"{wording}\n\n<ABOUT_CLIENT>\n{_about_sean_body(session)}\n</ABOUT_CLIENT>"
+
+
+def _without_unknown_knowledge(context: str) -> str:
+    kept = [
+        line
+        for line in (context or "").splitlines()
+        if not line.startswith("Unknown knowledge:")
+    ]
+    return "\n".join(kept).strip()
+
+
+def _about_sean_body(session) -> str:
+    from .prompt_blocks import render_client_summary, render_knowledge, render_session_context
+
+    consumer = session.consumer
+    summary = (render_client_summary(consumer) or "").strip()
+    knowledge = (render_knowledge(consumer, "general") or "").strip()
+    context = _without_unknown_knowledge(render_session_context(consumer, session) or "")
+    return "\n\n".join(part for part in (summary, knowledge, context) if part)
+
+
+def _summary_without_account_name(summary: str) -> str:
+    """Drop the leading account-name line so a new client still looks new."""
+    text = (summary or "").strip()
+    lines = text.splitlines()
+    if lines and lines[0].startswith("Name:"):
+        return "\n".join(lines[1:]).strip()
+    return text
+
+
+def _client_blocks_are_new(session) -> bool:
+    """True when summary, knowledge, and session context have nothing to name."""
+    from .prompt_blocks import render_client_summary, render_knowledge, render_session_context
+
+    consumer = session.consumer
+    summary = _summary_without_account_name(render_client_summary(consumer) or "")
+    knowledge = (render_knowledge(consumer, "general") or "").strip()
+    context = render_session_context(consumer, session) or ""
+    summary_new = (
+        not summary or summary == "No previous conversations exist with this user."
+    )
+    knowledge_new = not knowledge or (
+        "No structured knowledge recorded" in knowledge and "\n-" not in knowledge
+    )
+    context_new = (
+        "Days since last session: none" in context
+        and "Last exercise completed: none" in context
+        and "Exercises completed in the last 7 days: none" in context
+        and "Today's completed sessions: none" in context
+    )
+    return summary_new and knowledge_new and context_new
+
+
+def last_step_hint(session) -> str:
+    return LAST_STEP_HINT.format(name=_client_first_name(session))
+
+
+def _client_first_name(session) -> str:
+    consumer = getattr(session, "consumer", None)
+    user = getattr(consumer, "user", None) if consumer is not None else None
+    return (getattr(user, "first_name", None) or "").strip() or "The user"
+
+
+def finish_after_confirmed_summary_hint(session) -> str | None:
+    """Last step only, once the user has agreed the summary and the goal is still open."""
+    if not getattr(session, "exercise_id", None):
+        return None
+    from .SessionStateMachine import _is_last_step, _live_step
+
+    if not _is_last_step(session):
+        return None
+    session_step = _live_step(session)
+    if session_step is None or session_step.goal_met_at is not None:
+        return None
+    from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+    done_when = getattr(session_step.step, "done_when", None) or ""
+    if not summary_confirmation_required(done_when):
+        return None
+    if not summary_was_confirmed(session, session_step.step):
+        return None
+    name = _client_first_name(session)
+    return (
+        f"{name} has confirmed the summary. Remind them briefly that they do not need to "
+        "get it right every time and can come back and try the exercise again. "
+        "Then ask only whether they are ready to finish. Do not say goodbye."
+    )
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     from ..message.models import Message
 
     text = user_message.text or ""
+    about = about_the_user_hint(session, text)
+    if about:
+        return f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
+    finish = finish_after_confirmed_summary_hint(session)
+    if finish:
+        _consume_goal_hint(session)
+        return f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
     goal = _consume_goal_hint(session)
     if goal:
         return f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"

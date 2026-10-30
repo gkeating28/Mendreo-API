@@ -288,7 +288,7 @@ def start_authoring_test(snapshot, consumer, admin=None):
     from ..participant.models import Participant
     from ..session.models import Session, SessionStep
     from .AIWorkerClient import _run_session_greeting
-    from .SessionStateMachine import build_session_state, opening_turn
+    from .SessionStateMachine import build_session_state
     from .prompt_debug import capture, finish_debug
 
     step_count = snapshot.steps.count()
@@ -308,9 +308,9 @@ def start_authoring_test(snapshot, consumer, admin=None):
     )
     SessionStep.create(session, snapshot)
     Participant.create_participants(session)
-    # Same hidden line a real Start sends into step 1.
+    # Same path as a real no-check-in open. A check-in session keeps its own opener.
     with capture() as cap:
-        opening = _run_session_greeting(session, synthetic_text=opening_turn(1))
+        opening = _run_session_greeting(session)
     reason = model_failure_reason(opening)
     if reason:
         raise RuntimeError(reason)

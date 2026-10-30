@@ -51,8 +51,24 @@ class SettingCreateSerializer(serializers.Serializer):
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
+    chat_debug_enabled = serializers.BooleanField(required=False)
     update_summary = serializers.CharField(required=False, allow_blank=True)
     update_exercise_summary = serializers.CharField(required=False, allow_blank=True)
+    reply_length = serializers.CharField(required=False, allow_blank=True)
+    one_question = serializers.CharField(required=False, allow_blank=True)
+    client_knowledge_rule = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_permission_ask = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_decline = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_reask = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_chip_yes = serializers.CharField(required=False, allow_blank=True)
+    onboarding_followup_chip_no = serializers.CharField(required=False, allow_blank=True)
+    run_summary_prompt = serializers.CharField(required=False, allow_blank=True)
+    run_summary_tone_guide = serializers.CharField(required=False, allow_blank=True)
+    run_summary_max_length = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH,
+    )
     ai_retrieval_enabled = serializers.BooleanField(required=False)
     ai_retrieval_exercise_enabled = serializers.BooleanField(required=False)
 
@@ -139,6 +155,11 @@ class SettingCreateSerializer(serializers.Serializer):
             capture.value = str(validated_data["store_turn_prompts"]).lower()
             capture.save()
 
+        if "chat_debug_enabled" in validated_data:
+            chat_debug = Setting.get_or_create_chat_debug_enabled()
+            chat_debug.value = str(validated_data["chat_debug_enabled"]).lower()
+            chat_debug.save()
+
         if "ai_retrieval_enabled" in validated_data:
             chat_retrieval = Setting.get_or_create_ai_retrieval_enabled()
             chat_retrieval.value = str(validated_data["ai_retrieval_enabled"]).lower()
@@ -160,6 +181,66 @@ class SettingCreateSerializer(serializers.Serializer):
             exercise_prompt.value = validated_data.get("update_exercise_summary") or ""
             exercise_prompt.save()
 
+        if "reply_length" in incoming:
+            reply_length = Setting.get_or_create_reply_length_instruction()
+            reply_length.value = validated_data.get("reply_length") or ""
+            reply_length.save()
+
+        if "one_question" in incoming:
+            one_question = Setting.get_or_create_one_question_instruction()
+            one_question.value = validated_data.get("one_question") or ""
+            one_question.save()
+
+        if "client_knowledge_rule" in incoming:
+            rule = Setting.get_or_create_client_knowledge_rule()
+            rule.value = validated_data.get("client_knowledge_rule") or ""
+            rule.save()
+
+        if "onboarding_followup_permission_ask" in incoming:
+            permission_ask = Setting.get_or_create_onboarding_followup_permission_ask()
+            permission_ask.value = validated_data.get("onboarding_followup_permission_ask") or ""
+            permission_ask.save()
+
+        if "onboarding_followup_decline" in incoming:
+            decline = Setting.get_or_create_onboarding_followup_decline()
+            decline.value = validated_data.get("onboarding_followup_decline") or ""
+            decline.save()
+
+        if "onboarding_followup_reask" in incoming:
+            reask = Setting.get_or_create_onboarding_followup_reask()
+            reask.value = validated_data.get("onboarding_followup_reask") or ""
+            reask.save()
+
+        if "onboarding_followup_chip_yes" in incoming:
+            chip_yes = Setting.get_or_create_onboarding_followup_chip_yes()
+            chip_yes.value = validated_data.get("onboarding_followup_chip_yes") or ""
+            chip_yes.save()
+
+        if "onboarding_followup_chip_no" in incoming:
+            chip_no = Setting.get_or_create_onboarding_followup_chip_no()
+            chip_no.value = validated_data.get("onboarding_followup_chip_no") or ""
+            chip_no.save()
+
+        if "run_summary_prompt" in incoming:
+            run_prompt = Setting.get_or_create_run_summary_prompt()
+            run_prompt.value = validated_data.get("run_summary_prompt") or ""
+            run_prompt.save()
+
+        if "run_summary_tone_guide" in incoming:
+            run_tone = Setting.get_or_create_run_summary_tone_guide()
+            run_tone.value = validated_data.get("run_summary_tone_guide") or ""
+            run_tone.save()
+
+        if "run_summary_max_length" in incoming:
+            run_max = Setting.get_or_create_run_summary_max_length()
+            run_max.value = str(
+                validated_data.get(
+                    "run_summary_max_length",
+                    Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH,
+                )
+            )
+            run_max.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -173,8 +254,20 @@ class SettingCreateSerializer(serializers.Serializer):
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
+            "chat_debug_enabled": Setting.get_chat_debug_enabled(),
             "ai_retrieval_enabled": Setting.get_ai_retrieval_enabled(),
             "ai_retrieval_exercise_enabled": Setting.get_ai_retrieval_exercise_enabled(),
             "update_summary": Setting.get_update_summary(),
             "update_exercise_summary": Setting.get_update_exercise_summary(),
+            "reply_length": Setting.get_reply_length_instruction(),
+            "one_question": Setting.get_one_question_instruction(),
+            "client_knowledge_rule": Setting.get_client_knowledge_rule(),
+            "onboarding_followup_permission_ask": Setting.get_onboarding_followup_permission_ask(),
+            "onboarding_followup_decline": Setting.get_onboarding_followup_decline(),
+            "onboarding_followup_reask": Setting.get_onboarding_followup_reask(),
+            "onboarding_followup_chip_yes": Setting.get_onboarding_followup_chip_yes(),
+            "onboarding_followup_chip_no": Setting.get_onboarding_followup_chip_no(),
+            "run_summary_prompt": Setting.get_run_summary_prompt(),
+            "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
+            "run_summary_max_length": Setting.get_run_summary_max_length(),
         }

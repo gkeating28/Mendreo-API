@@ -1,5 +1,7 @@
-from django.test import override_settings
+import re
 from unittest.mock import patch
+
+from django.test import override_settings
 
 from ...session.models import Session, SessionStep
 from ...step.models import Step
@@ -78,11 +80,21 @@ class Wp5StepRenderingTests(BaseTest):
         self.assertIn("<NAME>Later two</NAME>", prompt)
         self.assertNotIn("<TITLE>Name it</TITLE>", prompt)
         self.assertNotIn("<TITLE>Later one</TITLE>", prompt)
-        self.assertIn("<REFERENCE>", prompt.split("<SESSION_CONTEXT>", 1)[0])
+        rendered = re.search(r"(?m)^[ \t]*<SESSION_CONTEXT>[ \t]*$", prompt)
+        self.assertIsNotNone(rendered)
+        self.assertIn("<REFERENCE>", prompt[: rendered.start()])
         self.assertIn("weigh evidence for or against a thought or worry", prompt)
         self.assertIn("0 to 10 scale", prompt)
         self.assertIn("balanced or more accurate thought", prompt)
-        self.assertIn("only as background", prompt)
+        self.assertIn("brainstorm solutions, plans, or who can support them", prompt)
+        self.assertIn(
+            "Earlier sessions, today's completed sessions and previous exercise summaries are background only. "
+            "Never use them to skip, shorten or answer for the user in this step. "
+            "Ask this step's own questions, even if the user has done this exercise before.",
+            prompt,
+        )
+        self.assertNotIn("only as background", prompt)
+        self.assertNotIn("Do not apply cognitive restructuring", prompt)
         self.assertIn("ask if you have it right", prompt)
         self.assertNotIn("Do not reframe the situation", prompt)
         self.assertNotIn("cognitive restructuring as appropriate", prompt)

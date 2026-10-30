@@ -88,6 +88,9 @@ class Session(SmartModel):
     )
     close_reason = models.CharField(max_length=64, null=True, blank=True)
 
+    # One line plus bullets, written once when a completed exercise run closes.
+    run_summary = models.JSONField(null=True, blank=True)
+
     # The shared database already has this NOT NULL column. Session inserts
     # that omit it are rejected, which is what fails POST /sessions.
     authoring_test = models.BooleanField(default=False, db_default=False)

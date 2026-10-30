@@ -16,6 +16,7 @@ TOKEN_PATTERN = re.compile(
 )
 
 DEFAULT_START_BUTTON_LABEL = "Start exercise"
+CHECK_IN_SUMMARY_FALLBACK = "Pre-exercise check-in completed."
 
 CHECK_IN_RULES = """
             - Conduct a short conversational check-in only.
@@ -214,7 +215,7 @@ def generate_pre_exercise_summary(session) -> str:
     exercise = session.exercise
     completion_prompt = (exercise.check_in_summary_prompt or "").strip()
     if not completion_prompt:
-        return "Pre-exercise check-in completed."
+        return CHECK_IN_SUMMARY_FALLBACK
 
     from ..message.models import Message
 
@@ -242,9 +243,9 @@ def generate_pre_exercise_summary(session) -> str:
             "Return a concise summary of the check-in."
         )
         result = AI.ask(prompt, SummaryResult, temperature=0.2)
-        return (result.get("summary") or "").strip() or "Pre-exercise check-in completed."
+        return (result.get("summary") or "").strip() or CHECK_IN_SUMMARY_FALLBACK
     except Exception:
-        return "Pre-exercise check-in completed."
+        return CHECK_IN_SUMMARY_FALLBACK
 
 
 def format_pre_exercise_prompt_block(exercise, consumer, session=None) -> str:
