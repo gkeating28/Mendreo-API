@@ -32,10 +32,12 @@ ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
 ABOUT_THE_USER_HINT = (
-    "{user_name} is asking what you know about them.\n"
-    "Answer in two sentences from <CLIENT_SUMMARY>, <KNOWLEDGE> and <SESSION_CONTEXT>, "
-    "naming one or two specific things from them. Do not say you have no information. "
-    "Then ask one simple question."
+    "{user_name} is asking what you know about them. "
+    "Everything you know is written between the <ABOUT_CLIENT> tags below, "
+    "plus anything {user_name} has told you earlier in this chat. Use only that. "
+    "Do not guess or add anything else, such as age, hobbies, routines or feelings "
+    "that are not written there. Answer in two sentences, naming one or two specific "
+    "things from it. Do not say you have no information. Then ask one simple question."
 )
 
 
@@ -181,7 +183,28 @@ def about_the_user_hint(session, text: str) -> str | None:
     user_name = ""
     if consumer is not None:
         user_name = getattr(getattr(consumer, "user", None), "first_name", "") or ""
-    return ABOUT_THE_USER_HINT.replace("{user_name}", user_name.strip() or "there")
+    name = user_name.strip() or "there"
+    wording = ABOUT_THE_USER_HINT.replace("{user_name}", name)
+    return f"{wording}\n\n<ABOUT_CLIENT>\n{_about_sean_body(session)}\n</ABOUT_CLIENT>"
+
+
+def _without_unknown_knowledge(context: str) -> str:
+    kept = [
+        line
+        for line in (context or "").splitlines()
+        if not line.startswith("Unknown knowledge:")
+    ]
+    return "\n".join(kept).strip()
+
+
+def _about_sean_body(session) -> str:
+    from .prompt_blocks import render_client_summary, render_knowledge, render_session_context
+
+    consumer = session.consumer
+    summary = (render_client_summary(consumer) or "").strip()
+    knowledge = (render_knowledge(consumer, "general") or "").strip()
+    context = _without_unknown_knowledge(render_session_context(consumer, session) or "")
+    return "\n\n".join(part for part in (summary, knowledge, context) if part)
 
 
 def _summary_without_account_name(summary: str) -> str:

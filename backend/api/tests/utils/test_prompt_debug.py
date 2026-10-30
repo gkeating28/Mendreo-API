@@ -132,7 +132,7 @@ class PromptDebugUnitTests(SimpleTestCase):
         fallback = rows["on_step_fallback"]
         self.assertEqual(fallback["text"], ON_STEP_FALLBACK)
         self.assertIn(
-            "Answer in two sentences from <CLIENT_SUMMARY>",
+            "Answer in two sentences, naming one or two specific things from it.",
             rows["about_the_user_hint"]["text"],
         )
         self.assertIn(
@@ -676,7 +676,7 @@ class PromptDebugApiTests(BaseTest):
         )
         self.assertEqual(rows["on_step_fallback"]["text"], ON_STEP_FALLBACK)
         self.assertIn(
-            "Answer in two sentences from <CLIENT_SUMMARY>",
+            "Answer in two sentences, naming one or two specific things from it.",
             rows["about_the_user_hint"]["text"],
         )
         self.assertIn(

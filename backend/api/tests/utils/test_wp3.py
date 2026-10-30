@@ -162,6 +162,20 @@ class Wp3Tests(TestCase):
         summary = Summary.get_or_create(consumer)
         summary.detailed = "Worries about work presentations."
         summary.save(update_fields=["detailed", "updated_at"])
+        field = KnowledgeField.objects.create(
+            key="night_shift_job",
+            label="Night shift",
+            category="Work",
+            active=True,
+        )
+        KnowledgeEntry.objects.create(
+            consumer=consumer,
+            field=field,
+            value="night-shift porter",
+            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ADMIN,
+            confidence=1.0,
+            review_status=Constants.KNOWLEDGE_REVIEW_ACCEPTED,
+        )
         session = Session.objects.create(consumer=consumer)
         user_sender, agent_sender = Participant.create_participants(session)
         expected = ABOUT_THE_USER_HINT.replace(
@@ -177,7 +191,13 @@ class Wp3Tests(TestCase):
         self.assertIn("is asking what you know about them.", first_prompt)
         self.assertNotIn("about him", first_prompt)
         self.assertIn(expected, first_prompt)
+        self.assertIn("<ABOUT_CLIENT>", first_prompt)
+        self.assertIn("</ABOUT_CLIENT>", first_prompt)
+        self.assertIn("Worries about work presentations.", first_prompt)
+        self.assertIn("night-shift porter", first_prompt)
+        self.assertNotIn("Unknown knowledge", first_prompt)
         self.assertNotIn("Stay on this step", first_prompt)
+        self.assertNotIn("<ABOUT_CLIENT>", first.text)
 
         Message.objects.create(
             session=session,
@@ -191,7 +211,8 @@ class Wp3Tests(TestCase):
             sender=user_sender,
             text="what do you know about me?",
         )
-        self.assertIn(expected, user_prompt_with_hint(session, later))
+        later_prompt = user_prompt_with_hint(session, later)
+        self.assertEqual(later_prompt, first_prompt)
 
         remembered = Message.objects.create(
             session=session,
@@ -200,6 +221,8 @@ class Wp3Tests(TestCase):
         )
         remembered_prompt = user_prompt_with_hint(session, remembered)
         self.assertIn(expected, remembered_prompt)
+        self.assertIn("Worries about work presentations.", remembered_prompt)
+        self.assertIn("night-shift porter", remembered_prompt)
         self.assertNotIn(FOLLOW_UP_HINT, remembered_prompt)
 
         anxiety = Message.objects.create(
@@ -207,10 +230,7 @@ class Wp3Tests(TestCase):
             sender=user_sender,
             text="what do you know about anxiety",
         )
-        self.assertNotIn(
-            "Answer in two sentences from <CLIENT_SUMMARY>",
-            user_prompt_with_hint(session, anxiety),
-        )
+        self.assertNotIn("<ABOUT_CLIENT>", user_prompt_with_hint(session, anxiety))
 
         new_consumer = Auth.create_consumer()
         new_session = Session.objects.create(consumer=new_consumer)
