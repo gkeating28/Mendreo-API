@@ -120,6 +120,9 @@ class GoalGateTests(BaseTest):
     def test_rejected_goal_does_not_advance_and_hints_the_gap(self):
         session = self._session()
         message, response = self._reply(session)
+        message.text = "The worry is the presentation deadline."
+        message.save(update_fields=["text", "updated_at"])
+        response.text = message.text
         with patch(
             "api.utils.extraction.check_done_when",
             return_value={"met": False, "missing": "the situation"},
@@ -561,7 +564,7 @@ class GoalGateTests(BaseTest):
     def test_inferred_readiness_stores_a_hint_when_the_check_fails(self):
         session = self._plain_two_steps()
         message, response = self._claimed_without_flag(
-            session, "Are you ready to continue?"
+            session, "The worry is the presentation deadline."
         )
         with patch(
             "api.utils.extraction.check_done_when",
@@ -571,12 +574,37 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         message.refresh_from_db()
         decision = message.usage["step_decision"]
-        self.assertTrue(decision["inferred_asks_readiness"])
+        self.assertFalse(decision["inferred_asks_readiness"])
         self.assertFalse(decision["accepted"]["asks_readiness"])
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
         self.assertEqual(message.suggested_responses, [])
         self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
         self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+
+    def test_readiness_question_keeps_the_chip_when_done_when_fails(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "You named the worry. Are you ready to continue?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        session.refresh_from_db()
+        message.refresh_from_db()
+        decision = message.usage["step_decision"]
+        self.assertTrue(decision["inferred_asks_readiness"])
+        self.assertTrue(decision["accepted"]["asks_readiness"])
+        self.assertEqual(decision["check_done_when"], {"met": False, "missing": "the location"})
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
 
     def test_third_done_when_check_is_forced_after_two_rejections(self):
         session = self._plain_two_steps()
@@ -584,15 +612,19 @@ class GoalGateTests(BaseTest):
             "api.utils.extraction.check_done_when",
             return_value={"met": False, "missing": "the location"},
         ) as checker:
-            for text in ("Are you ready to continue?", "Are you ready to wrap up?"):
+            for text in (
+                "The worry is the presentation deadline.",
+                "The situation is still missing.",
+            ):
                 message, response = self._claimed_without_flag(session, text)
                 on_model_turn(session, message, response)
             session.refresh_from_db()
             self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 2})
             self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
             third, third_response = self._claimed_without_flag(
-                session, "Are you ready to conclude?"
+                session, "Both parts are named now."
             )
+            third_response.asks_readiness = True
             on_model_turn(session, third, third_response)
         self.assertEqual(checker.call_count, 2)
         session.refresh_from_db()
@@ -631,8 +663,9 @@ class GoalGateTests(BaseTest):
         session.cached_prompt_meta = {"done_when_rejections": {"1": 2}, "goal_hint": "old"}
         session.save(update_fields=["cached_prompt_meta", "updated_at"])
         message, response = self._claimed_without_flag(
-            session, "Are you ready to continue?"
+            session, "Both parts are named now."
         )
+        response.asks_readiness = True
         with patch("api.utils.extraction.check_done_when") as checker:
             on_model_turn(session, message, response)
         checker.assert_not_called()
