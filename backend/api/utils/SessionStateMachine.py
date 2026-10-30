@@ -191,14 +191,7 @@ def on_model_turn(session, agent_message, response) -> None:
             goal_met = False
 
         accepted_goal = goal_met
-        from .Agent import consumer_texts_for_current_step
-
-        advisory = (
-            model_goal
-            and _ends_with_readiness_question(text)
-            and not _is_last_step(session)
-            and len(consumer_texts_for_current_step(session)) >= 2
-        )
+        advisory = model_goal and _ends_with_readiness_question(text)
         if session_step and goal_met and session_step.goal_met_at is None:
             if not _accept_goal(session, session_step, agent_message, advisory=advisory):
                 asks = False
