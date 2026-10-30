@@ -581,8 +581,75 @@ class GoalGateTests(BaseTest):
         self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
         self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
 
+    def _user_reply(self, session, text):
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        return Message.objects.create(session=session, sender=user, text=text)
+
+    def test_last_step_readiness_question_still_rejects_a_failed_check(self):
+        session = self._session()
+        self._user_reply(session, "The worry is the deadline.")
+        self._user_reply(session, "It happens before presentations.")
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to finish?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        session.refresh_from_db()
+        message.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+
+    def test_one_user_reply_still_rejects_a_failed_check(self):
+        session = self._plain_two_steps()
+        self._user_reply(session, "The worry is the deadline.")
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to continue?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        session.refresh_from_db()
+        message.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+
+    def test_two_user_replies_show_the_chip_when_done_when_fails(self):
+        session = self._plain_two_steps()
+        self._user_reply(session, "The worry is the deadline.")
+        self._user_reply(session, "It happens before presentations.")
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to continue?"
+        )
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        session.refresh_from_db()
+        message.refresh_from_db()
+        self.assertEqual(
+            message.usage["step_decision"]["check_done_when"],
+            {"met": False, "missing": "the location"},
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+
     def test_readiness_question_keeps_the_chip_when_done_when_fails(self):
         session = self._plain_two_steps()
+        self._user_reply(session, "The worry is the deadline.")
+        self._user_reply(session, "It happens before presentations.")
         message, response = self._claimed_without_flag(
             session, "You named the worry. Are you ready to continue?"
         )
