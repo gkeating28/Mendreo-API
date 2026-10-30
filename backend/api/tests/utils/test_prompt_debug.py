@@ -121,6 +121,12 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertIn("balanced or more accurate thought", rows["step_scope_rules"]["text"])
         self.assertIn("brainstorm solutions", rows["step_scope_rules"]["text"])
         self.assertIn(
+            "Earlier sessions, today's completed sessions and previous exercise summaries are background only. "
+            "Never use them to skip, shorten or answer for the user in this step. "
+            "Ask this step's own questions, even if the user has done this exercise before.",
+            rows["step_scope_rules"]["text"],
+        )
+        self.assertIn(
             "Your first message must be the first question in those instructions.",
             rows["step_scope_rules"]["text"],
         )
@@ -691,6 +697,10 @@ class PromptDebugApiTests(BaseTest):
         self.assertNotIn("<FEEDBACK>", rows["programming_instructions"]["text"])
         self.assertNotIn("<ASSETS>", rows["programming_instructions"]["text"])
         self.assertIn("weigh evidence for or against a thought or worry", rows["step_scope_rules"]["text"])
+        self.assertIn(
+            "Ask this step's own questions, even if the user has done this exercise before.",
+            rows["step_scope_rules"]["text"],
+        )
         self.assertIn(
             "Your first message must be the first question in those instructions.",
             rows["step_scope_rules"]["text"],

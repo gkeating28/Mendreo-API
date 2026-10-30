@@ -87,6 +87,12 @@ class Wp5StepRenderingTests(BaseTest):
         self.assertIn("0 to 10 scale", prompt)
         self.assertIn("balanced or more accurate thought", prompt)
         self.assertIn("brainstorm solutions, plans, or who can support them", prompt)
+        self.assertIn(
+            "Earlier sessions, today's completed sessions and previous exercise summaries are background only. "
+            "Never use them to skip, shorten or answer for the user in this step. "
+            "Ask this step's own questions, even if the user has done this exercise before.",
+            prompt,
+        )
         self.assertNotIn("only as background", prompt)
         self.assertNotIn("Do not apply cognitive restructuring", prompt)
         self.assertIn("ask if you have it right", prompt)
