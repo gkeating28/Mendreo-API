@@ -312,11 +312,8 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
 def confirm_readiness_reply(user_message) -> ChipOutcome | None:
     """A short yes after Toni asked to move on completes the step.
 
-    Every step but the last must pass done-when, including the summary rule.
-    A failed check stays on this step and stores the missing-item hint. After
-    two failures on the same step the next yes advances. A checker error still
-    advances. The last step is unchanged. The completion prompt still records
-    the result.
+    The chat model does not run. Done-when and the depth check stay in place
+    for every other reply. The completion prompt still records the result.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -336,11 +333,6 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
 
     if not is_advance_gate_text(previous.text):
         return None
-
-    if not _is_last_step(session) and _gate_rejection_count(session) < 2:
-        if not _readiness_done_when_passed(session, session_step, previous):
-            _note_gate_rejection(session)
-            return None
 
     from .extraction import extract_step_result
 
@@ -579,7 +571,6 @@ def _confirm(
         meta = dict(session.cached_prompt_meta or {})
         meta.pop("goal_hint", None)
         meta.pop("depth_hint_step_id", None)
-        meta.pop("gate_rejections", None)
         session.cached_prompt_meta = meta
         session.save(
             update_fields=[
@@ -627,34 +618,7 @@ def _accept_goal(session, session_step, agent_message) -> bool:
     return True
 
 
-def _gate_rejection_count(session) -> int:
-    record = (session.cached_prompt_meta or {}).get("gate_rejections")
-    step_no = session.current_step_no or 1
-    if not isinstance(record, dict) or record.get("step_no") != step_no:
-        return 0
-    try:
-        return int(record.get("count") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _note_gate_rejection(session) -> None:
-    """Count a typed yes that the done-when check refused on this step."""
-    meta = dict(session.cached_prompt_meta or {})
-    step_no = session.current_step_no or 1
-    meta["gate_rejections"] = {
-        "step_no": step_no,
-        "count": _gate_rejection_count(session) + 1,
-    }
-    session.cached_prompt_meta = meta
-    session.save(update_fields=["cached_prompt_meta", "updated_at"])
-
-
-_FETCH_DONE_WHEN = object()
-
-
-def _readiness_done_when_passed(session, session_step, previous) -> bool:
-    """Done-when for a typed yes. A checker error advances; a real verdict does not."""
+def _done_when_passed(session, session_step, agent_message) -> bool:
     from .extraction import check_done_when
 
     try:
@@ -665,23 +629,7 @@ def _readiness_done_when_passed(session, session_step, previous) -> bool:
             getattr(session, "id", None),
             getattr(session_step, "id", None),
         )
-        return True
-    return _done_when_passed(session, session_step, previous, result)
-
-
-def _done_when_passed(session, session_step, agent_message, result=_FETCH_DONE_WHEN) -> bool:
-    from .extraction import check_done_when
-
-    if result is _FETCH_DONE_WHEN:
-        try:
-            result = check_done_when(session, session_step.step)
-        except Exception:
-            logger.exception(
-                "done_when check failed for session=%s step=%s",
-                getattr(session, "id", None),
-                getattr(session_step, "id", None),
-            )
-            result = {"met": True}
+        result = {"met": True}
     _remember_check_result(session, result)
     done_when = getattr(session_step.step, "done_when", None) or ""
     from .summary_confirmation import summary_confirmation_required, summary_was_confirmed

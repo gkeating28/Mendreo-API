@@ -462,7 +462,10 @@ class GoalGateTests(BaseTest):
 
     def _two_steps(self):
         session = self._session(
-            done_when="The user has named the worry and the situation.",
+            done_when=(
+                "The user has described their specific worry, the situation it occurs in, "
+                "and confirmed the summary is accurate."
+            )
         )
         exercise = session.exercise
         exercise.steps_no = 2
@@ -502,10 +505,6 @@ class GoalGateTests(BaseTest):
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="yes")
         with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
             patch(
                 "api.utils.extraction.extract_step_result",
                 return_value={
@@ -552,10 +551,6 @@ class GoalGateTests(BaseTest):
         user_message = Message.objects.create(session=session, sender=user, text="yes")
         prompts = []
         with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
             patch(
                 "api.utils.extraction.extract_step_result",
                 return_value={"value": "the worry", "confidence": 0.8},
@@ -626,126 +621,12 @@ class GoalGateTests(BaseTest):
         self.assertNotIn("<TURN_HINT>", prompts[0])
         self.assertNotIn("the plan", prompts[0])
 
-    def _yes(self, session, text="yes"):
-        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
-        return Message.objects.create(session=session, sender=user, text=text)
-
-    def test_yes_after_a_failed_done_when_stays_and_stores_the_hint(self):
-        session = self._two_steps()
-        self._ask(session, "Are you ready to continue?")
-        user_message = self._yes(session)
-        with patch(
-            "api.utils.extraction.check_done_when",
-            return_value={"met": False, "missing": "the location"},
-        ):
-            outcome = confirm_readiness_reply(user_message)
-        self.assertIsNone(outcome)
-        session.refresh_from_db()
-        self.assertEqual(session.current_step_no, 1)
-        self.assertFalse(session.session_steps.get(order=0).completed)
-        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
-        self.assertEqual(session.cached_prompt_meta["gate_rejections"]["count"], 1)
-
-    def test_yes_advances_when_done_when_passes(self):
-        session = self._two_steps()
-        self._ask(session, "Are you ready to continue?")
-        user_message = self._yes(session)
-        with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
-            patch(
-                "api.utils.extraction.extract_step_result",
-                return_value={"value": "the worry", "confidence": 0.8},
-            ),
-            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
-        ):
-            outcome = confirm_readiness_reply(user_message)
-        self.assertIsNotNone(outcome)
-        session.refresh_from_db()
-        self.assertEqual(session.current_step_no, 2)
-        self.assertTrue(session.session_steps.get(order=0).completed)
-
-    def test_yes_advances_after_two_gate_rejections(self):
-        session = self._two_steps()
-        self._ask(session, "Are you ready to continue?")
-        with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": False, "missing": "the location"},
-            ) as checker,
-            patch(
-                "api.utils.extraction.extract_step_result",
-                return_value={"value": "the worry", "confidence": 0.8},
-            ),
-            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
-        ):
-            first = confirm_readiness_reply(self._yes(session))
-            second = confirm_readiness_reply(self._yes(session, "Yes"))
-            session.refresh_from_db()
-            self.assertIsNone(first)
-            self.assertIsNone(second)
-            self.assertEqual(session.current_step_no, 1)
-            self.assertEqual(session.cached_prompt_meta["gate_rejections"]["count"], 2)
-            third = confirm_readiness_reply(self._yes(session, "yeah"))
-        self.assertIsNotNone(third)
-        self.assertEqual(checker.call_count, 2)
-        session.refresh_from_db()
-        self.assertEqual(session.current_step_no, 2)
-        self.assertTrue(session.session_steps.get(order=0).completed)
-        self.assertNotIn("gate_rejections", session.cached_prompt_meta or {})
-
-    def test_last_step_yes_finishes_without_the_done_when_check(self):
-        session = self._session()
-        self._ask(session, "Are you ready to continue?")
-        user_message = self._yes(session)
-        with (
-            patch("api.utils.extraction.check_done_when") as checker,
-            patch(
-                "api.utils.extraction.extract_step_result",
-                return_value={"value": "the worry", "confidence": 0.8},
-            ),
-            patch("api.utils.session_close.close_session", return_value=session),
-        ):
-            outcome = confirm_readiness_reply(user_message)
-        checker.assert_not_called()
-        self.assertIsNotNone(outcome)
-        session.refresh_from_db()
-        self.assertTrue(session.session_steps.get(order=0).completed)
-        self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED)
-
-    def test_checker_error_on_a_typed_yes_still_advances(self):
-        session = self._two_steps()
-        self._ask(session, "Are you ready to continue?")
-        user_message = self._yes(session)
-        with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                side_effect=RuntimeError("down"),
-            ),
-            patch(
-                "api.utils.extraction.extract_step_result",
-                return_value={"value": "the worry", "confidence": 0.8},
-            ),
-            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
-        ):
-            outcome = confirm_readiness_reply(user_message)
-        self.assertIsNotNone(outcome)
-        session.refresh_from_db()
-        self.assertEqual(session.current_step_no, 2)
-        self.assertTrue(session.session_steps.get(order=0).completed)
-
     def test_yes_completes_when_the_completion_prompt_fails(self):
         session = self._two_steps()
         self._ask(session, "Are you ready to continue?")
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="Yes")
         with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
             patch(
                 "api.utils.extraction.extract_step_result",
                 side_effect=RuntimeError("down"),
@@ -804,10 +685,6 @@ class GoalGateTests(BaseTest):
             "Now that you have that tool ready, are you ready to continue?",
         )
         with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
             patch(
                 "api.utils.extraction.extract_step_result",
                 return_value={"value": "the presentation", "confidence": 0.8},
