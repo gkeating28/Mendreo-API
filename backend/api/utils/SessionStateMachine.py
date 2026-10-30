@@ -191,8 +191,9 @@ def on_model_turn(session, agent_message, response) -> None:
             goal_met = False
 
         accepted_goal = goal_met
+        advisory = model_goal and _ends_with_readiness_question(text)
         if session_step and goal_met and session_step.goal_met_at is None:
-            if not _accept_goal(session, session_step, agent_message):
+            if not _accept_goal(session, session_step, agent_message, advisory=advisory):
                 asks = False
                 accepted_goal = False
 
@@ -613,9 +614,9 @@ def _confirm(
     return ChipOutcome(display, build_session_state(session, completion_card=card))
 
 
-def _accept_goal(session, session_step, agent_message) -> bool:
+def _accept_goal(session, session_step, agent_message, *, advisory: bool = False) -> bool:
     """Stamp goal_met_at only after done_when, and depth when it is due, both pass."""
-    if not _done_when_passed(session, session_step, agent_message):
+    if not _done_when_passed(session, session_step, agent_message, advisory=advisory):
         return False
     if _depth_check_due(session, session_step) and not _depth_check_passed(session, session_step):
         _downgrade_readiness(agent_message)
@@ -679,10 +680,10 @@ def _note_done_when_rejection(session) -> None:
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
 
-def _done_when_passed(session, session_step, agent_message) -> bool:
+def _done_when_passed(session, session_step, agent_message, *, advisory: bool = False) -> bool:
     from .extraction import check_done_when
 
-    if _done_when_rejection_count(session) >= 2:
+    if not advisory and _done_when_rejection_count(session) >= 2:
         result = {"met": True, "missing": "", "forced": True}
     else:
         try:
@@ -705,7 +706,7 @@ def _done_when_passed(session, session_step, agent_message) -> bool:
                 _store_summary_hint(session)
                 _note_done_when_rejection(session)
                 return False
-    if result is None or result.get("met"):
+    if result is None or result.get("met") or advisory:
         return True
     _downgrade_readiness(agent_message)
     _store_goal_hint(session, result.get("missing") or "")
