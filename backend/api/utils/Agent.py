@@ -593,6 +593,10 @@ _STATE_MACHINE_PROGRESSION = (
     "message a single question.\n"
     "        - Do not complete the step yourself. The app shows the readiness chips.\n"
 )
+DESCRIPTION_PREFIX = (
+    "Clinical background only. Do not read this to the user, "
+    "and do not turn it into a welcome or a suitability check.\n\n"
+)
 STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
@@ -1064,6 +1068,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
                 step_no = only_index + 1
+                description = DESCRIPTION_PREFIX + description
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(

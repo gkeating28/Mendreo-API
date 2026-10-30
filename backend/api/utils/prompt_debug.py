@@ -56,6 +56,12 @@ _SPECS = (
         "name": "STEP_SCOPE_RULES",
     },
     {
+        "label": "description_prefix",
+        "applies": "exercise only",
+        "module": "api.utils.Agent",
+        "name": "DESCRIPTION_PREFIX",
+    },
+    {
         "label": "on_step_fallback",
         "applies": "replaces the model's reply when an off-script retry still leaves the step",
         "module": "api.utils.turn_hint",

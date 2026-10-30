@@ -21,6 +21,7 @@ from django.core.cache import cache
 
 from ...setting.models import Setting
 from ...utils.Agent import (
+    DESCRIPTION_PREFIX,
     STEP_SCOPE_RULES,
     ExerciseStateResponse,
     _prompt_template,
@@ -166,7 +167,7 @@ class PromptDebugUnitTests(SimpleTestCase):
             rows["exercise_summary_prompt"]["applies"],
             "editable in Settings (update_exercise_summary)",
         )
-        self.assertNotIn("description_prefix", rows)
+        self.assertIn("description_prefix", rows)
         self.assertNotIn("2 sentences", rows["programming_instructions"]["text"])
         self.assertNotIn("compound questions", rows["programming_instructions"]["text"])
         self.assertEqual(
@@ -248,6 +249,8 @@ class PromptDebugUnitTests(SimpleTestCase):
             system_prompt=(
                 STEP_SCOPE_RULES
                 + "\n"
+                + DESCRIPTION_PREFIX
+                + "\n"
                 + Constants.DEFAULT_REPLY_LENGTH_INSTRUCTION
                 + "\n"
                 + Constants.DEFAULT_ONE_QUESTION_INSTRUCTION
@@ -259,7 +262,7 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertIn("reply_length", labels)
         self.assertIn("one_question", labels)
         self.assertIn("hidden_opener", labels)
-        self.assertNotIn("description_prefix", labels)
+        self.assertIn("description_prefix", labels)
         self.assertNotIn("check_in_rules", labels)
         self.assertNotIn("greet me and explain", rows["hidden_opener"]["text"])
         source = (_ROOT / programming["file"]).read_text().splitlines()
@@ -668,7 +671,7 @@ class PromptDebugApiTests(BaseTest):
         self.assertEqual(rows["user_fact_rule"]["text"], USER_FACT_RULE)
         self.assertEqual(rows["case_material_filter"]["text"], case_material_catalogue_text())
         self.assertNotIn("restructuring_rewrite", rows)
-        self.assertNotIn("description_prefix", rows)
+        self.assertIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)
         self.assertEqual(
             rows["pending_question"]["applies"],
