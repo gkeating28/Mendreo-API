@@ -11,8 +11,21 @@ _REQUIRED = re.compile(
 )
 
 _ASK = re.compile(
-    r"\b(?:did i (?:get|capture|understand)|have i got|does that (?:sound|seem) right|"
-    r"is that (?:right|accurate|correct)|did i (?:get|have) (?:that|it) right)\b",
+    r"\b(?:did i (?:get|capture|understand)|have i got|"
+    r"does that (?:sound|seem) right|does this (?:plan |summary )?sound right|"
+    r"does this summary accurately reflect|"
+    r"is that (?:right|accurate|correct)|is this right|"
+    r"did i (?:get|have) (?:that|it) right|does that cover it)\b",
+    re.IGNORECASE,
+)
+
+_SUMMARY_AFFIRM_START = re.compile(
+    r"^(?:yes|yeah|yep|correct|right|exactly|that's right|that's correct|"
+    r"that covers it|sounds good|looks good|perfect)\b",
+    re.IGNORECASE,
+)
+_SUMMARY_AFFIRM_BLOCK = re.compile(
+    r"\b(?:no|not|but|except|change|wrong)\b",
     re.IGNORECASE,
 )
 
@@ -43,10 +56,28 @@ def is_summary_confirmation(text: str) -> bool:
     return bool(_ASK.search(raw))
 
 
-def summary_was_confirmed(session, step) -> bool:
-    """True when the user agreed after an assistant summary in this step."""
+def is_summary_affirmation(text: str) -> bool:
+    """A short agreement after a summary. Used only by summary_was_confirmed."""
     from .SessionStateMachine import is_ready_affirmation
 
+    if is_ready_affirmation(text):
+        return True
+    raw = " ".join(
+        (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
+    ).rstrip(".!")
+    words = raw.split()
+    if not words or len(words) > 10:
+        return False
+    if _SUMMARY_AFFIRM_BLOCK.search(raw):
+        return False
+    return bool(_SUMMARY_AFFIRM_START.match(raw))
+
+
+def summary_was_confirmed(session, step) -> bool:
+    """True when the user agreed after an assistant summary in this step."""
+    from .SessionStateMachine import _is_last_step, is_ready_affirmation
+
+    agreed = is_summary_affirmation if _is_last_step(session) else is_ready_affirmation
     pending = False
     for message in _step_messages(session, step):
         text = message.text or ""
@@ -54,7 +85,7 @@ def summary_was_confirmed(session, step) -> bool:
         if not is_user and is_summary_confirmation(text):
             pending = True
             continue
-        if is_user and pending and is_ready_affirmation(text):
+        if is_user and pending and agreed(text):
             return True
         if is_user:
             pending = False
