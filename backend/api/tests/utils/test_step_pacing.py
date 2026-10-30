@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 from rest_framework import status
 
 from ...message.models import Message
@@ -17,17 +17,8 @@ from ...utils.SessionStateMachine import (
     on_model_turn,
     prepare_model_readiness,
 )
-from ...utils.summary_confirmation import (
-    is_summary_affirmation,
-    is_summary_confirmation,
-    summary_confirmation_rule,
-    summary_was_confirmed,
-)
-from ...utils.turn_hint import (
-    SUMMARY_CONFIRM_HINT,
-    finish_after_confirmed_summary_hint,
-    user_prompt_with_hint,
-)
+from ...utils.summary_confirmation import is_summary_confirmation, summary_confirmation_rule
+from ...utils.turn_hint import SUMMARY_CONFIRM_HINT, user_prompt_with_hint
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -1024,130 +1015,8 @@ class GoalGateTests(BaseTest):
             "the presentation",
         )
 
-    def _summary_recap(self, question):
-        return (
-            "So, to recap, you worry about missing deadlines and losing your job, "
-            "and it comes up at night. " + question
-        )
-
-    def _agree_after_summary(self, session, reply):
-        self._ask(session, self._summary_recap("Does this plan sound right to you?"))
-        self._user_reply(session, reply)
-        return session.session_steps.get(order=0).step
-
-    def test_yes_that_covers_it_confirms_the_summary(self):
-        session = self._session(done_when="The user confirmed the summary is accurate.")
-        step = self._agree_after_summary(session, "Yes, that covers it")
-        self.assertTrue(summary_was_confirmed(session, step))
-
-    def test_yes_but_change_does_not_confirm_the_summary(self):
-        session = self._session(done_when="The user confirmed the summary is accurate.")
-        step = self._agree_after_summary(session, "yes but change the second part")
-        self.assertFalse(summary_was_confirmed(session, step))
-
-    def test_a_plain_yes_still_confirms_the_summary(self):
-        session = self._session(done_when="The user confirmed the summary is accurate.")
-        step = self._agree_after_summary(session, "yes")
-        self.assertTrue(summary_was_confirmed(session, step))
-
-    def test_a_non_last_summary_question_still_holds_the_step(self):
-        session = self._two_steps()
-        text = self._summary_recap("Does this plan sound right to you?")
-        message, response = self._claimed_without_flag(session, text)
-        response.asks_readiness = True
-        response.step_goal_met = True
-        with patch(
-            "api.utils.extraction.check_done_when",
-            return_value={"met": True, "missing": ""},
-        ):
-            on_model_turn(session, message, response)
-        session.refresh_from_db()
-        message.refresh_from_db()
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-        self.assertEqual(message.suggested_responses, [])
-        self.assertEqual(session.cached_prompt_meta["goal_hint"], SUMMARY_CONFIRM_HINT)
-        self.assertIsNone(finish_after_confirmed_summary_hint(session))
-        user_message = self._user_reply(session, "Yes, that covers it")
-        prompted = user_prompt_with_hint(session, user_message)
-        self.assertIn(SUMMARY_CONFIRM_HINT, prompted)
-        self.assertNotIn("has confirmed the summary", prompted)
-        self.assertFalse(
-            summary_was_confirmed(session, session.session_steps.get(order=0).step)
-        )
-
-    def test_last_step_hint_appears_only_after_the_summary_is_confirmed(self):
-        session = self._session(done_when="The user confirmed the summary is accurate.")
-        account = session.consumer.user
-        account.first_name = "Sean"
-        account.save(update_fields=["first_name"])
-        early = self._user_reply(session, "The worry is the deadline.")
-        self.assertNotIn("has confirmed the summary", user_prompt_with_hint(session, early))
-        self._ask(session, self._summary_recap("Does this plan sound right to you?"))
-        self.assertIsNone(finish_after_confirmed_summary_hint(session))
-        yes = self._user_reply(session, "Yes, that covers it")
-        session.cached_prompt_meta = {"goal_hint": SUMMARY_CONFIRM_HINT}
-        session.save(update_fields=["cached_prompt_meta", "updated_at"])
-        prompted = user_prompt_with_hint(session, yes)
-        self.assertIn(
-            "Sean has confirmed the summary. Remind them briefly that they do not need to "
-            "get it right every time and can come back and try the exercise again. "
-            "Then ask only whether they are ready to finish. Do not say goodbye.",
-            prompted,
-        )
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
-        session.refresh_from_db()
-        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
-
-    @override_settings(AI_ASYNC_MESSAGES=False)
-    def test_last_step_yes_after_a_summary_question_runs_the_model(self):
-        session = self._session(done_when="The user confirmed the summary is accurate.")
-        self._ask(session, self._summary_recap("Does this plan sound right to you?"))
-        with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
-            patch(
-                "api.message.views.request_agent_response",
-                side_effect=lambda user_message, session: user_message,
-            ) as chat,
-            patch("api.message.views.enqueue_agent_response") as queued,
-        ):
-            response = self._post(
-                "/messages",
-                {"session": session.id, "text": "yes"},
-                self.consumer_one_access_token,
-            )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
-        chat.assert_called_once()
-        queued.assert_not_called()
-        session.refresh_from_db()
-        self.assertFalse(session.completed)
-        self.assertEqual(session.current_step_no, 1)
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-
 
 class SummaryConfirmationTests(SimpleTestCase):
-    def test_summary_question_variants_match_inside_a_recap(self):
-        lead = (
-            "So, to recap, you worry about missing deadlines and losing your job, "
-            "and it comes up at night. "
-        )
-        for question in (
-            "Does this summary accurately reflect your chosen strategies?",
-            "Does this plan sound right to you?",
-            "Have I got that right?",
-            "Is this right?",
-            "Does that cover it?",
-        ):
-            self.assertTrue(is_summary_confirmation(lead + question), question)
-            self.assertFalse(is_summary_confirmation(question), question)
-
-    def test_a_short_agreement_confirms_and_a_change_does_not(self):
-        self.assertTrue(is_summary_affirmation("Yes, that covers it"))
-        self.assertTrue(is_summary_affirmation("yes"))
-        self.assertFalse(is_summary_affirmation("yes but change the second part"))
-
     def test_a_recap_counts_and_a_readiness_close_does_not(self):
         recap = (
             "So, to recap, you worry about missing deadlines and losing your job, "

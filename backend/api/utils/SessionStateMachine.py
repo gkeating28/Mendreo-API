@@ -286,14 +286,9 @@ def is_ready_affirmation(text: str) -> bool:
 
 
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
-    """An affirmation that meets done_when completes a step that is not the last.
-
-    The last step returns here so the chat model can ask whether they are ready to finish.
-    """
+    """An affirmation that meets done_when completes the step. The chat model does not run."""
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
-        return None
-    if _is_last_step(session):
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
