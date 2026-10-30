@@ -362,6 +362,19 @@ def _reply_offers_to_end_the_exercise(text: str | None) -> bool:
     return bool(_OFFERS_TO_END.search(text or ""))
 
 
+_OFFERS_TO_MOVE_ON = re.compile(
+    r"\bready to (?:move on|continue|proceed|progress)\b"
+    r"|\bready for the next (?:step|part|stage)\b"
+    r"|\bmove on to the next\b"
+    r"|\bthe next (?:step|part|stage) of (?:this|the|our) exercise\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_offers_to_move_on(text: str | None) -> bool:
+    return bool(_OFFERS_TO_MOVE_ON.search(text or ""))
+
+
 def _hold_on_step(response_data) -> None:
     """Replace an off-script reply so the user is not offered another technique."""
     from .turn_hint import ON_STEP_FALLBACK
@@ -524,15 +537,29 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             and not _is_last_step(session)
             and _reply_offers_to_end_the_exercise(reply_text)
         )
-        if left or ending:
-            from .turn_hint import NOT_THE_LAST_STEP_HINT, STAY_ON_STEP_HINT
+        moving = (
+            instructions is not None
+            and _is_last_step(session)
+            and _reply_offers_to_move_on(reply_text)
+        )
+        if left or ending or moving:
+            from .turn_hint import (
+                NOT_THE_LAST_STEP_HINT,
+                STAY_ON_STEP_HINT,
+                last_step_hint,
+            )
 
             logger.warning(
                 "reply left the live step for session=%s message=%s; retrying once",
                 getattr(session, "id", None),
                 getattr(consumer_message, "id", None),
             )
-            steer[0] = NOT_THE_LAST_STEP_HINT if ending else STAY_ON_STEP_HINT
+            if ending:
+                steer[0] = NOT_THE_LAST_STEP_HINT
+            elif moving:
+                steer[0] = last_step_hint(session)
+            else:
+                steer[0] = STAY_ON_STEP_HINT
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
@@ -540,7 +567,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 debug_result = retry
                 retry_data = retry.output
                 retry_text = getattr(retry_data, "text", None)
-                if ending:
+                if ending or moving:
                     result = retry
                     response_data = retry_data
                     stayed = True

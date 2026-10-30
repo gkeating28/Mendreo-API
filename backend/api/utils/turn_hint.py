@@ -33,6 +33,12 @@ NOT_THE_LAST_STEP_HINT = (
     "If this step's work is done, ask only whether they are ready for the next step. "
     "Otherwise ask this step's next question."
 )
+LAST_STEP_HINT = (
+    "This is the last step. Do not talk about moving on or a next step. "
+    "If {name} has not yet confirmed your summary, summarise their decisions "
+    "and their alternative action in their own words and ask if you have it right. "
+    "If they have confirmed it, ask only whether they are ready to finish the exercise."
+)
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
@@ -242,6 +248,10 @@ def _client_blocks_are_new(session) -> bool:
         and "Today's completed sessions: none" in context
     )
     return summary_new and knowledge_new and context_new
+
+
+def last_step_hint(session) -> str:
+    return LAST_STEP_HINT.format(name=_client_first_name(session))
 
 
 def _client_first_name(session) -> str:

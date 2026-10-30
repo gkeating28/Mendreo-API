@@ -11,7 +11,9 @@ from ...utils import Constants
 from ...utils.Agent import (
     ExerciseStateResponse,
     _OFFERS_TO_END,
+    _OFFERS_TO_MOVE_ON,
     _reply_offers_to_end_the_exercise,
+    _reply_offers_to_move_on,
     get_response,
 )
 from ...utils.reply_style import (
@@ -19,7 +21,7 @@ from ...utils.reply_style import (
     reply_ends_mid_sentence,
     reply_leaves_the_step,
 )
-from ...utils.turn_hint import NOT_THE_LAST_STEP_HINT, ON_STEP_FALLBACK
+from ...utils.turn_hint import LAST_STEP_HINT, NOT_THE_LAST_STEP_HINT, ON_STEP_FALLBACK
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -397,3 +399,73 @@ class FinishEarlyRetryTests(BaseTest):
         self.assertEqual(len(calls), 2)
         self.assertEqual(response.text, "Are you ready to finish this exercise?")
         self.assertNotIn(ON_STEP_FALLBACK, response.text)
+
+    def test_last_step_move_on_retries_once_with_the_last_step_hint(self):
+        session = self._session(5)
+        account = session.consumer.user
+        account.first_name = "Sean"
+        account.save(update_fields=["first_name"])
+        calls, response = self._ask(
+            session,
+            [
+                "Are you ready to move on?",
+                "Are you ready to finish the exercise?",
+            ],
+        )
+        hint = LAST_STEP_HINT.format(name="Sean")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn(hint, calls[0])
+        self.assertIn(hint, calls[1])
+        self.assertNotIn(" his ", hint)
+        self.assertIn("their decisions", hint)
+        self.assertEqual(response.text, "Are you ready to finish the exercise?")
+
+    def test_last_step_finish_question_does_not_retry(self):
+        session = self._session(5)
+        calls, response = self._ask(session, ["Are you ready to finish?"])
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("This is the last step.", calls[0])
+        self.assertEqual(response.text, "Are you ready to finish?")
+
+    def test_a_second_move_on_question_is_sent_as_it_is(self):
+        session = self._session(5)
+        calls, response = self._ask(
+            session,
+            [
+                "Are you ready to move on?",
+                "Are you ready to move on?",
+                "Are you ready to finish?",
+            ],
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.text, "Are you ready to move on?")
+        self.assertNotIn(ON_STEP_FALLBACK, response.text)
+
+
+class OffersToMoveOnTests(SimpleTestCase):
+    def test_move_on_phrasing_matches_and_finish_does_not(self):
+        for text in (
+            "Are you ready to move on?",
+            "Are you ready to continue?",
+            "Are you ready to proceed?",
+            "Are you ready to progress?",
+            "Are you ready for the next step?",
+            "Are you ready for the next part?",
+            "Are you ready for the next stage?",
+            "Shall we move on to the next step?",
+            "This is the next step of this exercise.",
+            "This is the next part of the exercise.",
+            "This is the next stage of our exercise.",
+        ):
+            self.assertTrue(_reply_offers_to_move_on(text), text)
+        self.assertFalse(_reply_offers_to_move_on("Are you ready to finish?"))
+        self.assertFalse(_reply_offers_to_move_on("Are you ready to finish this exercise?"))
+        self.assertEqual(
+            _OFFERS_TO_MOVE_ON.pattern,
+            (
+                r"\bready to (?:move on|continue|proceed|progress)\b"
+                r"|\bready for the next (?:step|part|stage)\b"
+                r"|\bmove on to the next\b"
+                r"|\bthe next (?:step|part|stage) of (?:this|the|our) exercise\b"
+            ),
+        )
