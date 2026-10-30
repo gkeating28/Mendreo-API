@@ -244,6 +244,38 @@ def _client_blocks_are_new(session) -> bool:
     return summary_new and knowledge_new and context_new
 
 
+def _client_first_name(session) -> str:
+    consumer = getattr(session, "consumer", None)
+    user = getattr(consumer, "user", None) if consumer is not None else None
+    return (getattr(user, "first_name", None) or "").strip() or "The user"
+
+
+def finish_after_confirmed_summary_hint(session) -> str | None:
+    """Last step only, once the user has agreed the summary and the goal is still open."""
+    if not getattr(session, "exercise_id", None):
+        return None
+    from .SessionStateMachine import _is_last_step, _live_step
+
+    if not _is_last_step(session):
+        return None
+    session_step = _live_step(session)
+    if session_step is None or session_step.goal_met_at is not None:
+        return None
+    from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+    done_when = getattr(session_step.step, "done_when", None) or ""
+    if not summary_confirmation_required(done_when):
+        return None
+    if not summary_was_confirmed(session, session_step.step):
+        return None
+    name = _client_first_name(session)
+    return (
+        f"{name} has confirmed the summary. Remind them briefly that they do not need to "
+        "get it right every time and can come back and try the exercise again. "
+        "Then ask only whether they are ready to finish. Do not say goodbye."
+    )
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     from ..message.models import Message
@@ -252,6 +284,10 @@ def user_prompt_with_hint(session, user_message) -> str:
     about = about_the_user_hint(session, text)
     if about:
         return f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
+    finish = finish_after_confirmed_summary_hint(session)
+    if finish:
+        _consume_goal_hint(session)
+        return f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
     goal = _consume_goal_hint(session)
     if goal:
         return f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
