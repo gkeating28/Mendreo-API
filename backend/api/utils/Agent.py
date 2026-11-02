@@ -344,6 +344,8 @@ def _grounded_or_previous(candidate, previous, user_blob, keep) -> str:
 _OFFERS_TO_END = re.compile(
     r"\bready to finish\b"
     r"|\bready to wrap up\b"
+    r"|\bready to conclude\b"
+    r"|\bcompleted all the steps\b"
     r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
     r"|\bwrapping up\b"
     r"|\bfinish (?:this|the|our) (?:exercise|session)\b"

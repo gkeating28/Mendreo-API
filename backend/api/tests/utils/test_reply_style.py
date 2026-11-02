@@ -245,6 +245,9 @@ class OffersToEndTests(SimpleTestCase):
             "Are you ready to finish?",
             "Are you ready to finish this exercise?",
             "Are you ready to wrap up?",
+            "Are you ready to conclude?",
+            "Are you ready to conclude our exercise for today?",
+            "Since we have completed all the steps, are you ready to conclude?",
             "Let's wrap up this exercise.",
             "Let's wrap up the session.",
             "We're wrapping up.",
@@ -271,6 +274,8 @@ class OffersToEndTests(SimpleTestCase):
             (
                 r"\bready to finish\b"
                 r"|\bready to wrap up\b"
+                r"|\bready to conclude\b"
+                r"|\bcompleted all the steps\b"
                 r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
                 r"|\bwrapping up\b"
                 r"|\bfinish (?:this|the|our) (?:exercise|session)\b"

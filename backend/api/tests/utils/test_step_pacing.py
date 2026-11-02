@@ -1052,6 +1052,31 @@ class GoalGateTests(BaseTest):
         step = self._agree_after_summary(session, "Yes, that covers it")
         self.assertTrue(summary_was_confirmed(session, step))
 
+    def test_yes_after_do_i_have_that_right_confirms_the_summary(self):
+        for reply in ("Yes, that is correct", "Yes, that is right"):
+            session = self._session(done_when="The user confirmed the summary is accurate.")
+            self._ask(session, self._summary_recap("Do I have that right?"))
+            self._user_reply(session, reply)
+            step = session.session_steps.get(order=0).step
+            self.assertTrue(summary_was_confirmed(session, step), reply)
+
+    def test_a_qualified_reply_does_not_confirm_the_summary_or_finish(self):
+        for reply in ("Not yet", "no, wait", "yes, but can we talk about X?"):
+            session = self._session(done_when="The user confirmed the summary is accurate.")
+            self._ask(session, self._summary_recap("Do I have that right?"))
+            self._user_reply(session, reply)
+            step = session.session_steps.get(order=0).step
+            self.assertFalse(summary_was_confirmed(session, step), reply)
+            self._ask(session, "Are you ready to conclude our exercise for today?")
+            user_message = self._user_reply(session, reply)
+            with self._patches() as mocks:
+                outcome = confirm_readiness_reply(user_message)
+            self.assertIsNone(outcome, reply)
+            mocks[2].assert_not_called()
+            session.refresh_from_db()
+            self.assertFalse(session.completed, reply)
+            self.assertFalse(session.session_steps.get(order=0).completed, reply)
+
     def test_yes_but_change_does_not_confirm_the_summary(self):
         session = self._session(done_when="The user confirmed the summary is accurate.")
         step = self._agree_after_summary(session, "yes but change the second part")
@@ -1324,12 +1349,12 @@ class GoalGateTests(BaseTest):
             self.assertEqual(session.current_step_no, 1, phrase)
             self.assertFalse(session.session_steps.get(order=0).completed, phrase)
 
-    def test_ready_for_the_next_step_does_not_become_a_gate(self):
-        self.assertFalse(is_advance_gate_text("Are you ready for the next step?"))
+    def test_ready_for_the_next_step_is_a_gate(self):
+        self.assertTrue(is_advance_gate_text("Are you ready for the next step?"))
         self.assertFalse(is_advance_gate_text("Are you ready for next step?"))
         session = self._plain_two_steps()
-        self._ask(session, "Are you ready for the next step?")
-        user_message = self._user_reply(session, "ready for next step")
+        self._ask(session, "Are you ready for next step?")
+        user_message = self._user_reply(session, "yes")
         with self._patches() as mocks:
             outcome = confirm_readiness_reply(user_message)
         self.assertIsNone(outcome)
@@ -1337,6 +1362,38 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertEqual(session.current_step_no, 1)
         self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_yes_after_ready_to_conclude_is_accepted_on_the_last_step(self):
+        text = "Are you ready to conclude our exercise for today?"
+        self.assertTrue(is_advance_gate_text(text))
+        session = self._session(done_when="The user confirmed the summary is accurate.")
+        self._ask(session, text)
+        user_message = self._user_reply(session, "yes")
+        with self._patches() as mocks:
+            outcome = confirm_readiness_reply(user_message)
+        self.assertIsNotNone(outcome)
+        mocks[2].assert_not_called()
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+        self.assertTrue(session.session_steps.get(order=0).completed)
+
+    def test_im_ready_to_finish_after_a_confirmed_summary_uses_finishing_confirm(self):
+        session = self._session(done_when="The user confirmed the summary is accurate.")
+        self._ask(session, self._summary_recap("Do I have that right?"))
+        self._user_reply(session, "Yes, that is correct")
+        self.assertTrue(
+            summary_was_confirmed(session, session.session_steps.get(order=0).step)
+        )
+        self._ask(session, "Are you ready to finish?")
+        user_message = self._user_reply(session, "I'm ready to finish")
+        with self._patches():
+            with patch("api.utils.SessionStateMachine._confirm", wraps=_confirm) as confirm:
+                outcome = confirm_readiness_reply(user_message)
+        self.assertIsNotNone(outcome)
+        confirm.assert_called_once_with(session, user_message, finishing=True)
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+        self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED)
 
     def test_ready_and_finish_chips_are_unchanged(self):
         session = self._awaiting(self._plain_two_steps())
@@ -1386,6 +1443,12 @@ class SummaryConfirmationTests(SimpleTestCase):
             "Have I got that right?",
             "Is this right?",
             "Does that cover it?",
+            "Do I have that right?",
+            "Do I have this right?",
+            "Have I understood that right?",
+            "Is that right?",
+            "Does that sound right?",
+            "Does that feel right?",
         ):
             self.assertTrue(is_summary_confirmation(lead + question), question)
             self.assertFalse(is_summary_confirmation(question), question)
@@ -1407,6 +1470,11 @@ class SummaryConfirmationTests(SimpleTestCase):
         self.assertTrue(is_summary_confirmation(recap))
         self.assertFalse(is_summary_confirmation(close))
         self.assertFalse(is_summary_confirmation("Did I get that right?"))
+        buried = (
+            "So, to recap, you worry about missing deadlines and losing your job. "
+            "Do I have that right? We can add one more detail before we stop here."
+        )
+        self.assertFalse(is_summary_confirmation(buried))
 
     def test_rule_is_added_only_when_the_step_requires_a_confirmed_summary(self):
         required = "The user confirmed the summary is accurate."

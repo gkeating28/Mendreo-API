@@ -11,8 +11,9 @@ _REQUIRED = re.compile(
 )
 
 _ASK = re.compile(
-    r"\b(?:did i (?:get|capture|understand)|have i got|"
-    r"does that (?:sound|seem) right|does this (?:plan |summary )?sound right|"
+    r"\b(?:did i (?:get|capture|understand)|have i got|have i understood that right|"
+    r"do i have (?:that|this) right|"
+    r"does that (?:sound|seem|feel) right|does this (?:plan |summary )?sound right|"
     r"does this summary accurately reflect|"
     r"is that (?:right|accurate|correct)|is this right|"
     r"did i (?:get|have) (?:that|it) right|does that cover it)\b",
@@ -45,15 +46,22 @@ def summary_confirmation_rule(done_when: str) -> str:
     )
 
 
+def _final_sentence(text: str) -> str:
+    raw = " ".join((text or "").split())
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", raw) if part.strip()]
+    return parts[-1] if parts else ""
+
+
 def is_summary_confirmation(text: str) -> bool:
     """A recap that names what was said and asks if it is right.
 
     A short question, or a readiness question, does not count.
+    The ask has to be in the final sentence.
     """
     raw = " ".join((text or "").split())
     if len(raw.split()) < 12:
         return False
-    return bool(_ASK.search(raw))
+    return bool(_ASK.search(_final_sentence(raw)))
 
 
 def is_summary_affirmation(text: str) -> bool:
