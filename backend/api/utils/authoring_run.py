@@ -179,7 +179,10 @@ def post_authoring_message(session, text, from_suggested_response):
         confirm_readiness_reply,
         consume_chip,
         handle_typed_while_awaiting,
+        _is_last_step,
+        _summary_confirmed,
         is_ready_affirmation,
+        is_ready_restatement,
     )
     from .prompt_debug import capture, finish_debug
 
@@ -202,7 +205,12 @@ def post_authoring_message(session, text, from_suggested_response):
         if outcome is None and not from_suggested_response:
             outcome = handle_typed_while_awaiting(user_message)
             if outcome is not None and awaiting and not is_ready_affirmation(text):
-                refused = True
+                last_step = _is_last_step(session)
+                summary_confirmed = _summary_confirmed(session) if last_step else False
+                if not is_ready_restatement(
+                    text, last_step=last_step, summary_confirmed=summary_confirmed
+                ):
+                    refused = True
         if outcome is None:
             outcome = confirm_readiness_reply(user_message)
 

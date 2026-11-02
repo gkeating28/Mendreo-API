@@ -282,6 +282,91 @@ def is_ready_affirmation(text: str) -> bool:
     return normalized.rstrip(".!") in _READY_AFFIRMATIONS
 
 
+_NEXT_RESTATEMENTS = {
+    "ready for next step",
+    "ready for the next step",
+    "i'm ready for the next step",
+    "ready to continue",
+    "ready to move on",
+    "i'm ready to move on",
+    "let's continue",
+    "continue",
+    "next",
+    "next step",
+    "move on",
+}
+_FINISH_RESTATEMENTS = {
+    "ready to finish",
+    "i'm ready to finish",
+    "i am ready to finish",
+    "finish",
+    "finish the exercise",
+    "i want to finish",
+    "i want to finish the exercise",
+    "i'm ready to stop",
+    "ready to stop",
+}
+_READY_BLOCK = re.compile(
+    r"\b(?:not|no|wait|yet|later)\b|hold on|n't",
+    re.IGNORECASE,
+)
+
+
+def _ready_text(text: str) -> str:
+    """Lower case, collapsed spaces, trailing . ! and quotes removed."""
+    normalised = " ".join(
+        (text or "")
+        .strip()
+        .lower()
+        .replace("\u2019", "'")
+        .replace("\u2018", "'")
+        .split()
+    )
+    return normalised.strip("\"'\u201c\u201d").rstrip(".!").strip("\"'\u201c\u201d")
+
+
+def is_ready_restatement(text, *, last_step, summary_confirmed) -> bool:
+    """A short typed yes. Exact affirmations stay in is_ready_affirmation.
+
+    Next-step wording counts only before the last step. Finish wording counts
+    only on the last step after the summary is confirmed.
+    """
+    if "?" in (text or ""):
+        return False
+    normalised = _ready_text(text)
+    words = normalised.split()
+    if not words or len(words) > 8 or _READY_BLOCK.search(normalised):
+        return False
+    if not last_step and normalised in _NEXT_RESTATEMENTS:
+        return True
+    return bool(last_step and summary_confirmed and normalised in _FINISH_RESTATEMENTS)
+
+
+def _summary_confirmed(session) -> bool:
+    session_step = _live_step(session)
+    if session_step is None or getattr(session_step, "step", None) is None:
+        return False
+    from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+    done_when = getattr(session_step.step, "done_when", None) or ""
+    if not summary_confirmation_required(done_when):
+        return True
+    return summary_was_confirmed(session, session_step.step)
+
+
+def _confirm_typed_ready(session, user_message, *, last_step, summary_confirmed, extracted=None):
+    """Finish wording uses the Finish exercise chip's _confirm call."""
+    if (
+        last_step
+        and summary_confirmed
+        and _ready_text(user_message.text or "") in _FINISH_RESTATEMENTS
+    ):
+        return _confirm(session, user_message, finishing=True)
+    if extracted is None:
+        return _confirm(session, user_message)
+    return _confirm(session, user_message, extracted=extracted)
+
+
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     """An affirmation that meets done_when completes a step that is not the last.
 
@@ -336,7 +421,12 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
-    if not is_ready_affirmation(user_message.text or ""):
+    last_step = _is_last_step(session)
+    summary_confirmed = _summary_confirmed(session) if last_step else False
+    text = user_message.text or ""
+    if not is_ready_affirmation(text) and not is_ready_restatement(
+        text, last_step=last_step, summary_confirmed=summary_confirmed
+    ):
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
@@ -349,6 +439,9 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
 
     if not is_advance_gate_text(previous.text):
         return None
+
+    if _ready_text(text) in _FINISH_RESTATEMENTS and last_step and summary_confirmed:
+        return _confirm(session, user_message, finishing=True)
 
     from .extraction import extract_step_result
 
@@ -371,8 +464,18 @@ def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
     session = user_message.session
     if session.state != Constants.SESSION_STATE_AWAITING_READY:
         return None
-    if is_ready_affirmation(user_message.text or ""):
-        return _confirm(session, user_message)
+    last_step = _is_last_step(session)
+    summary_confirmed = _summary_confirmed(session) if last_step else False
+    text = user_message.text or ""
+    if is_ready_affirmation(text) or is_ready_restatement(
+        text, last_step=last_step, summary_confirmed=summary_confirmed
+    ):
+        return _confirm_typed_ready(
+            session,
+            user_message,
+            last_step=last_step,
+            summary_confirmed=summary_confirmed,
+        )
     _count_user_message(session, user_message)
     _retreat(session)
     return ChipOutcome(user_message, build_session_state(session))

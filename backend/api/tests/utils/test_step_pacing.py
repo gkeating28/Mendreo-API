@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
@@ -10,13 +11,17 @@ from ...step.models import Step
 from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse
 from ...utils.SessionStateMachine import (
+    _confirm,
     confirm_readiness_reply,
     confirm_summary_if_done,
     consume_chip,
+    handle_typed_while_awaiting,
     is_model_ready_chip,
+    is_ready_restatement,
     on_model_turn,
     prepare_model_readiness,
 )
+from ...utils.StepProgress import is_advance_gate_text
 from ...utils.summary_confirmation import (
     is_summary_affirmation,
     is_summary_confirmation,
@@ -1132,6 +1137,241 @@ class GoalGateTests(BaseTest):
         self.assertFalse(session.completed)
         self.assertEqual(session.current_step_no, 1)
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    _NEXT_PHRASES = (
+        "ready for next step",
+        "Ready for the next step.",
+        "I'm ready for the next step",
+        "ready to continue",
+        "ready to move on",
+        "I'm ready to move on",
+        "let's continue",
+        "continue",
+        "next",
+        "next step",
+        "move on",
+    )
+    _FINISH_PHRASES = (
+        "ready to finish",
+        "I'm ready to finish",
+        "I am ready to finish",
+        "finish",
+        "finish the exercise",
+        "I want to finish",
+        "I want to finish the exercise",
+        "I'm ready to stop",
+        "ready to stop",
+    )
+    _REJECTED_PHRASES = (
+        "not ready",
+        "no",
+        "not yet",
+        "I'm not ready to move on",
+        "wait",
+        "hold on",
+        "ready?",
+        "I am ready for the next step please now",
+    )
+
+    @contextmanager
+    def _patches(self):
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ) as extract,
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            patch("api.utils.Agent.get_response") as chat,
+        ):
+            yield extract, None, chat
+
+    def _awaiting(self, session, text="Are you ready for the next step?"):
+        session.state = Constants.SESSION_STATE_AWAITING_READY
+        session.save(update_fields=["state", "updated_at"])
+        self._ask(session, text)
+        return session
+
+    def test_restatement_phrases_match_only_on_the_right_step(self):
+        for phrase in self._NEXT_PHRASES:
+            self.assertTrue(
+                is_ready_restatement(phrase, last_step=False, summary_confirmed=False),
+                phrase,
+            )
+            self.assertFalse(
+                is_ready_restatement(phrase, last_step=True, summary_confirmed=True),
+                phrase,
+            )
+        for phrase in self._FINISH_PHRASES:
+            self.assertFalse(
+                is_ready_restatement(phrase, last_step=False, summary_confirmed=True),
+                phrase,
+            )
+            self.assertFalse(
+                is_ready_restatement(phrase, last_step=True, summary_confirmed=False),
+                phrase,
+            )
+            self.assertTrue(
+                is_ready_restatement(phrase, last_step=True, summary_confirmed=True),
+                phrase,
+            )
+        for phrase in self._REJECTED_PHRASES:
+            self.assertFalse(
+                is_ready_restatement(phrase, last_step=False, summary_confirmed=False),
+                phrase,
+            )
+            self.assertFalse(
+                is_ready_restatement(phrase, last_step=True, summary_confirmed=True),
+                phrase,
+            )
+
+    def test_each_next_phrase_advances_a_non_last_step(self):
+        for phrase in self._NEXT_PHRASES:
+            session = self._awaiting(self._plain_two_steps())
+            user_message = self._user_reply(session, phrase)
+            with self._patches() as mocks:
+                outcome = handle_typed_while_awaiting(user_message)
+            self.assertIsNotNone(outcome, phrase)
+            mocks[2].assert_not_called()
+            session.refresh_from_db()
+            self.assertEqual(session.current_step_no, 2, phrase)
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
+            self.assertFalse(session.completed, phrase)
+            self.assertTrue(session.session_steps.get(order=0).completed, phrase)
+
+    def test_each_next_phrase_confirms_after_an_existing_gate(self):
+        for phrase in self._NEXT_PHRASES:
+            session = self._plain_two_steps()
+            self._ask(session, "Are you ready to continue?")
+            user_message = self._user_reply(session, phrase)
+            with self._patches() as mocks:
+                outcome = confirm_readiness_reply(user_message)
+            self.assertIsNotNone(outcome, phrase)
+            mocks[2].assert_not_called()
+            session.refresh_from_db()
+            self.assertEqual(session.current_step_no, 2, phrase)
+
+    def test_finish_phrases_do_not_advance_a_non_last_step(self):
+        for phrase in ("ready to finish", "I want to finish the exercise", "I'm ready to stop"):
+            session = self._awaiting(self._plain_two_steps())
+            user_message = self._user_reply(session, phrase)
+            with self._patches() as mocks:
+                outcome = handle_typed_while_awaiting(user_message)
+            mocks[2].assert_not_called()
+            self.assertEqual(outcome.message, user_message, phrase)
+            session.refresh_from_db()
+            self.assertEqual(session.current_step_no, 1, phrase)
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
+            self.assertFalse(session.session_steps.get(order=0).completed, phrase)
+
+    def test_finish_phrases_do_not_complete_before_the_summary(self):
+        for phrase in self._FINISH_PHRASES:
+            session = self._session(done_when="The user confirmed the summary is accurate.")
+            self._awaiting(session, "Are you ready to finish?")
+            user_message = self._user_reply(session, phrase)
+            with self._patches() as mocks:
+                outcome = handle_typed_while_awaiting(user_message)
+            mocks[2].assert_not_called()
+            self.assertEqual(outcome.message, user_message, phrase)
+            session.refresh_from_db()
+            self.assertFalse(session.completed, phrase)
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
+
+    def test_each_finish_phrase_uses_the_finish_chip_confirm(self):
+        for phrase in self._FINISH_PHRASES:
+            session = self._session(done_when="The user confirmed the summary is accurate.")
+            self._agree_after_summary(session, "Yes, that covers it")
+            self._awaiting(session, "Are you ready to finish?")
+            user_message = self._user_reply(session, phrase)
+            with self._patches():
+                with patch(
+                    "api.utils.SessionStateMachine._confirm", wraps=_confirm
+                ) as confirm:
+                    outcome = handle_typed_while_awaiting(user_message)
+            self.assertIsNotNone(outcome, phrase)
+            confirm.assert_called_once_with(session, user_message, finishing=True)
+            session.refresh_from_db()
+            self.assertTrue(session.completed, phrase)
+            self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED, phrase)
+            self.assertEqual(
+                session.session_steps.get(order=0).completion_result,
+                "the worry",
+                phrase,
+            )
+
+    def test_finish_phrase_after_a_finish_gate_uses_the_same_confirm(self):
+        session = self._session(done_when="The user confirmed the summary is accurate.")
+        self._agree_after_summary(session, "Yes, that covers it")
+        self._ask(session, "Are you ready to finish?")
+        user_message = self._user_reply(session, "I'm ready to finish")
+        with self._patches():
+            with patch("api.utils.SessionStateMachine._confirm", wraps=_confirm) as confirm:
+                outcome = confirm_readiness_reply(user_message)
+        self.assertIsNotNone(outcome)
+        confirm.assert_called_once_with(session, user_message, finishing=True)
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+
+    def test_an_unrecognised_typed_reply_still_retreats(self):
+        for phrase in self._REJECTED_PHRASES:
+            session = self._awaiting(self._plain_two_steps())
+            user_message = self._user_reply(session, phrase)
+            with self._patches() as mocks:
+                outcome = handle_typed_while_awaiting(user_message)
+            mocks[2].assert_not_called()
+            self.assertEqual(outcome.message, user_message, phrase)
+            session.refresh_from_db()
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
+            self.assertEqual(session.current_step_no, 1, phrase)
+            self.assertFalse(session.session_steps.get(order=0).completed, phrase)
+
+    def test_ready_for_the_next_step_does_not_become_a_gate(self):
+        self.assertFalse(is_advance_gate_text("Are you ready for the next step?"))
+        self.assertFalse(is_advance_gate_text("Are you ready for next step?"))
+        session = self._plain_two_steps()
+        self._ask(session, "Are you ready for the next step?")
+        user_message = self._user_reply(session, "ready for next step")
+        with self._patches() as mocks:
+            outcome = confirm_readiness_reply(user_message)
+        self.assertIsNone(outcome)
+        mocks[2].assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_ready_and_finish_chips_are_unchanged(self):
+        session = self._awaiting(self._plain_two_steps())
+        previous = session.messages.order_by("-created_at").first()
+        previous.suggested_responses = [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET]
+        previous.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_READY
+        previous.save(update_fields=["suggested_responses", "suggested_responses_kind", "updated_at"])
+        typed = self._user_reply(session, "ready for next step")
+        self.assertIsNone(consume_chip(typed, True))
+        yes = self._user_reply(session, Constants.CHIP_READY_YES)
+        with self._patches() as mocks:
+            outcome = consume_chip(yes, True)
+        self.assertIsNotNone(outcome)
+        mocks[2].assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+
+        last = self._session(done_when="The user confirmed the summary is accurate.")
+        self._agree_after_summary(last, "Yes, that covers it")
+        self._awaiting(last, "Are you ready to finish?")
+        offer = last.messages.order_by("-created_at").first()
+        offer.suggested_responses = [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET]
+        offer.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FINISH
+        offer.save(update_fields=["suggested_responses", "suggested_responses_kind", "updated_at"])
+        spoken = self._user_reply(last, "I'm ready to finish")
+        self.assertIsNone(consume_chip(spoken, True))
+        chip = self._user_reply(last, Constants.CHIP_FINISH)
+        with self._patches():
+            with patch("api.utils.SessionStateMachine._confirm", wraps=_confirm) as confirm:
+                finished = consume_chip(chip, True)
+        self.assertIsNotNone(finished)
+        confirm.assert_called_once_with(last, chip, finishing=True)
+        last.refresh_from_db()
+        self.assertTrue(last.completed)
+        self.assertEqual(last.state, Constants.SESSION_STATE_COMPLETED)
 
 
 class SummaryConfirmationTests(SimpleTestCase):
