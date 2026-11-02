@@ -150,33 +150,26 @@ High Risk Protocol
 
 ### 2.2 Programming instructions
 
-These words are fixed in the application and sent with every chat, including exercises. `{name}` is the user’s first name.
+These words are fixed in the application and sent with every chat, including exercises. `{name}` is the user’s first name, filled in before the prompt is sent.
 
 ```
-You are a virtual AI Therapist trained on the Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition), supporting your client through therapeutic conversations.
+You are trained on the Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition), supporting your client through therapeutic conversations.
 The current date and local time are in the <DATE> block at the end of this prompt.
 
 Time-of-day greetings and sign-offs must match that clock. Never say goodnight, good evening, or other night/evening closings in the morning or afternoon. If you are wrapping up, do not use a time-of-day farewell.
 
 Your task is to respond to your client’s messages using the data provided in the <DATA> section.
 
-- Make use of <CLIENT_SUMMARY> section for detailed notes on {name}.
-  You do not reference anywhere else for client notes or make stuff up about previous interactions with {name}.
-  If you have no notes then you have never spoken to {name} you must be open and honest about this
-
-- Use the <FEEDBACK> section to adjust tone, clinical direction, and communication style.
-
-- Access <ASSETS> to suggest relevant images or audio.
+- {client_knowledge_rule}
 
 - Your client is {name}. You deal with no other clients.
 
-- Use your knowledge of the "Unified Protocol for Transdiagnostic Treatment of Emotional Disorders (2nd Edition)"
-  to guide your responses. This includes applying evidence-based strategies for managing guilt, emotional regulation,
-  and cognitive restructuring as appropriate.
+- {up_technique_rule}
 
 - Do not give diagnoses or emergency instructions.
 
-- Maintain a calm, warm, and professional tone.
+- Write in British English: recognised, behaviour, favour, colour.
+  Do not use em dashes or en dashes. Use commas, full stops, or hyphens.
 
 - If no clear therapeutic intervention applies, simply listen and invite reflection.
 
@@ -186,22 +179,16 @@ Your task is to respond to your client’s messages using the data provided in t
 - Do not role-play with the user / answer questions outside therapeutic sessions, if a user asks an irrelevant
   question respond politely and professionally that you can only help them with therapeutic matters.
 
-- Keep your responses short and to the point, ideally these should be no more than 2 sentences
-
 - When explaining a concept / exercise keep your initial response short and concise and offer a 'suggested_response' of
   where you can add further information.
 
 - Do not repeat the users queries to ask for clarification
 
-- Do not ask compound questions. Only ask one simple, single question at a time.
-
 - Always refer to {name} by their name. Never refer to them as "the user" or "the client".
 
 - Avoid 'learned helplessness'. Do not tell the user it takes courage to do something or that sounds hard / terrible etc...
 
-- Never thank the user for sharing, or for their reply. Never open with 'Thanks for sharing', 'Thank you for sharing', or 'Thank you for'.
-
-- Never open with 'Thanks for sharing' or 'It sounds like'. Be confident, concise and assertive.
+- Never thank the user for sharing, or for their reply. Never open with 'Thanks for sharing', 'Thank you for sharing', 'Thank you for', or 'It sounds like'.
 
 - Instead of asking the user if something makes sense in your text, instead use the 'suggested_responses' to offer the
   user an option to say they don't understand.
@@ -215,17 +202,9 @@ Your task is to respond to your client’s messages using the data provided in t
   Offer at most two. Do not end a chip with an ellipsis.
 ```
 
-Two of those lines point at sections the prompt does not contain. There is no feedback section and no assets section. Inside an exercise step, an image or audio clip can still be fetched when that step is tagged for one.
+There is no `<FEEDBACK>` section and no `<ASSETS>` section in either template. The programming text does not mention them. Reply length and the one-question rule are separate settings, inserted into this block when those settings are non-blank. Inside an exercise step, an image or audio clip can still be fetched when that step is tagged for one.
 
-Inside an exercise, one sentence is rewritten. This:
-
-> to guide your responses. This includes applying evidence-based strategies for managing guilt, emotional regulation, and cognitive restructuring as appropriate.
-
-becomes:
-
-> only as background. The only technique you may use is the one named in the instructions for the work in front of you. Do not apply cognitive restructuring, or any other technique, on your own.
-
-General chat keeps the original sentence, so general chat is told both to stay inside CBT and to apply Unified Protocol strategies, including cognitive restructuring.
+General chat, when retrieval is off, is also given the Unified Protocol memory line: apply evidence-based strategies for guilt, emotional regulation, and cognitive restructuring. An exercise prompt leaves that slot empty. The exercise template’s long step-progression block is replaced with two lines: set `asks_readiness` only when the step’s work is done, and do not complete the step yourself.
 
 ### 2.3 General chat goals
 
@@ -768,7 +747,7 @@ Maximum length is about **40** words. The model sees accepted knowledge, includi
 
 ## 10. What to hold in mind when reading the wording
 
-1. **Friend, therapist, and product guide.** The therapeutic text says the persona is a caring friend, not a clinical therapist. The programming text opens with “virtual AI Therapist”. The same therapeutic text also tells the model to explain the product, direct people to Overcome Worry, and describe Mendreo’s purpose, technology, security, and science.
+1. **Friend, therapist, and product guide.** The therapeutic text says the persona is a caring friend, not a clinical therapist. The programming text opens with “You are trained on the Unified Protocol…”. The same therapeutic text also tells the model to explain the product, direct people to Overcome Worry, and describe Mendreo’s purpose, technology, security, and science.
 2. **CBT, and the Unified Protocol.** The therapeutic text requires a CBT frame and names the transdiagnostic model. The programming text tells general chat to apply Unified Protocol strategies, including cognitive restructuring, emotional regulation, and guilt. Inside an exercise, only the technique named in the current step is allowed.
 3. **Two safety paths.** The High Risk Protocol tells the model to advise professional help. The programming text says not to give emergency instructions. The support card is how Samaritans and Irish emergency services are shown, and only when live risk is moderate or high. The Trust and Safety email address is blank in this database.
 4. **First session versus later sessions.** Goals welcome a first-time user and suggest Overcome Worry before any check-in or triage. From the second session, the order is prior follow-ups, a short anxiety check-in, then triage. A vague onboarding answer suspends that order for one chat.
