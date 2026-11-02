@@ -86,7 +86,25 @@ class List(SmartPaginationAPIView):
         if not self.has_permission(request, "POST"):
             return self.get_permission_denied_response(request, "POST")
 
-        session = Session.create_general(self.get_consumer_from_request())
+        consumer = self.get_consumer_from_request()
+        run_id = ""
+        if isinstance(request.data, dict):
+            run_id = str(request.data.get("runId") or "").strip()
+        source_run = None
+        if run_id:
+            from ..run.services import completed_runs_queryset
+
+            source_run = completed_runs_queryset(consumer).filter(id=run_id).first()
+            if source_run is None:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        session = Session.create_general(consumer)
+        if source_run is not None:
+            session.source_run = source_run
+            session.save(update_fields=["source_run", "updated_at"])
         session = SessionDetailSerializer.optimise(
             Session.objects.filter(id=session.id)
         ).first()

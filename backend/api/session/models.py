@@ -91,6 +91,15 @@ class Session(SmartModel):
     # One line plus bullets, written once when a completed exercise run closes.
     run_summary = models.JSONField(null=True, blank=True)
 
+    # General chat opened from a finished exercise. Not an exercise run.
+    source_run = models.ForeignKey(
+        "self",
+        related_name="reflection_chats",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
     # The shared database already has this NOT NULL column. Session inserts
     # that omit it are rejected, which is what fails POST /sessions.
     authoring_test = models.BooleanField(default=False, db_default=False)
