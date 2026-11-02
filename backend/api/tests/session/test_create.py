@@ -179,8 +179,23 @@ class CreateTest(TestCase):
         self.assertIn(exercise.title, after)
         self.assertIn("You stayed with it", after)
         self.assertIn("- The worry shrank", after)
-        self.assertIn("It is not something the user said.", after)
         self.assertIn(
+            "This is background about an exercise the user has already finished. It is not something the user said.",
+            after,
+        )
+        self.assertIn(
+            "In your first reply, say back in two or three plain sentences what the user got from this exercise, using the background below, then ask if that feels right.",
+            after,
+        )
+        self.assertIn(
+            "Do not offer to start, repeat, resume or begin the exercise. It is finished. After the user answers, follow their lead.",
+            after,
+        )
+        self.assertIn(
+            "This outranks triage and get_exercise, including when the user's first message only names this exercise.",
+            after,
+        )
+        self.assertNotIn(
             "If the user has not said what they want to reflect on, ask them. Otherwise follow the conversation.",
             after,
         )

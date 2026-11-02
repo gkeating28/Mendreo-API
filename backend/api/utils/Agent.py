@@ -697,17 +697,20 @@ def _register_tools(agent: Agent[Dependencies, BaseModel], session=None) -> None
     # get_exercise is the general-chat catalogue tool. Inside an exercise,
     # including check-in, calling it makes Gemini fail the structured turn.
     # get_asset is only useful once a real step is underway.
+    # A chat linked to a finished run must not be offered a new start.
     in_exercise = bool(session and session.exercise_id)
     in_check_in = bool(session and session.in_pre_exercise_phase())
+    finished_run = bool(session and getattr(session, "source_run_id", None))
     if _state_machine_enabled():
         if in_exercise and not in_check_in:
             _register_get_asset(agent)
-        if not in_exercise:
+        if not in_exercise and not finished_run:
             _register_get_exercise(agent)
         return
 
     _register_get_asset(agent)
-    _register_get_exercise(agent)
+    if not finished_run:
+        _register_get_exercise(agent)
 
 
 def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
@@ -1027,9 +1030,10 @@ def _source_run_background(session) -> str:
     finished = source.completed_at or source.updated_at
     finished_text = finished.strftime("%d %B %Y") if finished else ""
     lines = [
-        "This is background about a completed exercise the user may want to reflect on.",
-        "It is not something the user said.",
-        "If the user has not said what they want to reflect on, ask them. Otherwise follow the conversation.",
+        "This is background about an exercise the user has already finished. It is not something the user said.",
+        "In your first reply, say back in two or three plain sentences what the user got from this exercise, using the background below, then ask if that feels right.",
+        "Do not offer to start, repeat, resume or begin the exercise. It is finished. After the user answers, follow their lead.",
+        "This outranks triage and get_exercise, including when the user's first message only names this exercise.",
         f"Exercise: {title}",
     ]
     if finished_text:

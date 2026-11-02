@@ -21,8 +21,11 @@ def force_offer_suggested_responses(exercise, session) -> list | None:
     """Yes/No chips when Toni attaches an exercise in general chat.
 
     Decision of *whether* to attach an exercise is unchanged; this only
-    shapes the message that is persisted for the client.
+    shapes the message that is persisted for the client. A chat linked to
+    a finished run never gets that offer.
     """
+    if getattr(session, "source_run_id", None):
+        return None
     if exercise and not session.exercise_id:
         return list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES)
     return None

@@ -1,6 +1,7 @@
 from unittest import mock
 
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 
 from ...message.models import Message
@@ -8,7 +9,7 @@ from ...participant.models import Participant
 from ...session.models import Session
 from ...tests.TestCase import TestCase
 from ...utils import Constants
-from ...utils.Agent import GeneralResponse
+from ...utils.Agent import GeneralResponse, _register_tools
 from ..utils import Data
 from ..utils.manager import Auth, General
 
@@ -48,11 +49,42 @@ class ExerciseOfferTest(TestCase):
             reasoning="triage",
         )
 
-    def _post_message(self, text, from_suggested_response=None):
-        data = Data.valid_message_data(text=text, session=self.session)
+    def _post_message(self, text, from_suggested_response=None, session=None):
+        data = Data.valid_message_data(text=text, session=session or self.session)
         if from_suggested_response is not None:
             data["from_suggested_response"] = from_suggested_response
         return self._post("/messages", data, access_token=self.access_token)
+
+    def _tool_names(self, session):
+        names = []
+
+        class _Recorder:
+            def tool(self, func=None, **kwargs):
+                def register(fn):
+                    names.append(fn.__name__)
+                    return fn
+
+                if func is None:
+                    return register
+                return register(func)
+
+        _register_tools(_Recorder(), session)
+        return names
+
+    def _linked_chat(self):
+        run = Session.objects.create(
+            consumer=self.consumer,
+            exercise=self.exercise,
+            completed=True,
+            completed_at=timezone.now(),
+            current_step_no=1,
+            total_steps_no=self.exercise.steps_no or 1,
+            run_summary={"line": "You stayed with it", "bullets": ["The worry shrank"]},
+        )
+        chat = General.create_session(consumer=self.consumer)
+        chat.source_run = run
+        chat.save(update_fields=["source_run", "updated_at"])
+        return chat
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_offer_message_includes_yes_no_chips(self):
@@ -77,6 +109,51 @@ class ExerciseOfferTest(TestCase):
         self.assertIsNone(response.json["exercise_session"])
         self.session.refresh_from_db()
         self.assertIsNone(self.session.exercise_id)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_ordinary_general_chat_still_gets_the_tool_and_the_appended_offer(self):
+        self.assertIn("get_exercise", self._tool_names(self.session))
+        mocked = GeneralResponse(
+            text="There's an exercise that fits.",
+            reasoning="Unified Protocol",
+            suggested_responses=["Tell me more"],
+        )
+
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, self.exercise
+            response = self._post_message("I've been stuck in the same thought loop")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("Would you like to start an exercise? Yes or no.", response.json["text"])
+        self.assertEqual(
+            response.json["suggested_responses"],
+            Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES,
+        )
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_linked_finished_run_does_not_get_the_tool_or_the_appended_offer(self):
+        chat = self._linked_chat()
+        self.assertNotIn("get_exercise", self._tool_names(chat))
+        mocked = GeneralResponse(
+            text="There's an exercise that fits.",
+            reasoning="Unified Protocol",
+            suggested_responses=["Tell me more"],
+        )
+
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, self.exercise
+            response = self._post_message(
+                "I've been stuck in the same thought loop",
+                session=chat,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json["text"], "There's an exercise that fits.")
+        self.assertNotIn("Would you like to start an exercise?", response.json["text"])
+        self.assertNotEqual(
+            response.json["suggested_responses"],
+            Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES,
+        )
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_offer_keeps_lets_work_through_copy_and_only_adds_chips(self):
