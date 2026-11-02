@@ -15,8 +15,34 @@ def enabled() -> bool:
 
 
 def close_session(session, reason: str):
-    """Close once. A second call does not rate or extract again."""
-    if not enabled() or session.closed_at:
+    """Close once. A second call does not rate or extract again.
+
+    A session already closed while the exercise was still in progress missed
+    its run summary. Completing it later writes that summary only.
+    """
+    if not enabled():
+        return session
+    if session.closed_at:
+        if (
+            reason == "completed"
+            and not getattr(session, "authoring_test", False)
+            and session.completed
+            and not session.run_summary
+        ):
+            try:
+                _update_run_summary(session)
+            except Exception as exc:
+                logger.warning(
+                    "Run summary failed for %s (%s)",
+                    session.id,
+                    type(exc).__name__,
+                )
+            else:
+                if session.run_summary:
+                    logger.info(
+                        "Run summary written after early close for %s",
+                        session.id,
+                    )
         return session
 
     session.closed_at = timezone.now()
