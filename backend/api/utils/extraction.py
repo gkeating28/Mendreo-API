@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from . import Constants
 from .AI import AI
+from .completion import is_usable_completion_result, strip_trailing_readiness_phrase
 
 
 class _Extraction(BaseModel):
@@ -89,7 +90,9 @@ def extract_step_result(session, step) -> dict | None:
         _Extraction,
         temperature=0.1,
     )
-    value = (data.get("value") or "").strip() or None
+    value = strip_trailing_readiness_phrase((data.get("value") or "").strip())
+    if not getattr(step, "result_field_id", None) and not is_usable_completion_result(value):
+        value = None
     try:
         confidence = float(data.get("confidence") or 0)
     except (TypeError, ValueError):

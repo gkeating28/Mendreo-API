@@ -2,14 +2,18 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
+from ...knowledge.models import KnowledgeField
 from ...message.models import Message
 from ...participant.models import Participant
+from ...session.models import Session, SessionStep
 from ...tests.TestCase import TestCase
 from ...utils.Agent import SKIP_COMPLETION_RESULT, coerce_completion_result
 from ...utils.completion import (
     is_usable_completion_result,
     pick_completion_result_from_texts,
+    strip_trailing_readiness_phrase,
 )
+from ...utils.extraction import extract_step_result
 from ..utils.manager import Auth, General
 
 
@@ -35,6 +39,23 @@ class CompletionResultTextTests(SimpleTestCase):
             "User provided two strong responses.",
         ]:
             self.assertFalse(is_usable_completion_result(value), msg=repr(value))
+
+    def test_strips_a_trailing_ready_chip_from_the_finding(self):
+        finding = "Worry and stress are unproductive, planning is productive."
+        stripped = strip_trailing_readiness_phrase(f"{finding} Yes, I'm ready.")
+        self.assertEqual(stripped, finding)
+        self.assertTrue(is_usable_completion_result(stripped))
+        for phrase in ("Yes, I'm ready", "Not yet", "Finish exercise"):
+            self.assertEqual(
+                strip_trailing_readiness_phrase(f"{finding} {phrase}"),
+                finding,
+            )
+        self.assertEqual(
+            strip_trailing_readiness_phrase(
+                "Worry and stress are unproductive, planning is productive; Yes, I'm ready"
+            ),
+            "Worry and stress are unproductive, planning is productive",
+        )
 
     def test_accepts_named_worry(self):
         self.assertTrue(is_usable_completion_result("I'll lose my job if I speak up"))
@@ -146,3 +167,45 @@ class CompletionResultSessionTests(TestCase):
             user_message=yes,
         )
         self.assertEqual(result, "I parked it in a notes app")
+
+
+class ExtractionChipTests(TestCase):
+    def _session(self, *, result_field=False):
+        consumer = Auth.create_consumer()
+        exercise = General.create_exercise()
+        step = exercise.steps.order_by("order").first()
+        step.completion_prompt = "Summarise the step."
+        if result_field:
+            step.result_field = KnowledgeField.objects.create(
+                key=f"answer_{exercise.id}",
+                label="Answer",
+                category="Worry",
+                active=True,
+            )
+        step.save(update_fields=["completion_prompt", "result_field", "updated_at"])
+        session = Session.objects.create(
+            consumer=consumer,
+            exercise=exercise,
+            current_step_no=1,
+            total_steps_no=1,
+        )
+        SessionStep.objects.create(session=session, step=step, order=0, completed=False)
+        Participant.create_participants(session)
+        return session, step
+
+    @mock.patch("api.utils.extraction._write_result_knowledge")
+    @mock.patch("api.utils.extraction.AI.ask", return_value={"value": "Yes, I'm ready", "confidence": 0.9})
+    def test_free_text_ready_chip_is_null(self, ask, _write):
+        session, step = self._session()
+        extracted = extract_step_result(session, step)
+        self.assertIsNone(extracted["value"])
+        self.assertEqual(extracted["confidence"], 0.0)
+        ask.assert_called_once()
+
+    @mock.patch("api.utils.extraction._write_result_knowledge")
+    @mock.patch("api.utils.extraction.AI.ask", return_value={"value": "yes", "confidence": 0.8})
+    def test_result_field_keeps_yes(self, _ask, _write):
+        session, step = self._session(result_field=True)
+        extracted = extract_step_result(session, step)
+        self.assertEqual(extracted["value"], "yes")
+        self.assertEqual(extracted["confidence"], 0.8)
