@@ -198,7 +198,8 @@ def next_hand(consumer, force_rotate: bool = False) -> Hand:
     with transaction.atomic():
         active = list(
             UserInsight.objects.filter(consumer=consumer, retired_at__isnull=True)
-            .select_for_update()
+            .select_related("source_run__exercise")
+            .select_for_update(of=("self",))
             .order_by("generated_at", "id")
         )
         can_refresh = len(active) >= minimum

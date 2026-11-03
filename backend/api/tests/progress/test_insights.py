@@ -516,8 +516,21 @@ class InsightTests(TestCase):
         self.assertEqual(
             listed.json["insights"],
             [
-                {"id": linked.id, "text": "Talk about the walk", "source_run_id": session.id},
-                {"id": plain.id, "text": "Talk about sleep", "source_run_id": None},
+                {
+                    "id": linked.id,
+                    "text": "Talk about the walk",
+                    "source_run_id": session.id,
+                    "source": {
+                        "exercise_name": self.exercise.title,
+                        "completed_at": session.completed_at.isoformat(),
+                    },
+                },
+                {
+                    "id": plain.id,
+                    "text": "Talk about sleep",
+                    "source_run_id": None,
+                    "source": None,
+                },
             ],
         )
         self.assertNotIn("topic_key", str(listed.json))
@@ -599,6 +612,126 @@ class InsightTests(TestCase):
         sleep.assert_not_called()
         self.assertEqual(out.getvalue().splitlines(), [self.consumer.pk, "count 1"])
         self.assertEqual(UserInsight.objects.count(), before)
+
+    def test_start_opens_a_chat_with_the_insight_as_tonis_first_message(self):
+        from pydantic_ai.messages import ModelResponse
+
+        from ...message.models import Message
+        from ...utils.history import build_history
+
+        token = Auth.get_access_token(self.consumer.user)
+        run = self._run("A finished walk")
+        text = "You mentioned the walk. How has that been going?"
+        linked = UserInsight.objects.create(
+            consumer=self.consumer,
+            text=text,
+            topic_key="walk",
+            source_run=run,
+            generated_at=timezone.now(),
+        )
+        plain = UserInsight.objects.create(
+            consumer=self.consumer,
+            text="You mentioned sleep. How has that been going?",
+            topic_key="sleep",
+            generated_at=timezone.now(),
+        )
+
+        empty = TestCase._post("/sessions", {}, access_token=token)
+        started = TestCase._post(
+            f"/progress/insights/{linked.id}/start",
+            {},
+            access_token=token,
+        )
+        self.assertEqual(started.status_code, status.HTTP_201_CREATED, started.json)
+        self.assertEqual(set(started.json.keys()), set(empty.json.keys()))
+        self.assertIsNone(started.json["exercise"])
+        self.assertEqual(started.json["phase"], "general")
+        self.assertEqual(started.json["source_run"], run.id)
+        self.assertEqual(started.json["last_message"]["text"], text)
+        self.assertIsNone(started.json["last_message"]["sender"]["consumer"])
+        self.assertIsNotNone(started.json["last_message"]["sender"]["agent"])
+
+        session = Session.objects.get(id=started.json["id"])
+        self.assertIsNone(session.exercise_id)
+        self.assertEqual(session.source_run_id, run.id)
+        self.assertEqual(session.agent_messages_no, 1)
+        self.assertEqual(Message.objects.filter(session=session).count(), 1)
+        stored = UserInsight.objects.get(id=linked.id)
+        self.assertEqual(stored.show_count, 0)
+        self.assertIsNone(stored.last_shown_at)
+
+        history = build_history(session)
+        self.assertIsInstance(history[1], ModelResponse)
+        self.assertEqual(history[1].parts[0].content, text)
+
+        unlinked = TestCase._post(
+            f"/progress/insights/{plain.id}/start",
+            {},
+            access_token=token,
+        )
+        self.assertEqual(unlinked.status_code, status.HTTP_201_CREATED, unlinked.json)
+        self.assertIsNone(unlinked.json["source_run"])
+        self.assertEqual(unlinked.json["last_message"]["text"], plain.text)
+
+        other = self._other()
+        theirs = UserInsight.objects.create(
+            consumer=other,
+            text="Not yours",
+            topic_key="other",
+            generated_at=timezone.now(),
+        )
+        sessions_before = Session.objects.count()
+        for insight_id in (theirs.id, "uins_missing"):
+            hidden = TestCase._post(
+                f"/progress/insights/{insight_id}/start",
+                {},
+                access_token=token,
+            )
+            self.assertEqual(hidden.status_code, status.HTTP_404_NOT_FOUND, hidden.json)
+
+        linked.retired_at = timezone.now()
+        linked.save(update_fields=["retired_at", "updated_at"])
+        retired = TestCase._post(
+            f"/progress/insights/{linked.id}/start",
+            {},
+            access_token=token,
+        )
+        self.assertEqual(retired.status_code, status.HTTP_404_NOT_FOUND)
+        linked.delete()
+        deleted = TestCase._post(
+            f"/progress/insights/{linked.id}/start",
+            {},
+            access_token=token,
+        )
+        self.assertEqual(deleted.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Session.objects.count(), sessions_before)
+
+        self._set(Constants.SETTING_KEY_INSIGHTS_ENABLED, False)
+        blocked = TestCase._post(
+            f"/progress/insights/{plain.id}/start",
+            {},
+            access_token=token,
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Session.objects.count(), sessions_before)
+
+    def test_a_failed_opening_message_leaves_no_session(self):
+        token = Auth.get_access_token(self.consumer.user)
+        insight = UserInsight.objects.create(
+            consumer=self.consumer,
+            text="You mentioned the walk. How has that been going?",
+            topic_key="walk",
+            generated_at=timezone.now(),
+        )
+        before = Session.objects.count()
+        with patch("api.message.models.Message.objects.create", side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                TestCase._post(
+                    f"/progress/insights/{insight.id}/start",
+                    {},
+                    access_token=token,
+                )
+        self.assertEqual(Session.objects.count(), before)
 
     def _other(self):
         if not hasattr(self, "other_consumer"):
