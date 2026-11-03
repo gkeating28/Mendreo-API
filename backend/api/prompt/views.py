@@ -8,6 +8,7 @@ from .models import PromptVersion
 from ..utils import Constants
 from ..utils.Permissions import IsAdminPermission
 from ..utils.Views import SmartAPIView
+from ..utils.prompt_blocks import ensure_initial_prompt_version
 
 
 class PromptVersions(SmartAPIView):
@@ -17,6 +18,7 @@ class PromptVersions(SmartAPIView):
     def get(self, request, key):
         if key not in Constants.PROMPT_KEYS:
             return self.not_found()
+        ensure_initial_prompt_version(key)
         rows = PromptVersion.objects.filter(key=key).order_by("-version")
         return Response({"key": key, "versions": [_row(row) for row in rows]})
 

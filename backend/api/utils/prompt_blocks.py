@@ -483,6 +483,22 @@ def _active_prompt_rows() -> dict:
     return chosen
 
 
+def ensure_initial_prompt_version(key: str) -> None:
+    """Create active version 1 from the fallback body when the key has no rows."""
+    from ..prompt.models import PromptVersion
+
+    if PromptVersion.objects.filter(key=key).exists():
+        return
+    PromptVersion.objects.get_or_create(
+        key=key,
+        version=1,
+        defaults={
+            "body": _fallback_body(key),
+            "active": True,
+        },
+    )
+
+
 def ensure_prompt_versions() -> dict:
     """Active row per known key. Missing keys are seeded from the current setting or constant."""
     from ..prompt.models import PromptVersion
