@@ -23,8 +23,19 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from ..ai_provider.models import AiProvider, AiProviderAuditLog
 from ..utils import Api, Constants
+from .provider_text import merge_text_parts
 
 logger = logging.getLogger(__name__)
+
+
+class _SpacingGoogleModel(GoogleModel):
+    """Merge Gemini text parts before pydantic-ai concatenates them with +=."""
+
+    def _process_response(self, response):
+        processed = super()._process_response(response)
+        processed.parts = merge_text_parts(list(processed.parts))
+        return processed
+
 
 T = TypeVar("T")
 
@@ -157,8 +168,17 @@ def _env_backed_providers() -> list[EnvBackedProvider]:
     return providers
 
 
-def build_pydantic_model(provider: ProviderLike, model_name: str | None = None):
-    """Return a pydantic-ai model instance for chat / structured generation."""
+def build_pydantic_model(
+    provider: ProviderLike,
+    model_name: str | None = None,
+    *,
+    restore_part_spacing: bool = False,
+):
+    """Return a pydantic-ai model instance for chat / structured generation.
+
+    ``restore_part_spacing`` merges Gemini text parts that were split apart.
+    AI.ask turns it on. Chat leaves it off.
+    """
     resolved = provider.resolve_model_name(model_name)
     api_key = provider.get_api_key()
 
@@ -168,7 +188,8 @@ def build_pydantic_model(provider: ProviderLike, model_name: str | None = None):
             http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
         )
         thinking_config = _google_thinking_config(resolved)
-        return GoogleModel(
+        model_cls = _SpacingGoogleModel if restore_part_spacing else GoogleModel
+        return model_cls(
             model_name=resolved,
             provider=GoogleProvider(client=genai_client),
         ), GoogleModelSettings(google_thinking_config=thinking_config)
