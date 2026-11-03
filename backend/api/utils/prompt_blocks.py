@@ -463,6 +463,10 @@ def _fallback_body(key: str) -> str:
         return Constants.DEFAULT_OBSERVATIONS_INSTRUCTION
     if key == Constants.PROMPT_KEY_OBSERVATIONS_TONE_GUIDE:
         return Constants.DEFAULT_OBSERVATIONS_TONE_GUIDE
+    if key == Constants.PROMPT_KEY_INSIGHTS_INSTRUCTION:
+        return Constants.DEFAULT_INSIGHTS_INSTRUCTION
+    if key == Constants.PROMPT_KEY_INSIGHTS_TONE_GUIDE:
+        return Constants.DEFAULT_INSIGHTS_TONE_GUIDE
     if key == Constants.PROMPT_KEY_RESOURCES:
         import json
         return json.dumps(Constants.DEFAULT_RESOURCES)

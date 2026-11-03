@@ -18,6 +18,8 @@ PROMPT_SETTING_FIELDS = (
     "therapeutic_prompt",
     "observations_instruction",
     "observations_tone_guide",
+    "insights_instruction",
+    "insights_tone_guide",
 )
 
 

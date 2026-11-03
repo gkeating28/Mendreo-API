@@ -36,6 +36,50 @@ class SettingCreateSerializer(serializers.Serializer):
         min_value=1,
         default=Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH,
     )
+    insights_instruction = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=Constants.DEFAULT_INSIGHTS_INSTRUCTION,
+    )
+    insights_tone_guide = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=Constants.DEFAULT_INSIGHTS_TONE_GUIDE,
+    )
+    insights_enabled = serializers.BooleanField(
+        required=False,
+        default=Constants.DEFAULT_INSIGHTS_ENABLED,
+    )
+    insights_pool_cap = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_POOL_CAP,
+    )
+    insights_shown_count = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_SHOWN_COUNT,
+    )
+    insights_recent_runs = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_RECENT_RUNS,
+    )
+    insights_min_pool_before_shuffle = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+    )
+    insights_max_length = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_MAX_LENGTH,
+    )
+    insights_batch_size = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_BATCH_SIZE,
+    )
     knowledge_min_confidence = serializers.FloatField(
         required=False,
         min_value=0,
@@ -82,7 +126,38 @@ class SettingCreateSerializer(serializers.Serializer):
                     for name in blocked
                 }
             )
+        pool_cap = self._insights_number(
+            attrs, "insights_pool_cap", Setting.get_insights_pool_cap
+        )
+        shown_count = self._insights_number(
+            attrs, "insights_shown_count", Setting.get_insights_shown_count
+        )
+        min_pool = self._insights_number(
+            attrs,
+            "insights_min_pool_before_shuffle",
+            Setting.get_insights_min_pool_before_shuffle,
+        )
+        batch_size = self._insights_number(
+            attrs, "insights_batch_size", Setting.get_insights_batch_size
+        )
+        errors = {}
+        if pool_cap < shown_count:
+            errors["insights_pool_cap"] = "Must be at least insights_shown_count."
+        if min_pool < shown_count:
+            errors["insights_min_pool_before_shuffle"] = (
+                "Must be at least insights_shown_count."
+            )
+        if batch_size > pool_cap:
+            errors["insights_batch_size"] = "Must be at most insights_pool_cap."
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
+
+    def _insights_number(self, attrs, name, getter):
+        incoming = getattr(self, "initial_data", {}) or {}
+        if name in incoming:
+            return attrs[name]
+        return getter()
 
     def create(self, validated_data):
 
@@ -114,6 +189,36 @@ class SettingCreateSerializer(serializers.Serializer):
             )
         )
         obs_max.save()
+
+        incoming = getattr(self, "initial_data", {}) or {}
+        if "insights_enabled" in incoming:
+            insights_enabled = Setting.get_or_create_insights_enabled()
+            insights_enabled.value = str(validated_data["insights_enabled"]).lower()
+            insights_enabled.save()
+        if "insights_pool_cap" in incoming:
+            insights_pool_cap = Setting.get_or_create_insights_pool_cap()
+            insights_pool_cap.value = str(validated_data["insights_pool_cap"])
+            insights_pool_cap.save()
+        if "insights_shown_count" in incoming:
+            insights_shown_count = Setting.get_or_create_insights_shown_count()
+            insights_shown_count.value = str(validated_data["insights_shown_count"])
+            insights_shown_count.save()
+        if "insights_recent_runs" in incoming:
+            insights_recent_runs = Setting.get_or_create_insights_recent_runs()
+            insights_recent_runs.value = str(validated_data["insights_recent_runs"])
+            insights_recent_runs.save()
+        if "insights_min_pool_before_shuffle" in incoming:
+            insights_min_pool = Setting.get_or_create_insights_min_pool_before_shuffle()
+            insights_min_pool.value = str(validated_data["insights_min_pool_before_shuffle"])
+            insights_min_pool.save()
+        if "insights_max_length" in incoming:
+            insights_max_length = Setting.get_or_create_insights_max_length()
+            insights_max_length.value = str(validated_data["insights_max_length"])
+            insights_max_length.save()
+        if "insights_batch_size" in incoming:
+            insights_batch_size = Setting.get_or_create_insights_batch_size()
+            insights_batch_size.value = str(validated_data["insights_batch_size"])
+            insights_batch_size.save()
 
         if "knowledge_min_confidence" in validated_data:
             confidence = Setting.get_or_create_knowledge_min_confidence()
@@ -170,7 +275,6 @@ class SettingCreateSerializer(serializers.Serializer):
             exercise_retrieval.value = str(validated_data["ai_retrieval_exercise_enabled"]).lower()
             exercise_retrieval.save()
 
-        incoming = getattr(self, "initial_data", {}) or {}
         if "update_summary" in incoming:
             summary_prompt = Setting.get_or_create_update_summary()
             summary_prompt.value = validated_data.get("update_summary") or ""
@@ -246,6 +350,13 @@ class SettingCreateSerializer(serializers.Serializer):
             "refresh_onboarding_cadence_days": int(cadence.value),
             "observations_enabled": obs_enabled.value == "true",
             "observations_max_length": int(obs_max.value),
+            "insights_enabled": Setting.get_insights_enabled(),
+            "insights_pool_cap": Setting.get_insights_pool_cap(),
+            "insights_shown_count": Setting.get_insights_shown_count(),
+            "insights_recent_runs": Setting.get_insights_recent_runs(),
+            "insights_min_pool_before_shuffle": Setting.get_insights_min_pool_before_shuffle(),
+            "insights_max_length": Setting.get_insights_max_length(),
+            "insights_batch_size": Setting.get_insights_batch_size(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),

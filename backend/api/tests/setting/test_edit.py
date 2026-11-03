@@ -54,6 +54,75 @@ class EditTest(TestCase):
             Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_DECLINE_ACK,
         )
 
+    def test_insights_values_save(self):
+        data = {
+            "survey_enabled": True,
+            "insights_enabled": False,
+            "insights_pool_cap": 10,
+            "insights_shown_count": 3,
+            "insights_recent_runs": 6,
+            "insights_min_pool_before_shuffle": 4,
+            "insights_max_length": 30,
+            "insights_batch_size": 2,
+        }
+        token = Auth.get_platform_admin_access_token()
+        response = self._edit(data, access_token=token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        for key, value in data.items():
+            if key == "survey_enabled":
+                continue
+            self.assertEqual(response.data[key], value)
+
+        listed = self._get("/settings", access_token=token)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK, listed.json)
+        for key, value in data.items():
+            if key == "survey_enabled":
+                continue
+            self.assertEqual(listed.json[key], value)
+
+    def test_insights_values_are_rejected(self):
+        token = Auth.get_platform_admin_access_token()
+        cases = (
+            ({"insights_recent_runs": 0}, "insights_recent_runs"),
+            (
+                {"insights_pool_cap": 3, "insights_shown_count": 4},
+                "insights_pool_cap",
+            ),
+            (
+                {
+                    "insights_pool_cap": 12,
+                    "insights_shown_count": 6,
+                    "insights_min_pool_before_shuffle": 5,
+                },
+                "insights_min_pool_before_shuffle",
+            ),
+            (
+                {"insights_pool_cap": 12, "insights_batch_size": 13},
+                "insights_batch_size",
+            ),
+        )
+        for extra, error_key in cases:
+            response = self._edit(
+                {"survey_enabled": True, **extra},
+                access_token=token,
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, extra)
+            self.assertIn(error_key, response.json, extra)
+
+    def test_insights_instruction_is_rejected(self):
+        response = self._edit(
+            {
+                "survey_enabled": True,
+                "insights_instruction": "Write something else.",
+            },
+            access_token=Auth.get_platform_admin_access_token(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.json["insights_instruction"],
+            ["Save this text as a prompt version, not a setting."],
+        )
+
     def test_prompt_keys_are_rejected(self):
         response = self._edit(
             {

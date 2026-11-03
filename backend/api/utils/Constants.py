@@ -203,6 +203,8 @@ PROMPT_KEY_GOALS = "goals"
 PROMPT_KEY_TRIAGE = "triage"
 PROMPT_KEY_OBSERVATIONS_INSTRUCTION = "observations_instruction"
 PROMPT_KEY_OBSERVATIONS_TONE_GUIDE = "observations_tone_guide"
+PROMPT_KEY_INSIGHTS_INSTRUCTION = "insights_instruction"
+PROMPT_KEY_INSIGHTS_TONE_GUIDE = "insights_tone_guide"
 PROMPT_KEY_RESOURCES = "resources"
 
 PROMPT_KEYS = [
@@ -211,6 +213,8 @@ PROMPT_KEYS = [
     PROMPT_KEY_TRIAGE,
     PROMPT_KEY_OBSERVATIONS_INSTRUCTION,
     PROMPT_KEY_OBSERVATIONS_TONE_GUIDE,
+    PROMPT_KEY_INSIGHTS_INSTRUCTION,
+    PROMPT_KEY_INSIGHTS_TONE_GUIDE,
     PROMPT_KEY_RESOURCES,
 ]
 
@@ -722,6 +726,31 @@ DEFAULT_OBSERVATIONS_INSTRUCTION = (
 DEFAULT_OBSERVATIONS_TONE_GUIDE = (
     "Warm, specific, and non-judgmental. Avoid clinical jargon and scorekeeping."
 )
+DEFAULT_INSIGHTS_INSTRUCTION = (
+    "Write short, second-person conversation starters for this user, each one or two "
+    "sentences they could send as their own first message. Early on, when there are "
+    "few finished exercise runs, lean on the knowledge. As finished runs accumulate, "
+    "let those runs dominate. Never quote or allude to sensitive topics. If a starter "
+    "is about one specific run, set source_run_id to that run's id; otherwise leave "
+    "it empty. Do not repeat a topic already in the current pool."
+)
+DEFAULT_INSIGHTS_TONE_GUIDE = (
+    "Warm, specific and non-judgmental. No clinical jargon, no scorekeeping."
+)
+SETTING_KEY_INSIGHTS_ENABLED = "insights_enabled"
+SETTING_KEY_INSIGHTS_POOL_CAP = "insights_pool_cap"
+SETTING_KEY_INSIGHTS_SHOWN_COUNT = "insights_shown_count"
+SETTING_KEY_INSIGHTS_RECENT_RUNS = "insights_recent_runs"
+SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE = "insights_min_pool_before_shuffle"
+SETTING_KEY_INSIGHTS_MAX_LENGTH = "insights_max_length"
+SETTING_KEY_INSIGHTS_BATCH_SIZE = "insights_batch_size"
+DEFAULT_INSIGHTS_ENABLED = True
+DEFAULT_INSIGHTS_POOL_CAP = 12
+DEFAULT_INSIGHTS_SHOWN_COUNT = 4
+DEFAULT_INSIGHTS_RECENT_RUNS = 5
+DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE = 5
+DEFAULT_INSIGHTS_MAX_LENGTH = 24
+DEFAULT_INSIGHTS_BATCH_SIZE = 4
 
 PROGRESS_MOOD_FIELD_KEY = "mood"
 PROGRESS_STRESS_FIELD_KEY = "stress_points"

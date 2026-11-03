@@ -50,6 +50,13 @@ class Setting(SmartModel):
         Setting.get_or_create_refresh_onboarding_cadence_days()
         Setting.get_or_create_observations_enabled()
         Setting.get_or_create_observations_max_length()
+        Setting.get_or_create_insights_enabled()
+        Setting.get_or_create_insights_pool_cap()
+        Setting.get_or_create_insights_shown_count()
+        Setting.get_or_create_insights_recent_runs()
+        Setting.get_or_create_insights_min_pool_before_shuffle()
+        Setting.get_or_create_insights_max_length()
+        Setting.get_or_create_insights_batch_size()
         Setting.get_or_create_knowledge_min_confidence()
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
@@ -499,6 +506,136 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_insights_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_ENABLED,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_ENABLED).lower()},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_ENABLED,
+            Setting.get_or_create_insights_enabled,
+        )
+        return str(raw).lower() == "true"
+
+    @staticmethod
+    def get_or_create_insights_pool_cap():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_POOL_CAP)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_pool_cap() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+            Setting.get_or_create_insights_pool_cap,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_POOL_CAP
+
+    @staticmethod
+    def get_or_create_insights_shown_count():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_SHOWN_COUNT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_shown_count() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+            Setting.get_or_create_insights_shown_count,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_SHOWN_COUNT
+
+    @staticmethod
+    def get_or_create_insights_recent_runs():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_RECENT_RUNS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_recent_runs() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+            Setting.get_or_create_insights_recent_runs,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_RECENT_RUNS
+
+    @staticmethod
+    def get_or_create_insights_min_pool_before_shuffle():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_min_pool_before_shuffle() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+            Setting.get_or_create_insights_min_pool_before_shuffle,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE
+
+    @staticmethod
+    def get_or_create_insights_max_length():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_MAX_LENGTH)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_max_length() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+            Setting.get_or_create_insights_max_length,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_insights_batch_size():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_BATCH_SIZE)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_batch_size() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
+            Setting.get_or_create_insights_batch_size,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_BATCH_SIZE
 
     @staticmethod
     def get_or_create_update_summary():

@@ -33,6 +33,7 @@ class ListCreate(SmartAPIView):
             if setting.key in (
                 "survey_enabled",
                 "observations_enabled",
+                Constants.SETTING_KEY_INSIGHTS_ENABLED,
                 Constants.SETTING_KEY_STORE_TURN_PROMPTS,
                 Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
@@ -67,6 +68,12 @@ class ListCreate(SmartAPIView):
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
                 Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+                Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+                Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+                Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+                Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+                Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+                Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
             ):
                 try:
                     data[setting.key] = int(setting.value)
@@ -75,6 +82,18 @@ class ListCreate(SmartAPIView):
                         data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
                     elif setting.key == Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH:
                         data[setting.key] = Setting.get_run_summary_max_length()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_POOL_CAP:
+                        data[setting.key] = Setting.get_insights_pool_cap()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT:
+                        data[setting.key] = Setting.get_insights_shown_count()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS:
+                        data[setting.key] = Setting.get_insights_recent_runs()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE:
+                        data[setting.key] = Setting.get_insights_min_pool_before_shuffle()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH:
+                        data[setting.key] = Setting.get_insights_max_length()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE:
+                        data[setting.key] = Setting.get_insights_batch_size()
                     else:
                         data[setting.key] = Setting.get_observations_max_length()
 
@@ -82,6 +101,13 @@ class ListCreate(SmartAPIView):
             "refresh_onboarding_cadence_days": Setting.get_refresh_onboarding_cadence_days(),
             "observations_enabled": Setting.get_observations_enabled(),
             "observations_max_length": Setting.get_observations_max_length(),
+            "insights_enabled": Setting.get_insights_enabled(),
+            "insights_pool_cap": Setting.get_insights_pool_cap(),
+            "insights_shown_count": Setting.get_insights_shown_count(),
+            "insights_recent_runs": Setting.get_insights_recent_runs(),
+            "insights_min_pool_before_shuffle": Setting.get_insights_min_pool_before_shuffle(),
+            "insights_max_length": Setting.get_insights_max_length(),
+            "insights_batch_size": Setting.get_insights_batch_size(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
