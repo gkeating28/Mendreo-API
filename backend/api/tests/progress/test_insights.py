@@ -1,8 +1,12 @@
 import inspect
 from datetime import timedelta
+from io import StringIO
 from unittest.mock import patch
 
+from django.core.management import call_command
+from django.test import override_settings
 from django.utils import timezone
+from rest_framework import status
 
 from ...knowledge.models import KnowledgeEntry, KnowledgeField
 from ...progress import insights as insights_module
@@ -19,6 +23,7 @@ from ...progress.insights import (
 from ...progress.models import UserInsight, UserInsightCursor
 from ...session.models import Session
 from ...setting.models import Setting
+from ...tasks import generate_user_insights
 from ...utils import Constants
 from ..TestCase import TestCase
 from ..utils.manager import Auth, General
@@ -414,6 +419,186 @@ class InsightTests(TestCase):
         self.assertNotIn(newer.id, [item.id for item in held_open.items])
         forced = next_hand(self.consumer, force_rotate=True)
         self.assertEqual([item.id for item in forced.items], [item.id for item in small])
+
+    def _freeze(self, consumer):
+        when = timezone.now() - timedelta(days=45)
+        Session.objects.filter(consumer=consumer).update(created_at=when)
+        KnowledgeEntry.objects.filter(consumer=consumer).update(created_at=when)
+
+    def test_task_skips_when_disabled_and_queues_only_recent_consumers(self):
+        self._entry(self.walk, "likes walking")
+        self._set(Constants.SETTING_KEY_INSIGHTS_ENABLED, False)
+        with (
+            patch("api.tasks.generate_user_insight.delay_on_commit") as queued,
+            patch("api.tasks.generate_user_insight.run") as run,
+        ):
+            generate_user_insights()
+        queued.assert_not_called()
+        run.assert_not_called()
+
+        self._set(Constants.SETTING_KEY_INSIGHTS_ENABLED, True)
+        quiet = Auth.create_consumer()
+        self._freeze(quiet)
+        by_session = Auth.create_consumer()
+        self._freeze(by_session)
+        Session.objects.create(consumer=by_session, exercise=self.exercise)
+        by_knowledge = Auth.create_consumer()
+        self._freeze(by_knowledge)
+        self._entry(self.walk, "likes walking", consumer=by_knowledge)
+
+        with override_settings(CELERY_TASK_ALWAYS_EAGER=False), patch(
+            "api.tasks.generate_user_insight.delay_on_commit"
+        ) as queued:
+            generate_user_insights()
+        queued_ids = {call.args[0] for call in queued.call_args_list}
+        self.assertIn(by_session.pk, queued_ids)
+        self.assertIn(by_knowledge.pk, queued_ids)
+        self.assertNotIn(quiet.pk, queued_ids)
+
+        with override_settings(CELERY_TASK_ALWAYS_EAGER=True), patch(
+            "api.tasks.generate_user_insight.run"
+        ) as run, patch("api.tasks.generate_user_insight.delay_on_commit") as queued:
+            generate_user_insights()
+        queued.assert_not_called()
+        ran_ids = {call.args[0] for call in run.call_args_list}
+        self.assertIn(by_session.pk, ran_ids)
+        self.assertIn(by_knowledge.pk, ran_ids)
+        self.assertNotIn(quiet.pk, ran_ids)
+
+    def test_insights_endpoint_shape_refresh_and_isolation(self):
+        token = Auth.get_access_token(self.consumer.user)
+        admin = Auth.create_admin()
+        admin_token = Auth.get_access_token(admin.user)
+
+        anonymous = TestCase._get("/progress/insights")
+        self.assertIn(
+            anonymous.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+        anonymous_refresh = TestCase._post("/progress/insights/refresh", {})
+        self.assertIn(
+            anonymous_refresh.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+        for method, path in (
+            ("get", "/progress/insights"),
+            ("post", "/progress/insights/refresh"),
+        ):
+            if method == "get":
+                response = TestCase._get(path, access_token=admin_token)
+            else:
+                response = TestCase._post(path, {}, access_token=admin_token)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        base = timezone.now() - timedelta(days=2)
+        session = self._run("A finished walk")
+        linked = UserInsight.objects.create(
+            consumer=self.consumer,
+            text="Talk about the walk",
+            topic_key="hidden-topic",
+            source_run=session,
+            generated_at=base,
+        )
+        plain = UserInsight.objects.create(
+            consumer=self.consumer,
+            text="Talk about sleep",
+            topic_key="also-hidden",
+            generated_at=base + timedelta(hours=1),
+        )
+        listed = TestCase._get("/progress/insights", access_token=token)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK, listed.json)
+        self.assertEqual(
+            set(listed.json.keys()),
+            {"insights_enabled", "can_refresh", "insights"},
+        )
+        self.assertTrue(listed.json["insights_enabled"])
+        self.assertFalse(listed.json["can_refresh"])
+        self.assertEqual(
+            listed.json["insights"],
+            [
+                {"id": linked.id, "text": "Talk about the walk", "source_run_id": session.id},
+                {"id": plain.id, "text": "Talk about sleep", "source_run_id": None},
+            ],
+        )
+        self.assertNotIn("topic_key", str(listed.json))
+        again = TestCase._get("/progress/insights", access_token=token)
+        self.assertEqual(again.json["insights"], listed.json["insights"])
+        self.assertEqual(UserInsight.objects.get(id=linked.id).show_count, 1)
+
+        other = self._other()
+        other_token = Auth.get_access_token(other.user)
+        theirs = UserInsight.objects.create(
+            consumer=other,
+            text="Only for the other person",
+            topic_key="other-topic",
+            generated_at=base,
+        )
+        other_view = TestCase._get("/progress/insights", access_token=other_token)
+        self.assertEqual(
+            [item["id"] for item in other_view.json["insights"]],
+            [theirs.id],
+        )
+        self.assertNotIn(linked.id, [item["id"] for item in other_view.json["insights"]])
+        mine = TestCase._get("/progress/insights", access_token=token)
+        self.assertEqual(
+            [item["id"] for item in mine.json["insights"]],
+            [linked.id, plain.id],
+        )
+
+        UserInsight.objects.filter(consumer=self.consumer).update(retired_at=timezone.now(), in_hand=False)
+        pool = [
+            self._insight(f"api-{index}", base + timedelta(hours=index))
+            for index in range(8)
+        ]
+        opened = TestCase._get("/progress/insights", access_token=token)
+        self.assertTrue(opened.json["can_refresh"])
+        self.assertEqual([item["id"] for item in opened.json["insights"]], [item.id for item in pool[:4]])
+        same = TestCase._get("/progress/insights", access_token=token)
+        self.assertEqual(same.json["insights"], opened.json["insights"])
+        refreshed = TestCase._post("/progress/insights/refresh", {}, access_token=token)
+        self.assertEqual(refreshed.status_code, status.HTTP_200_OK, refreshed.json)
+        self.assertEqual(
+            [item["id"] for item in refreshed.json["insights"]],
+            [item.id for item in pool[4:]],
+        )
+        self.assertTrue(refreshed.json["can_refresh"])
+
+        UserInsight.objects.filter(consumer=self.consumer).update(retired_at=timezone.now(), in_hand=False)
+        small = [self._insight(f"few-{index}", base + timedelta(hours=index)) for index in range(3)]
+        held = TestCase._get("/progress/insights", access_token=token)
+        self.assertFalse(held.json["can_refresh"])
+        self.assertEqual([item["id"] for item in held.json["insights"]], [item.id for item in small])
+        stuck = TestCase._post("/progress/insights/refresh", {}, access_token=token)
+        self.assertEqual([item["id"] for item in stuck.json["insights"]], [item.id for item in small])
+        self.assertEqual(UserInsight.objects.get(id=small[0].id).show_count, 1)
+
+        self._set(Constants.SETTING_KEY_INSIGHTS_ENABLED, False)
+        disabled = TestCase._get("/progress/insights", access_token=token)
+        self.assertEqual(
+            disabled.json,
+            {"insights_enabled": False, "can_refresh": False, "insights": []},
+        )
+        disabled_refresh = TestCase._post("/progress/insights/refresh", {}, access_token=token)
+        self.assertEqual(disabled_refresh.json, disabled.json)
+
+    def test_generate_insights_dry_run_prints_ids_only(self):
+        before = UserInsight.objects.count()
+        out = StringIO()
+        with (
+            patch("api.progress.insights.generate_insights_for_consumer") as generate,
+            patch("api.management.commands.generate_insights.time.sleep") as sleep,
+        ):
+            call_command(
+                "generate_insights",
+                "--dry-run",
+                "--consumer-id",
+                self.consumer.pk,
+                stdout=out,
+            )
+        generate.assert_not_called()
+        sleep.assert_not_called()
+        self.assertEqual(out.getvalue().splitlines(), [self.consumer.pk, "count 1"])
+        self.assertEqual(UserInsight.objects.count(), before)
 
     def _other(self):
         if not hasattr(self, "other_consumer"):

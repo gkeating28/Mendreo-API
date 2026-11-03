@@ -120,3 +120,43 @@ class Observation(_ProgressBase):
             },
             status=status.HTTP_200_OK,
         )
+
+
+def _insights_payload(consumer, force_rotate):
+    from ..setting.models import Setting
+    from .insights import next_hand
+
+    if not Setting.get_insights_enabled():
+        return {
+            "insights_enabled": False,
+            "can_refresh": False,
+            "insights": [],
+        }
+    hand = next_hand(consumer, force_rotate=force_rotate)
+    return {
+        "insights_enabled": True,
+        "can_refresh": hand.can_refresh,
+        "insights": [
+            {
+                "id": item.id,
+                "text": item.text,
+                "source_run_id": item.source_run_id,
+            }
+            for item in hand.items
+        ],
+    }
+
+
+class Insights(_ProgressBase):
+    def get(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(_insights_payload(consumer, force_rotate=False), status=status.HTTP_200_OK)
+
+
+class InsightsRefresh(_ProgressBase):
+    def has_permission(self, request, method):
+        return method == "POST"
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(_insights_payload(consumer, force_rotate=True), status=status.HTTP_200_OK)
