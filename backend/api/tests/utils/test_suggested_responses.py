@@ -1,7 +1,22 @@
 from django.test import SimpleTestCase
 
-from ...utils.SuggestedResponses import sanitize_suggested_responses
+from ...utils.Constants import (
+    QUESTION_KIND_OPEN,
+    SUGGESTED_RESPONSES_KIND_FREE,
+)
+from ...utils.SuggestedResponses import apply_midstep_yes_no_chips, sanitize_suggested_responses
 from ...utils.ExerciseOffer import format_agent_offer
+
+
+class _FreeMessage:
+    def __init__(self, text):
+        self.text = text
+        self.suggested_responses = []
+        self.suggested_responses_kind = SUGGESTED_RESPONSES_KIND_FREE
+        self.question_kind = QUESTION_KIND_OPEN
+
+    def save(self, update_fields=None):
+        self.update_fields = update_fields
 
 
 class SanitizeSuggestedResponsesTests(SimpleTestCase):
@@ -187,6 +202,30 @@ class SanitizeSuggestedResponsesTests(SimpleTestCase):
             sanitize_suggested_responses(["I'm ready to start", "Not now"], text),
             ["I'm ready to start", "Not now"],
         )
+
+    def test_a_lead_in_yes_no_question_gets_polar_chips(self):
+        lead_in = (
+            "Since you already have these tools, are you ready to explore how to "
+            "integrate these with the reframing we did earlier?"
+        )
+        self.assertIsNone(sanitize_suggested_responses(None, lead_in))
+
+        yes_no = ["Yes", "No", "Not sure"]
+        for text in (
+            lead_in,
+            "Would you be ready to try combining your breathing and music with the "
+            "reminder that you have managed projects before?",
+            "Are you ready to try this exercise with your deadline worry?",
+        ):
+            message = _FreeMessage(text)
+            apply_midstep_yes_no_chips(message)
+            self.assertEqual(message.suggested_responses, yes_no, text)
+
+        open_question = _FreeMessage(
+            "What evidence do you have that supports your worry?"
+        )
+        apply_midstep_yes_no_chips(open_question)
+        self.assertEqual(open_question.suggested_responses, [])
 
     def test_drops_ready_to_continue_on_problem_solving_prompt(self):
         text = (

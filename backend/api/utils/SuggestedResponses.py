@@ -48,6 +48,13 @@ _POLAR_QUESTION = re.compile(
     r"(?:you|this|that|it)\b",
     re.IGNORECASE,
 )
+_POLAR_LEAD = re.compile(
+    r"\b(?:"
+    r"are you ready|would you be ready|are you willing|do you want|"
+    r"would you like|shall we|can we"
+    r")\b",
+    re.IGNORECASE,
+)
 _POLAR_CHIPS = ["Yes", "No", "Not sure"]
 
 
@@ -368,3 +375,40 @@ def sanitize_suggested_responses(
     if not suggested_responses:
         return suggested_responses
     return None
+
+
+def apply_midstep_yes_no_chips(agent_message) -> None:
+    """Yes / No on a mid-step question. Gate chips are left as they are.
+
+    Suggested-response kind stays free. An open question kind is closed so
+    the one-word chips are not treated as an open answer.
+    """
+    from . import Constants
+    from .SessionStateMachine import _closing_sentence, _ends_with_readiness_question
+    from .StepProgress import is_advance_gate_text
+
+    if agent_message.suggested_responses_kind != Constants.SUGGESTED_RESPONSES_KIND_FREE:
+        return
+    if agent_message.suggested_responses:
+        return
+    text = agent_message.text or ""
+    if is_advance_gate_text(_closing_sentence(text)) or _ends_with_readiness_question(text):
+        return
+    chips = extract_polar_options(text)
+    if not chips:
+        chunks = re.split(r"(?<=[.!])\s+", text.strip())
+        last = (chunks[-1] if chunks else text).strip()
+        if (
+            last.endswith("?")
+            and not re.search(r",\s+or\s+", last, re.IGNORECASE)
+            and _POLAR_LEAD.search(last)
+        ):
+            chips = list(_POLAR_CHIPS)
+    if not chips:
+        return
+    agent_message.suggested_responses = chips
+    fields = ["suggested_responses", "updated_at"]
+    if agent_message.question_kind == Constants.QUESTION_KIND_OPEN:
+        agent_message.question_kind = Constants.QUESTION_KIND_CLOSED
+        fields.append("question_kind")
+    agent_message.save(update_fields=fields)

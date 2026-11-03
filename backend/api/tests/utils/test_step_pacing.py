@@ -22,6 +22,7 @@ from ...utils.SessionStateMachine import (
     prepare_model_readiness,
 )
 from ...utils.StepProgress import is_advance_gate_text
+from ...utils.SuggestedResponses import apply_midstep_yes_no_chips
 from ...utils.summary_confirmation import (
     is_summary_affirmation,
     is_summary_confirmation,
@@ -980,6 +981,105 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
         self.assertEqual(session.current_step_no, 1)
+
+    def _free_question(self, session, text):
+        message = self._ask(session, text)
+        message.suggested_responses = []
+        message.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FREE
+        message.question_kind = Constants.QUESTION_KIND_OPEN
+        message.save(
+            update_fields=[
+                "suggested_responses",
+                "suggested_responses_kind",
+                "question_kind",
+                "updated_at",
+            ]
+        )
+        return message
+
+    def test_a_midstep_yes_no_gets_quick_replies_and_a_gate_does_not(self):
+        explore = (
+            "Since you already have these tools, are you ready to explore how to "
+            "integrate these with the reframing we did earlier?"
+        )
+        message = self._free_question(self._plain_two_steps(), explore)
+        apply_midstep_yes_no_chips(message)
+        message.refresh_from_db()
+        self.assertEqual(message.suggested_responses, ["Yes", "No", "Not sure"])
+        self.assertEqual(
+            message.suggested_responses_kind,
+            Constants.SUGGESTED_RESPONSES_KIND_FREE,
+        )
+        self.assertEqual(message.question_kind, Constants.QUESTION_KIND_CLOSED)
+
+        gate = "Are you ready to continue to the next part of our work?"
+        held = self._free_question(self._plain_two_steps(), gate)
+        apply_midstep_yes_no_chips(held)
+        held.refresh_from_db()
+        self.assertEqual(held.suggested_responses, [])
+        self.assertEqual(held.suggested_responses_kind, Constants.SUGGESTED_RESPONSES_KIND_FREE)
+
+        session = self._plain_two_steps()
+        accepted, response = self._claimed_without_flag(session, gate)
+        response.asks_readiness = True
+        response.step_goal_met = True
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, accepted, response)
+        apply_midstep_yes_no_chips(accepted)
+        accepted.refresh_from_db()
+        self.assertEqual(
+            accepted.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(
+            accepted.suggested_responses_kind,
+            Constants.SUGGESTED_RESPONSES_KIND_READY,
+        )
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_a_tapped_yes_on_a_midstep_question_stays_on_the_step(self):
+        session = self._plain_two_steps()
+        self._ask(session, "Are you ready to try this exercise with your deadline worry?")
+        offer = session.messages.order_by("-created_at").first()
+        offer.suggested_responses = ["Yes", "No", "Not sure"]
+        offer.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FREE
+        offer.question_kind = Constants.QUESTION_KIND_CLOSED
+        offer.save(
+            update_fields=[
+                "suggested_responses",
+                "suggested_responses_kind",
+                "question_kind",
+                "updated_at",
+            ]
+        )
+        with patch(
+            "api.message.views.request_agent_response",
+            side_effect=lambda user_message, session: user_message,
+        ) as chat:
+            response = self._post(
+                "/messages",
+                {
+                    "session": session.id,
+                    "text": "Yes",
+                    "from_suggested_response": True,
+                },
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        chat.assert_called_once()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 1)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        user_message = (
+            Message.objects.filter(session=session, sender__consumer__isnull=False)
+            .order_by("-created_at")
+            .first()
+        )
+        self.assertEqual(user_message.text, "Yes")
 
     def test_yes_after_ready_to_proceed_stays_in_chat(self):
         session = self._two_steps()
