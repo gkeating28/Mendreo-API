@@ -173,6 +173,51 @@ class ReplyStyleTests(SimpleTestCase):
             )
         )
 
+    def test_a_grounding_offer_leaves_the_worry_step(self):
+        instructions = (
+            "Name the Worry\n"
+            "Ask the user what they're worried about. "
+            "Ask them if they're spending much time actively worrying about it."
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "A grounding technique can help you regain control. "
+                "Would you like me to guide you through it?",
+                instructions,
+            )
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "We could try a breathing practice when the urge to worry shows up.",
+                instructions,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "How much time are you spending worrying about that meeting?",
+                instructions,
+            )
+        )
+
+    def test_a_step_that_names_grounding_may_offer_it(self):
+        instructions = "Guide them through a grounding exercise, then ask what they noticed."
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Let's try a short grounding exercise. What do you notice in your feet?",
+                instructions,
+            )
+        )
+
+    def test_into_practice_is_not_an_extra_technique(self):
+        instructions = "Summarise their strategy and ask if they are ready to try it."
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Your strategy is to check the facts once, then return to the task. "
+                "Are you ready to put this strategy into practice?",
+                instructions,
+            )
+        )
+
     def test_an_unnamed_called_technique_leaves_the_step(self):
         self.assertTrue(
             reply_leaves_the_step(
