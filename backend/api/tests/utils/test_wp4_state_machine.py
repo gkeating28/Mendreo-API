@@ -60,6 +60,7 @@ class Wp4StateMachineTests(BaseTest):
         ).read_text()
         self.assertIn("GOOD_PROGRESSION_EXAMPLES", raw)
         swapped = _state_machine_progression(raw)
+        self.assertIn("stick strictly to this exercise and its steps", swapped)
         self.assertIn("Set asks_readiness", swapped)
         self.assertNotIn("GOOD_PROGRESSION_EXAMPLES", swapped)
         self.assertIn("<EXERCISE>", swapped)
