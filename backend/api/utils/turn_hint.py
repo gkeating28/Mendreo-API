@@ -22,11 +22,11 @@ ACCEPT_HINT = (
     "Do not start another exercise or activity."
 )
 STAY_ON_STEP_HINT = (
-    "That reply offered a technique or activity this step does not instruct. "
-    "Discard that offer and continue this step. "
-    "If the instructions say to summarise, summarise in the user's words and ask if you have it right. "
-    "If they have already confirmed the summary, ask whether they are ready for the next step. "
-    "Do not start another technique."
+    "That reply left this step's instructions. "
+    "Do not offer strategies, practical steps, a plan, a technique, or another activity. "
+    "Summarise what the user has already said, in their words, and ask only if you have it right. "
+    "If they have already confirmed that summary, ask whether they are ready for the next step. "
+    "Do not teach a method."
 )
 NOT_THE_LAST_STEP_HINT = (
     "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
@@ -42,6 +42,21 @@ LAST_STEP_HINT = (
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
+
+
+def summary_hold_text(spoken: str | None) -> str:
+    """A confirmation of the user's own words, so a yes can finish the step.
+
+    A short or empty line stays on the generic question. A real answer is
+    repeated back and then asked as the next-step gate.
+    """
+    quote = " ".join((spoken or "").split())
+    if len(quote.split()) < 4:
+        return ON_STEP_FALLBACK
+    return (
+        f"So far, in your own words, you've said: {quote} "
+        "Have I got that right? Are you ready to continue to the next step?"
+    )
 ABOUT_THE_USER_HINT = (
     "{user_name} is asking what you know about them. "
     "Everything you know is written between the <ABOUT_CLIENT> tags below, "
