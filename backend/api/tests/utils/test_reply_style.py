@@ -21,7 +21,14 @@ from ...utils.reply_style import (
     reply_ends_mid_sentence,
     reply_leaves_the_step,
 )
-from ...utils.turn_hint import LAST_STEP_HINT, NOT_THE_LAST_STEP_HINT, ON_STEP_FALLBACK
+from ...utils.turn_hint import (
+    LAST_STEP_HINT,
+    NOT_THE_LAST_STEP_HINT,
+    ON_STEP_FALLBACK,
+    summary_hold_text,
+)
+from ...utils.StepProgress import is_advance_gate_text
+from ...utils.summary_confirmation import is_summary_confirmation
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
 
@@ -207,6 +214,49 @@ class ReplyStyleTests(SimpleTestCase):
                 instructions,
             )
         )
+
+    def test_explore_some_strategies_leaves_name_the_worry(self):
+        instructions = (
+            "Name the Worry\n"
+            "Ask the user what they're worried about. "
+            "Ask them if they're spending much time actively worrying about it. "
+            "Ask them about specific behaviours that they do while worrying, "
+            "such as searching the internet or refreshing social media. "
+            "Summarise the user's worry and ask them if you've got it right."
+        )
+        offers = (
+            "Would you like to explore some strategies to help reduce this urge "
+            "and manage these feelings?",
+            "Would you like to explore some strategies together to help reduce "
+            "this habit and manage the feelings behind it?",
+            "Would you like to try some practical steps to help reduce this "
+            "behaviour and cope with the emotions behind it?",
+            "I can guide you through some practical strategies directly. "
+            "One approach is to set designated times during the day to check. "
+            "Another is to find alternative activities.",
+        )
+        for reply in offers:
+            self.assertTrue(reply_leaves_the_step(reply, instructions), reply)
+        self.assertFalse(
+            reply_leaves_the_step(
+                "How often are you checking, and what feelings come up when you do?",
+                instructions,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Let's try that in more factual words. What happened just before you checked?",
+                instructions,
+            )
+        )
+
+    def test_a_named_worry_hold_asks_to_confirm_and_continue(self):
+        text = summary_hold_text("I can't stop checking my ex's instagram")
+        self.assertIn("I can't stop checking my ex's instagram", text)
+        self.assertTrue(is_summary_confirmation(text))
+        self.assertTrue(is_advance_gate_text(text))
+        self.assertFalse(reply_leaves_the_step(text, "Ask what they are worried about."))
+        self.assertEqual(summary_hold_text("Yes"), ON_STEP_FALLBACK)
 
     def test_into_practice_is_not_an_extra_technique(self):
         instructions = "Summarise their strategy and ask if they are ready to try it."
