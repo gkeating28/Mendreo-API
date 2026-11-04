@@ -105,6 +105,29 @@ _TECHNIQUE_GROUPS = (
     ),
 )
 
+# An offer of help the live step did not name. "Into practice" and "your strategy"
+# describe the step's own plan. They are not an offer.
+_OFFERED_TERMS = (
+    ("grounding",),
+    ("breathing", "breathe"),
+    ("technique", "techniques"),
+    ("strategy", "strategies"),
+    ("practice", "practise", "practices", "practises", "practising", "practicing"),
+)
+def _offered_as_activity(text: str, group: tuple[str, ...]) -> bool:
+    """True when this group is offered as an activity, not merely mentioned."""
+    words = "|".join(re.escape(term) for term in group)
+    article = re.compile(
+        rf"\b(?:a|an|another)\s+(?:[\w'-]+\s+){{0,2}}(?:{words})\b",
+        re.IGNORECASE,
+    )
+    verb = re.compile(
+        rf"\b(?:try|offer(?:ing)?|use|using)\s+(?:a|an|the|this|some)?\s*"
+        rf"(?:[\w'-]+\s+){{0,2}}(?:{words})\b",
+        re.IGNORECASE,
+    )
+    return bool(article.search(text) or verb.search(text))
+
 _CALLED_ACTIVITY = re.compile(
     r"\b(?:technique|exercise|practice|activity|strategy|skill|method)\s+called\s+"
     r"[\"'\u201c\u2018]?"
@@ -156,6 +179,9 @@ def stay_on_step_catalogue_text() -> str:
     lines.append("Technique groups:")
     for group in _TECHNIQUE_GROUPS:
         lines.append(", ".join(group))
+    lines.append("Offered activities:")
+    for group in _OFFERED_TERMS:
+        lines.append(", ".join(group))
     return "\n".join(lines)
 
 
@@ -171,6 +197,8 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
+    if _offered_activity_missing(raw, allowed):
+        return True
     unnamed = _unnamed_technique(raw, allowed)
     if _STEP_READY.search(raw) and not unnamed:
         return False
@@ -183,6 +211,20 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
         return True
     if unnamed and re.search(r"\b(?:give it a try|ready to try)\b", raw, re.IGNORECASE):
         return True
+    return False
+
+
+def _offered_activity_missing(text: str, allowed: str) -> bool:
+    """True when the reply offers a technique the live step does not name."""
+    for group in _OFFERED_TERMS:
+        if not any(_contains_term(text, term) for term in group):
+            continue
+        if any(_contains_term(allowed, term) for term in group):
+            continue
+        if group[0] in {"grounding", "breathing"}:
+            return True
+        if _offered_as_activity(text, group):
+            return True
     return False
 
 

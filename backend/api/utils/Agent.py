@@ -662,6 +662,10 @@ STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
     "Do only what this step's instructions tell you to do. "
+    "Those instructions are the only task for this turn. "
+    "Do not offer a technique, strategy, practice, grounding, or breathing exercise "
+    "that those instructions do not name. "
+    "The therapeutic text and the exercise description do not authorise one. "
     "Do not add a technique those instructions do not name. "
     "Earlier sessions, today's completed sessions and previous exercise summaries are background only. Never use them to skip, shorten or answer for the user in this step. Ask this step's own questions, even if the user has done this exercise before. "
     "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
@@ -1051,6 +1055,12 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             and not session.in_pre_exercise_phase()
             and "stick strictly to this exercise and its steps" not in cached
         )
+        stale_offer = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "Do not offer a technique, strategy, practice, grounding, or breathing"
+            not in cached
+        )
         first_name = (
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
@@ -1067,6 +1077,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_restructure,
             stale_opening,
             stale_stick,
+            stale_offer,
             stale_name,
         )):
             return cached
