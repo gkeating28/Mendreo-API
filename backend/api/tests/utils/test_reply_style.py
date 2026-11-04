@@ -208,6 +208,43 @@ class ReplyStyleTests(SimpleTestCase):
             )
         )
 
+    def test_working_through_a_strategy_leaves_name_the_worry(self):
+        instructions = (
+            "Name the Worry\n"
+            "Ask the user what they're worried about. "
+            "Ask them if they're spending much time actively worrying about it. "
+            "Ask them about specific behaviours that they do while worrying, "
+            "such as searching the internet or refreshing social media. "
+            "Summarise the user's worry and ask them if you've got it right."
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "This can be quite distressing and make it hard to move forward. "
+                "Would you like to work through some strategies together to help "
+                "manage this urge and reduce your worry?",
+                instructions,
+            )
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "Let's work on some strategies to help reduce this urge. "
+                "Would you like to start with some mindfulness exercises or techniques?",
+                instructions,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "How much time are you spending checking, and what do you do while you are worrying?",
+                instructions,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Let's try that in more factual words. What happened just before you checked?",
+                instructions,
+            )
+        )
+
     def test_into_practice_is_not_an_extra_technique(self):
         instructions = "Summarise their strategy and ask if they are ready to try it."
         self.assertFalse(

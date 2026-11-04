@@ -114,6 +114,33 @@ _OFFERED_TERMS = (
     ("strategy", "strategies"),
     ("practice", "practise", "practices", "practises", "practising", "practicing"),
 )
+# "Would you like to work through some strategies" and "start with mindfulness".
+# "Let's try that" is another attempt at the step's own wording, so it is not here.
+_OFFSTEP_METHOD = re.compile(
+    r"\b(?:work(?:ing)?\s+(?:on|through)|start with)\b"
+    r"(?:\s+\w+){0,8}\s+"
+    r"(?:a|an|some|the|these|those)?\s*"
+    r"(?:strateg(?:y|ies)|techniques?|exercises?|practices?|practises?|activities|methods?)\b"
+    r"|\bmindfulness\b",
+    re.IGNORECASE,
+)
+
+
+def _offers_unlisted_method(text: str, allowed: str) -> bool:
+    """True when the reply invites a method the live step does not name."""
+    match = _OFFSTEP_METHOD.search(text or "")
+    if not match:
+        return False
+    snippet = match.group(0).lower()
+    allowed_l = (allowed or "").lower()
+    if "mindfulness" in snippet:
+        return "mindfulness" not in allowed_l
+    for key in ("strateg", "technique", "exercise", "practic", "activit", "method"):
+        if key in snippet and key not in allowed_l:
+            return True
+    return False
+
+
 def _offered_as_activity(text: str, group: tuple[str, ...]) -> bool:
     """True when this group is offered as an activity, not merely mentioned."""
     words = "|".join(re.escape(term) for term in group)
@@ -197,6 +224,8 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
+    if _offers_unlisted_method(raw, allowed):
+        return True
     if _offered_activity_missing(raw, allowed):
         return True
     unnamed = _unnamed_technique(raw, allowed)

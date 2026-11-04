@@ -22,11 +22,10 @@ ACCEPT_HINT = (
     "Do not start another exercise or activity."
 )
 STAY_ON_STEP_HINT = (
-    "That reply offered a technique or activity this step does not instruct. "
-    "Discard that offer and continue this step. "
-    "If the instructions say to summarise, summarise in the user's words and ask if you have it right. "
-    "If they have already confirmed the summary, ask whether they are ready for the next step. "
-    "Do not start another technique."
+    "That reply left this step's instructions. "
+    "Ask the next question those instructions name. One question only. "
+    "Do not offer a strategy, technique, exercise, practice, or mindfulness. "
+    "Do not ask if they are ready to move on."
 )
 NOT_THE_LAST_STEP_HINT = (
     "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
