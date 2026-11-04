@@ -118,36 +118,15 @@ def _offered_as_activity(text: str, group: tuple[str, ...]) -> bool:
     """True when this group is offered as an activity, not merely mentioned."""
     words = "|".join(re.escape(term) for term in group)
     article = re.compile(
-        rf"\b(?:a|an|another|some)\s+(?:[\w'-]+\s+){{0,3}}(?:{words})\b",
+        rf"\b(?:a|an|another)\s+(?:[\w'-]+\s+){{0,2}}(?:{words})\b",
         re.IGNORECASE,
     )
     verb = re.compile(
-        rf"\b(?:try|offer(?:ing)?|use|using|explore|exploring|look at|looking at)\s+"
-        rf"(?:a|an|the|this|some)?\s*"
-        rf"(?:[\w'-]+\s+){{0,3}}(?:{words})\b",
+        rf"\b(?:try|offer(?:ing)?|use|using)\s+(?:a|an|the|this|some)?\s*"
+        rf"(?:[\w'-]+\s+){{0,2}}(?:{words})\b",
         re.IGNORECASE,
     )
     return bool(article.search(text) or verb.search(text))
-
-
-# Teaching a method the live step did not ask for. "Let's try that" is another
-# attempt at the step's own wording, so it is not listed here.
-_UNLISTED_METHOD = (
-    re.compile(
-        r"\b(?:explore|exploring|look at|looking at)\b(?:\s+\w+){0,8}\s+"
-        r"(?:strateg(?:y|ies)|techniques?|practices?|practises?|ideas|ways)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:some|a few|any)\s+(?:[\w'-]+\s+){0,4}(?:strateg(?:y|ies)|techniques?|ideas)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\bpractical steps\b", re.IGNORECASE),
-    re.compile(r"\b(?:one|another)\s+approach\s+is\b", re.IGNORECASE),
-    re.compile(r"\bdesignated times?\b", re.IGNORECASE),
-    re.compile(r"\balternative activit(?:y|ies)\b", re.IGNORECASE),
-    re.compile(r"\bguide you through\b", re.IGNORECASE),
-)
 
 _CALLED_ACTIVITY = re.compile(
     r"\b(?:technique|exercise|practice|activity|strategy|skill|method)\s+called\s+"
@@ -218,8 +197,6 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
-    if _unlisted_method(raw, allowed):
-        return True
     if _offered_activity_missing(raw, allowed):
         return True
     unnamed = _unnamed_technique(raw, allowed)
@@ -234,50 +211,6 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
         return True
     if unnamed and re.search(r"\b(?:give it a try|ready to try)\b", raw, re.IGNORECASE):
         return True
-    return False
-
-
-def _step_already_names(allowed: str, snippet: str) -> bool:
-    """True when the live step instructions already ask for this method."""
-    allowed_l = (allowed or "").lower()
-    snippet_l = (snippet or "").lower()
-    if snippet_l and snippet_l in allowed_l:
-        return True
-    if "strateg" in snippet_l and re.search(r"\bstrateg", allowed_l):
-        return True
-    if "practical step" in snippet_l and "practical step" in allowed_l:
-        return True
-    if "approach" in snippet_l and re.search(r"\bapproach", allowed_l):
-        return True
-    if "designated time" in snippet_l and (
-        "designated time" in allowed_l or "specific time" in allowed_l or "schedule" in allowed_l
-    ):
-        return True
-    if "alternative activit" in snippet_l and (
-        "alternative activit" in allowed_l or "alternative action" in allowed_l
-    ):
-        return True
-    if "guide you through" in snippet_l and "guide" in allowed_l and "through" in allowed_l:
-        return True
-    if re.search(r"\bideas\b", snippet_l) and re.search(r"\bideas\b", allowed_l):
-        return True
-    if re.search(r"\bways\b", snippet_l) and re.search(r"\bways\b", allowed_l):
-        return True
-    if re.search(r"\btechniques?\b", snippet_l) and re.search(r"\btechniques?\b", allowed_l):
-        return True
-    if re.search(r"\b(?:practice|practise)s?\b", snippet_l) and re.search(
-        r"\b(?:practice|practise)s?\b", allowed_l
-    ):
-        return True
-    return False
-
-
-def _unlisted_method(text: str, allowed: str) -> bool:
-    """True when the reply teaches a method the live step does not name."""
-    for pattern in _UNLISTED_METHOD:
-        match = pattern.search(text or "")
-        if match and not _step_already_names(allowed, match.group(0)):
-            return True
     return False
 
 

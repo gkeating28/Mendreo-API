@@ -375,43 +375,11 @@ def _reply_offers_to_move_on(text: str | None) -> bool:
     return bool(_OFFERS_TO_MOVE_ON.search(text or ""))
 
 
-def _words_to_confirm(session, consumer_message) -> str:
-    """The user's own description, skipping a bare yes to an off-step offer."""
-    from ..message.models import Message
-    from .SessionStateMachine import is_ready_affirmation
+def _hold_on_step(response_data) -> None:
+    """Replace an off-script reply so the user is not offered another technique."""
+    from .turn_hint import ON_STEP_FALLBACK
 
-    def usable(text: str) -> str:
-        cleaned = " ".join((text or "").split())
-        if len(cleaned.split()) < 4 or is_ready_affirmation(cleaned):
-            return ""
-        return cleaned
-
-    current = usable(getattr(consumer_message, "text", None) or "")
-    if current:
-        return current[:500]
-
-    earlier = (
-        Message.objects.filter(session=session, sender__consumer__isnull=False)
-        .exclude(id=getattr(consumer_message, "id", None))
-        .order_by("-created_at")
-    )
-    found = []
-    for message in earlier[:8]:
-        text = usable(message.text or "")
-        if not text:
-            continue
-        found.append(text)
-        if len(found) >= 2:
-            break
-    found.reverse()
-    return " ".join(found)[:500]
-
-
-def _hold_on_step(response_data, spoken=None) -> None:
-    """Replace an off-script reply with a confirmation of the user's words."""
-    from .turn_hint import summary_hold_text
-
-    response_data.text = summary_hold_text(spoken)
+    response_data.text = ON_STEP_FALLBACK
     response_data.suggested_responses = []
     response_data.question_kind = Constants.QUESTION_KIND_OPEN
     if hasattr(response_data, "asks_readiness"):
@@ -620,7 +588,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                     getattr(consumer_message, "id", None),
                 )
             if not stayed:
-                _hold_on_step(response_data, _words_to_confirm(session, consumer_message))
+                _hold_on_step(response_data)
                 on_step_held = True
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
