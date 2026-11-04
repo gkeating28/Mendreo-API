@@ -545,7 +545,6 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         if left or ending or moving:
             from .turn_hint import (
                 NOT_THE_LAST_STEP_HINT,
-                STAY_ON_STEP_HINT,
                 last_step_hint,
             )
 
@@ -559,7 +558,14 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             elif moving:
                 steer[0] = last_step_hint(session)
             else:
-                steer[0] = STAY_ON_STEP_HINT
+                from .step_script import stay_on_script_hint
+
+                prior = list(
+                    Message.objects.filter(
+                        session=session, sender__agent__isnull=False
+                    ).order_by("created_at").values_list("text", flat=True)
+                )
+                steer[0] = stay_on_script_hint(instructions or "", prior)
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
@@ -1061,6 +1067,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             and "Do not offer a technique, strategy, practice, grounding, or breathing"
             not in cached
         )
+        stale_protocol = (
+            bool(session.exercise_id)
+            and Constants.EXERCISE_PROTOCOL_RULE not in cached
+        )
         first_name = (
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
@@ -1078,6 +1088,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_opening,
             stale_stick,
             stale_offer,
+            stale_protocol,
             stale_name,
         )):
             return cached
@@ -1189,9 +1200,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
-    if retrieval_on or exercise:
-        # Exercise prompts leave technique choice to the Therapeutic card.
-        # A retrieval turn no longer adds a source-only technique ban.
+    if exercise:
+        # The exercise steps are the Unified Protocol for this session.
+        # The general-chat rule would invite other strategies.
+        up_technique_rule = Constants.EXERCISE_PROTOCOL_RULE
+    elif retrieval_on:
         up_technique_rule = ""
     else:
         up_technique_rule = Constants.UP_MEMORY_TECHNIQUE_RULE

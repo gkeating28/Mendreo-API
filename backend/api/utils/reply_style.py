@@ -114,29 +114,51 @@ _OFFERED_TERMS = (
     ("strategy", "strategies"),
     ("practice", "practise", "practices", "practises", "practising", "practicing"),
 )
-# "Would you like to work through some strategies" and "start with mindfulness".
-# "Let's try that" is another attempt at the step's own wording, so it is not here.
-_OFFSTEP_METHOD = re.compile(
-    r"\b(?:work(?:ing)?\s+(?:on|through)|start with)\b"
-    r"(?:\s+\w+){0,8}\s+"
-    r"(?:a|an|some|the|these|those)?\s*"
-    r"(?:strateg(?:y|ies)|techniques?|exercises?|practices?|practises?|activities|methods?)\b"
-    r"|\bmindfulness\b",
+# An invitation to do something. The named thing must already be in the step
+# instructions. "Let's try that" restates the step's own wording, so "try" is
+# not an invitation here.
+_OFFER_LEAD = re.compile(
+    r"\b(?:work(?:ing)?\s+(?:on|through)|start with|explore)\s+"
+    r"(?:(?:a|an|another|some|the|these|those)\s+)?"
+    r"([A-Za-z][\w'-]{3,})",
     re.IGNORECASE,
 )
+_OFFER_SKIP = {
+    "that",
+    "this",
+    "them",
+    "they",
+    "your",
+    "with",
+    "some",
+    "more",
+    "just",
+    "what",
+    "when",
+    "help",
+    "together",
+    "please",
+    "short",
+    "simple",
+    "little",
+}
+
+
+def _word_is_in_instructions(word: str, instructions: str) -> bool:
+    token = (word or "").lower().strip("'")
+    if token in _OFFER_SKIP or len(token) < 4:
+        return True
+    stem = token[:6]
+    for other in re.findall(r"[a-z']{4,}", (instructions or "").lower()):
+        if other.startswith(stem) or token.startswith(other[:6]):
+            return True
+    return False
 
 
 def _offers_unlisted_method(text: str, allowed: str) -> bool:
-    """True when the reply invites a method the live step does not name."""
-    match = _OFFSTEP_METHOD.search(text or "")
-    if not match:
-        return False
-    snippet = match.group(0).lower()
-    allowed_l = (allowed or "").lower()
-    if "mindfulness" in snippet:
-        return "mindfulness" not in allowed_l
-    for key in ("strateg", "technique", "exercise", "practic", "activit", "method"):
-        if key in snippet and key not in allowed_l:
+    """True when the reply invites something the step instructions do not name."""
+    for match in _OFFER_LEAD.finditer(text or ""):
+        if not _word_is_in_instructions(match.group(1), allowed):
             return True
     return False
 
