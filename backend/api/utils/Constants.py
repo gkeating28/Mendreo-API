@@ -232,6 +232,7 @@ THIN_ANSWER_MIN_WORDS = 4
 SETTING_KEY_THIN_ANSWER_MIN_WORDS = "thin_answer_min_words"
 THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
+SETTING_KEY_CHAT_OPENERS = "chat_openers"
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
 SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
 SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
@@ -287,6 +288,18 @@ RETRIEVAL_MAX_TOKENS_DEFAULT = 1500
 RETRIEVAL_CONTEXT_MIN_WORDS_DEFAULT = 8
 
 DEFAULT_GENERIC_ANSWERS = ["fine", "ok", "not sure", "good", "bad"]
+DEFAULT_CHAT_OPENERS = [
+    "Hi {name}, tell me how you are feeling today.",
+    "Hi {name}, what's on your mind right now?",
+    "Hi {name}, how has your day been so far?",
+    "Good to see you, {name}. What would you like to talk about?",
+    "Hi {name}, what's been taking up space in your head lately?",
+    "Hey {name}, how are you doing today?",
+    "Hi {name}, is there anything you'd like to get off your chest?",
+    "Hi {name}, how are things with you today?",
+    "Hi {name}, what's one thing on your mind today?",
+    "Hi {name}, take a moment. How are you arriving today?",
+]
 DEFAULT_RISK_KEYWORDS = {
     "high": ["suicide", "kill myself", "end my life", "want to die"],
     "moderate": ["self-harm", "self harm", "hurt myself"],

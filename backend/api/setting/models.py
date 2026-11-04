@@ -61,6 +61,7 @@ class Setting(SmartModel):
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
         Setting.get_or_create_generic_answers_default()
+        Setting.get_or_create_chat_openers()
         Setting.get_or_create_risk_keywords()
         Setting.get_or_create_trust_and_safety_email()
         Setting.get_or_create_ai_retrieval_enabled()
@@ -315,6 +316,22 @@ class Setting(SmartModel):
             Setting.get_or_create_generic_answers_default,
         )
         return _json_list(raw, Constants.DEFAULT_GENERIC_ANSWERS)
+
+    @staticmethod
+    def get_or_create_chat_openers():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_CHAT_OPENERS,
+            defaults={"value": json.dumps(Constants.DEFAULT_CHAT_OPENERS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_chat_openers() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_CHAT_OPENERS,
+            Setting.get_or_create_chat_openers,
+        )
+        return _json_list(raw, Constants.DEFAULT_CHAT_OPENERS)
 
     @staticmethod
     def get_or_create_risk_keywords():

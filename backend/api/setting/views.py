@@ -62,6 +62,8 @@ class ListCreate(SmartAPIView):
                     )
             elif setting.key == Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT:
                 data[setting.key] = Setting.get_generic_answers_default()
+            elif setting.key == Constants.SETTING_KEY_CHAT_OPENERS:
+                data[setting.key] = Setting.get_chat_openers()
             elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
                 data[setting.key] = Setting.get_risk_keywords()
             elif setting.key in (
@@ -113,6 +115,7 @@ class ListCreate(SmartAPIView):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "generic_answers_default": Setting.get_generic_answers_default(),
+            "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),

@@ -91,6 +91,9 @@ class Session(SmartModel):
     # One line plus bullets, written once when a completed exercise run closes.
     run_summary = models.JSONField(null=True, blank=True)
 
+    # Display line for an empty general chat. Not stored as a message.
+    opener = models.TextField(null=True, blank=True)
+
     # General chat opened from a finished exercise. Not an exercise run.
     source_run = models.ForeignKey(
         "self",
@@ -238,7 +241,7 @@ class Session(SmartModel):
         return session
 
     @staticmethod
-    def create_general(consumer):
+    def create_general(consumer, *, assign_opener=True):
         """Always create a fresh general chat. Does not reuse today's session."""
         from ..participant.models import Participant
 
@@ -254,6 +257,8 @@ class Session(SmartModel):
         Participant.create_participants(session=session)
         from ..knowledge.followup import maybe_start_onboarding_followup
         maybe_start_onboarding_followup(session)
+        if assign_opener:
+            _assign_chat_opener(session, consumer)
         return session
 
     @staticmethod
@@ -352,3 +357,53 @@ class SessionMetric(SmartModel):
                 name="sessionmetric_cons_key_rec_idx",
             )
         ]
+
+
+def _assign_chat_opener(session, consumer) -> None:
+    """Store one rendered opener. An empty list leaves the field null."""
+    import random
+
+    from ..setting.models import Setting
+
+    templates = []
+    for item in Setting.get_chat_openers():
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text:
+            templates.append(text)
+    if not templates:
+        return
+
+    user = getattr(consumer, "user", None)
+    first_name = (getattr(user, "first_name", None) or "").strip()
+    rendered = [_render_chat_opener(template, first_name) for template in templates]
+    choices = rendered
+    if len(templates) > 1:
+        previous = (
+            Session.objects.filter(consumer=consumer)
+            .exclude(pk=session.pk)
+            .exclude(opener__isnull=True)
+            .exclude(opener="")
+            .order_by("-created_at", "-id")
+            .values_list("opener", flat=True)
+            .first()
+        )
+        if previous:
+            remaining = [text for text in rendered if text != previous]
+            if remaining:
+                choices = remaining
+    session.opener = random.choice(choices)
+    session.save(update_fields=["opener", "updated_at"])
+
+
+def _render_chat_opener(template: str, first_name: str) -> str:
+    import re
+
+    if first_name:
+        return template.replace("{name}", first_name)
+    text = template.replace(", {name}", "").replace("{name}", "")
+    text = re.sub(r"[ \t]+,", ",", text)
+    text = re.sub(r"[ \t]+\.", ".", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()

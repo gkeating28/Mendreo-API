@@ -168,7 +168,7 @@ def _open_insight_session(consumer, insight):
     from ..session.models import Session
 
     with transaction.atomic():
-        session = Session.create_general(consumer)
+        session = Session.create_general(consumer, assign_opener=False)
         if insight.source_run_id:
             session.source_run_id = insight.source_run_id
             session.save(update_fields=["source_run", "updated_at"])

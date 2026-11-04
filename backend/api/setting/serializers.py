@@ -92,6 +92,12 @@ class SettingCreateSerializer(serializers.Serializer):
         child=serializers.CharField(),
         required=False,
     )
+    chat_openers = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=120),
+        required=False,
+        allow_empty=True,
+        max_length=20,
+    )
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
@@ -152,6 +158,14 @@ class SettingCreateSerializer(serializers.Serializer):
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
+
+    def validate_chat_openers(self, value):
+        seen = set()
+        for text in value:
+            if text in seen:
+                raise serializers.ValidationError("Openers must be unique.")
+            seen.add(text)
+        return value
 
     def _insights_number(self, attrs, name, getter):
         incoming = getattr(self, "initial_data", {}) or {}
@@ -244,6 +258,11 @@ class SettingCreateSerializer(serializers.Serializer):
             generic = Setting.get_or_create_generic_answers_default()
             generic.value = json.dumps(validated_data["generic_answers_default"])
             generic.save()
+
+        if "chat_openers" in validated_data:
+            openers = Setting.get_or_create_chat_openers()
+            openers.value = json.dumps(validated_data["chat_openers"])
+            openers.save()
 
         if "risk_keywords" in validated_data:
             keywords = Setting.get_or_create_risk_keywords()
@@ -362,6 +381,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "generic_answers_default": Setting.get_generic_answers_default(),
+            "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),

@@ -101,7 +101,7 @@ class List(SmartPaginationAPIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-        session = Session.create_general(consumer)
+        session = Session.create_general(consumer, assign_opener=source_run is None)
         if source_run is not None:
             session.source_run = source_run
             session.save(update_fields=["source_run", "updated_at"])
