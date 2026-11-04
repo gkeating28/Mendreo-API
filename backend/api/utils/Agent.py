@@ -647,7 +647,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
 
 _PROGRESSION_START = (
-    "        - Do not allow the user to do anything outside of this exercise."
+    "        - When is_step_complete is true, completion_result MUST be the user's own words"
 )
 _STATE_MACHINE_PROGRESSION = (
     "        - Set asks_readiness only when the step's work is done, and make that "
@@ -1046,6 +1046,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             or "Do not apply cognitive restructuring" in cached
         )
         stale_opening = bool(meta.get("bare_opening")) != bare_opening
+        stale_stick = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "stick strictly to this exercise and its steps" not in cached
+        )
         first_name = (
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
@@ -1061,6 +1066,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_on_step,
             stale_restructure,
             stale_opening,
+            stale_stick,
             stale_name,
         )):
             return cached

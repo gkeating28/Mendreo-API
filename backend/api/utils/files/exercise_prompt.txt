@@ -8,7 +8,7 @@
         <!-- Instructions for how you are programmed / should utilise the content provided -->
         {programming_instructions}
 
-        - Do not allow the user to do anything outside of this exercise. You must stick strictly to this exercise and it's steps.
+        - Do not allow the user to do anything outside of this exercise. You must stick strictly to this exercise and its steps.
 
         - When is_step_complete is true, completion_result MUST be the user's own words for what
           this step's COMPLETION_PROMPT asked them to produce (the worry they named, the thought
