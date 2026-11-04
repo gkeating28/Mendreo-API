@@ -114,6 +114,55 @@ _OFFERED_TERMS = (
     ("strategy", "strategies"),
     ("practice", "practise", "practices", "practises", "practising", "practicing"),
 )
+# An invitation to do something. The named thing must already be in the step
+# instructions. "Let's try that" restates the step's own wording, so "try" is
+# not an invitation here.
+_OFFER_LEAD = re.compile(
+    r"\b(?:work(?:ing)?\s+(?:on|through)|start with|explore)\s+"
+    r"(?:(?:a|an|another|some|the|these|those)\s+)?"
+    r"([A-Za-z][\w'-]{3,})",
+    re.IGNORECASE,
+)
+_OFFER_SKIP = {
+    "that",
+    "this",
+    "them",
+    "they",
+    "your",
+    "with",
+    "some",
+    "more",
+    "just",
+    "what",
+    "when",
+    "help",
+    "together",
+    "please",
+    "short",
+    "simple",
+    "little",
+}
+
+
+def _word_is_in_instructions(word: str, instructions: str) -> bool:
+    token = (word or "").lower().strip("'")
+    if token in _OFFER_SKIP or len(token) < 4:
+        return True
+    stem = token[:6]
+    for other in re.findall(r"[a-z']{4,}", (instructions or "").lower()):
+        if other.startswith(stem) or token.startswith(other[:6]):
+            return True
+    return False
+
+
+def _offers_unlisted_method(text: str, allowed: str) -> bool:
+    """True when the reply invites something the step instructions do not name."""
+    for match in _OFFER_LEAD.finditer(text or ""):
+        if not _word_is_in_instructions(match.group(1), allowed):
+            return True
+    return False
+
+
 def _offered_as_activity(text: str, group: tuple[str, ...]) -> bool:
     """True when this group is offered as an activity, not merely mentioned."""
     words = "|".join(re.escape(term) for term in group)
@@ -197,6 +246,8 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
+    if _offers_unlisted_method(raw, allowed):
+        return True
     if _offered_activity_missing(raw, allowed):
         return True
     unnamed = _unnamed_technique(raw, allowed)

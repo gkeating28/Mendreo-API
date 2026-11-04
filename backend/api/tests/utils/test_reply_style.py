@@ -21,6 +21,7 @@ from ...utils.reply_style import (
     reply_ends_mid_sentence,
     reply_leaves_the_step,
 )
+from ...utils.step_script import next_instruction
 from ...utils.turn_hint import LAST_STEP_HINT, NOT_THE_LAST_STEP_HINT, ON_STEP_FALLBACK
 from ..utils.BaseTest import BaseTest
 from ..utils.manager import General
@@ -207,6 +208,51 @@ class ReplyStyleTests(SimpleTestCase):
                 instructions,
             )
         )
+
+    def test_an_offer_must_be_named_in_the_step_instructions(self):
+        ask = (
+            "Ask what they are worried about. "
+            "Ask how much time it takes. "
+            "Ask what they do while it is happening."
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "Would you like to work through some strategies together?",
+                ask,
+            )
+        )
+        self.assertTrue(
+            reply_leaves_the_step(
+                "Would you like to start with some mindfulness exercises?",
+                ask,
+            )
+        )
+        self.assertFalse(
+            reply_leaves_the_step(
+                "How much time does this take?",
+                ask,
+            )
+        )
+        schedule = "Help them schedule a specific time to work on the plan."
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Would you like to work through a schedule for when you will do this?",
+                schedule,
+            )
+        )
+
+    def test_instructions_are_followed_in_the_order_they_are_written(self):
+        instructions = (
+            "Ask what the worry is. "
+            "Ask how much time it takes. "
+            "Ask what they do while it is happening."
+        )
+        self.assertIn("worry", next_instruction(instructions, []))
+        nxt = next_instruction(
+            instructions,
+            ["What is the worry that has been on your mind?"],
+        )
+        self.assertIn("time", nxt)
 
     def test_into_practice_is_not_an_extra_technique(self):
         instructions = "Summarise their strategy and ask if they are ready to try it."
