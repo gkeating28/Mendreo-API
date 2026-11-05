@@ -351,6 +351,8 @@ class GroundingTests(TestCase):
 
         prompt = _prepare_prompt(session)
         self.assertIn("UNIQUE_NOTE_ALPHA", prompt)
+        self.assertIn("Unified Protocol for this session", prompt)
+        self.assertNotIn("evidence-based strategies", prompt)
         self.assertNotIn("do not name the source document", prompt)
         self.assertNotIn("only as background", prompt)
         self.assertNotIn("Do not apply cognitive restructuring", prompt)

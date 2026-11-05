@@ -22,11 +22,9 @@ ACCEPT_HINT = (
     "Do not start another exercise or activity."
 )
 STAY_ON_STEP_HINT = (
-    "That reply offered a technique or activity this step does not instruct. "
-    "Discard that offer and continue this step. "
-    "If the instructions say to summarise, summarise in the user's words and ask if you have it right. "
-    "If they have already confirmed the summary, ask whether they are ready for the next step. "
-    "Do not start another technique."
+    "That reply did not follow this step's instructions. "
+    "Do the next part of those instructions and nothing else. "
+    "Do not add any technique or activity they do not name."
 )
 NOT_THE_LAST_STEP_HINT = (
     "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
@@ -286,8 +284,42 @@ def finish_after_confirmed_summary_hint(session) -> str | None:
     )
 
 
+def _with_step_sequence(session, body: str) -> str:
+    """Keep an exercise turn on the next written instruction."""
+    if not getattr(session, "exercise_id", None):
+        return body
+    try:
+        in_check_in = session.in_pre_exercise_phase()
+    except Exception:
+        in_check_in = False
+    if in_check_in:
+        return body
+    from .Agent import _current_step_instructions
+    from .step_script import sequence_hint
+    from ..message.models import Message
+
+    instructions = _current_step_instructions(session)
+    if not instructions:
+        return body
+    prior = list(
+        Message.objects.filter(session=session, sender__agent__isnull=False)
+        .order_by("created_at")
+        .values_list("text", flat=True)
+    )
+    hint = sequence_hint(instructions, prior)
+    if not hint:
+        return body
+    if "</TURN_HINT>" in body:
+        return body.replace("</TURN_HINT>", f"\n{hint}\n</TURN_HINT>", 1)
+    return f"{body}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
+    return _with_step_sequence(session, _hinted_user_prompt(session, user_message))
+
+
+def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""

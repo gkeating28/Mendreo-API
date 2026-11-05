@@ -472,6 +472,15 @@ UP_MEMORY_TECHNIQUE_RULE = (
     "          and cognitive restructuring as appropriate."
 )
 
+# Exercise turns. The step text is the protocol. The general-chat rule above
+# invites other strategies, so an exercise must not use it.
+EXERCISE_PROTOCOL_RULE = (
+    "This exercise is the Unified Protocol for this session. "
+    "Carry out the current step's instructions in the order they are written. "
+    "Do not add a technique, strategy, or activity those instructions do not name, "
+    "and do not use any other therapy."
+)
+
 RETRIEVAL_PROGRAMMING_INSTRUCTION = (
     "        Some turns include a <RETRIEVED> block of general reference material "
     "from Mendreo's library. Use it only to explain how or why the approach "

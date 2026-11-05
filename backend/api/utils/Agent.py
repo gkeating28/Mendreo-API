@@ -547,7 +547,6 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         if left or ending or moving:
             from .turn_hint import (
                 NOT_THE_LAST_STEP_HINT,
-                STAY_ON_STEP_HINT,
                 last_step_hint,
             )
 
@@ -561,7 +560,14 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             elif moving:
                 steer[0] = last_step_hint(session)
             else:
-                steer[0] = STAY_ON_STEP_HINT
+                from .step_script import stay_on_script_hint
+
+                prior = list(
+                    Message.objects.filter(
+                        session=session, sender__agent__isnull=False
+                    ).order_by("created_at").values_list("text", flat=True)
+                )
+                steer[0] = stay_on_script_hint(instructions or "", prior)
             stayed = False
             try:
                 retry, _provider = run_with_failover(_run)
@@ -649,7 +655,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
 
 _PROGRESSION_START = (
-    "        - Do not allow the user to do anything outside of this exercise."
+    "        - When is_step_complete is true, completion_result MUST be the user's own words"
 )
 _STATE_MACHINE_PROGRESSION = (
     "        - Set asks_readiness only when the step's work is done, and make that "
@@ -664,6 +670,10 @@ STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
     "Steps in <STEP_OUTLINE> are context only. Do not start them. "
     "Do only what this step's instructions tell you to do. "
+    "Those instructions are the only task for this turn. "
+    "Do not offer a technique, strategy, practice, grounding, or breathing exercise "
+    "that those instructions do not name. "
+    "The therapeutic text and the exercise description do not authorise one. "
     "Do not add a technique those instructions do not name. "
     "Earlier sessions, today's completed sessions and previous exercise summaries are background only. Never use them to skip, shorten or answer for the user in this step. Ask this step's own questions, even if the user has done this exercise before. "
     "When the instructions say to summarise, do that in the user's words and ask if you have it right. "
@@ -1109,6 +1119,21 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             or "Do not apply cognitive restructuring" in cached
         )
         stale_opening = bool(meta.get("bare_opening")) != bare_opening
+        stale_stick = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "stick strictly to this exercise and its steps" not in cached
+        )
+        stale_offer = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "Do not offer a technique, strategy, practice, grounding, or breathing"
+            not in cached
+        )
+        stale_protocol = (
+            bool(session.exercise_id)
+            and Constants.EXERCISE_PROTOCOL_RULE not in cached
+        )
         first_name = (
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
@@ -1125,6 +1150,9 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_on_step,
             stale_restructure,
             stale_opening,
+            stale_stick,
+            stale_offer,
+            stale_protocol,
             stale_name,
             stale_source,
         )):
@@ -1240,9 +1268,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "knowledge": render_knowledge(consumer, "general"),
         }
 
-    if retrieval_on or exercise:
-        # Exercise prompts leave technique choice to the Therapeutic card.
-        # A retrieval turn no longer adds a source-only technique ban.
+    if exercise:
+        # The exercise steps are the Unified Protocol for this session.
+        # The general-chat rule would invite other strategies.
+        up_technique_rule = Constants.EXERCISE_PROTOCOL_RULE
+    elif retrieval_on:
         up_technique_rule = ""
     else:
         up_technique_rule = Constants.UP_MEMORY_TECHNIQUE_RULE
