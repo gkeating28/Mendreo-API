@@ -77,6 +77,9 @@ class TurnPrompt(SmartModel):
     system_prompt = models.TextField(blank=True, default="")
     user_prompt = models.TextField(blank=True, default="")
     history = models.JSONField(default=list, blank=True)
+    # db_default stays on the column. Main's TurnPrompt insert omits this
+    # field until that code is deployed, and Postgres fills [].
+    decisions = models.JSONField(blank=True, default=list, db_default=[])
 
     def __str__(self):
         return f"TurnPrompt: {self.id}"

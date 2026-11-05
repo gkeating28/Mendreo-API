@@ -417,6 +417,57 @@ def _current_step_instructions(session) -> str | None:
     return "\n".join(part.strip() for part in parts if part and part.strip())
 
 
+def _note_reply_decisions(session, *, before, after, on_step_retried, on_step_held, exercise) -> None:
+    from ..message.turn_prompt import note_turn_decision
+    from .prompt_debug import reply_style_report
+
+    if exercise and on_step_held:
+        off_what = "The reply was replaced with the on-step fallback."
+        off_why = "The retry still left the written instructions."
+    elif exercise and on_step_retried:
+        off_what = "The reply was retried once to stay on the step."
+        off_why = "The first reply left the written instructions. The retry stayed on them."
+    elif exercise:
+        off_what = "The reply stayed on the written step."
+        off_why = "It did not start an activity the step does not name."
+    else:
+        off_what = "No off-script retry."
+        off_why = "This turn is not an exercise step."
+    note_turn_decision(
+        session,
+        {
+            "type": "off_script",
+            "fired": bool(exercise and (on_step_retried or on_step_held)),
+            "what": off_what,
+            "why": off_why,
+            "inputs": {
+                "on_step_retried": bool(on_step_retried),
+                "on_step_held": bool(on_step_held),
+            },
+        },
+    )
+    report = reply_style_report(before, after)
+    rules = list(report.get("rules") or [])
+    note_turn_decision(
+        session,
+        {
+            "type": "reply_cleaner",
+            "fired": bool(report.get("changed")),
+            "what": (
+                "The reply cleaner changed the text."
+                if report.get("changed")
+                else "The reply cleaner left the text as written."
+            ),
+            "why": (
+                "Rules that changed it: " + ", ".join(rules) + "."
+                if rules
+                else "No dash, spelling, or opening rule matched."
+            ),
+            "inputs": {"rules": rules},
+        },
+    )
+
+
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
     """Entry point: get the agent's response to a user's message."""
     from .prompt_debug import capture_on, remember_reply, remember_turn
@@ -628,6 +679,14 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     raw_reply = response_data.text
     response_data.text = normalise_reply(response_data.text)
+    _note_reply_decisions(
+        session,
+        before=raw_reply,
+        after=response_data.text,
+        on_step_retried=on_step_retried,
+        on_step_held=on_step_held,
+        exercise=bool(session.exercise_id),
+    )
     if capture_on():
         remember_reply(raw_reply, response_data.text)
         looked_up = debug_result if debug_result is not None else result

@@ -206,6 +206,8 @@ class MessageDebug(SmartAPIView):
 
         meta = message.session.cached_prompt_meta or {}
         history = prompt.history or []
+        from .debug_payload import hint_ladder, prompt_layers
+
         return Response(
             {
                 "message_id": message.id,
@@ -221,6 +223,9 @@ class MessageDebug(SmartAPIView):
                 "system_prompt": prompt.system_prompt,
                 "user_prompt": prompt.user_prompt,
                 "step_decision": _step_decision(message),
+                "layers": prompt_layers(prompt.system_prompt, prompt.user_prompt),
+                "hint_ladder": hint_ladder(prompt.user_prompt),
+                "decisions": list(prompt.decisions or []),
             }
         )
 
