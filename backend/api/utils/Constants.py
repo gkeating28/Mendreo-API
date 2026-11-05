@@ -239,6 +239,8 @@ SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
 SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED = "ai_retrieval_exercise_enabled"
 SETTING_KEY_STORE_TURN_PROMPTS = "store_turn_prompts"
 SETTING_KEY_CHAT_DEBUG_ENABLED = "chat_debug_enabled"
+# Written by the AI worker. Not part of the settings form or GET /settings.
+SETTING_KEY_AI_LAST_ANSWERER = "ai_last_answerer"
 SETTING_KEY_RETRIEVAL_MIN_SIMILARITY = "retrieval_min_similarity"
 SETTING_KEY_RETRIEVAL_MAX_CHUNKS = "retrieval_max_chunks"
 SETTING_KEY_RETRIEVAL_MAX_TOKENS = "retrieval_max_tokens"

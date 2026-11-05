@@ -28,6 +28,8 @@ class ListCreate(SmartAPIView):
         data = {}
 
         for setting in settings:
+            if setting.key == Constants.SETTING_KEY_AI_LAST_ANSWERER:
+                continue
             data[setting.key] = setting.value
 
             if setting.key in (

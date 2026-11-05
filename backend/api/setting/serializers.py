@@ -124,6 +124,14 @@ class SettingCreateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         incoming = set(getattr(self, "initial_data", {}) or {})
+        if Constants.SETTING_KEY_AI_LAST_ANSWERER in incoming:
+            raise serializers.ValidationError(
+                {
+                    Constants.SETTING_KEY_AI_LAST_ANSWERER: (
+                        "This value is recorded by the server and cannot be edited."
+                    )
+                }
+            )
         blocked = [name for name in PROMPT_SETTING_FIELDS if name in incoming]
         if blocked:
             raise serializers.ValidationError(
