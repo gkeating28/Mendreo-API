@@ -157,6 +157,63 @@ class Wp3Tests(TestCase):
         self.assertEqual(user_prompt_with_hint(session, closed_user), "yes")
         self.assertEqual(closed.question_kind, Constants.QUESTION_KIND_CLOSED)
 
+    def test_thin_answer_hint_can_be_switched_off(self):
+        from django.core.cache import cache
+
+        self.assertTrue(Setting.get_thin_answer_hint_enabled())
+        stored = Setting.get_or_create_thin_answer_hint_enabled()
+        self.assertEqual(stored.value, "true")
+        open_question = _Previous(Constants.QUESTION_KIND_OPEN, 0)
+        self.assertEqual(turn_hint_text(open_question, ""), FOLLOW_UP_HINT)
+        self.assertEqual(turn_hint_text(open_question, "fine"), FOLLOW_UP_HINT)
+        self.assertEqual(
+            turn_hint_text(_Previous(Constants.QUESTION_KIND_OPEN, 2), "ok"),
+            ACCEPT_HINT,
+        )
+
+        capture = Setting.get_or_create_store_turn_prompts()
+        capture.value = "true"
+        capture.save()
+        hint = Setting.get_or_create_thin_answer_hint_enabled()
+        hint.value = "false"
+        hint.save()
+        try:
+            self.assertIsNone(turn_hint_text(open_question, ""))
+            self.assertIsNone(turn_hint_text(open_question, "fine"))
+            self.assertIsNone(
+                turn_hint_text(_Previous(Constants.QUESTION_KIND_OPEN, 2), "ok")
+            )
+
+            consumer = Auth.create_consumer()
+            session = Session.objects.create(consumer=consumer)
+            user_sender, agent_sender = Participant.create_participants(session)
+            Message.objects.create(
+                session=session,
+                sender=agent_sender,
+                text="What happened?",
+                question_kind=Constants.QUESTION_KIND_OPEN,
+                probe_count=0,
+            )
+            user_message = Message.objects.create(
+                session=session, sender=user_sender, text=""
+            )
+            prompted = user_prompt_with_hint(session, user_message)
+            self.assertNotIn("TURN_HINT", prompted)
+            noted = getattr(session, "_pending_turn_decisions")
+            thin = next(row for row in noted if row["type"] == "thin_answer")
+            self.assertFalse(thin["fired"])
+            self.assertEqual(
+                thin["why"],
+                "Thin-answer hint is switched off in settings.",
+            )
+        finally:
+            hint.value = "true"
+            hint.save()
+            capture.value = "false"
+            capture.save()
+            cache.delete(f"setting:value:{Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED}")
+            cache.delete(f"setting:value:{Constants.SETTING_KEY_STORE_TURN_PROMPTS}")
+
     def test_about_the_user_hint_names_client_blocks_and_skips_a_new_client(self):
         consumer = Auth.create_consumer()
         summary = Summary.get_or_create(consumer)

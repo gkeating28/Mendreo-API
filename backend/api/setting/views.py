@@ -40,6 +40,7 @@ class ListCreate(SmartAPIView):
                 Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
+                Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
             ):
                 data[setting.key] = setting.value.lower() == "true"
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
@@ -116,6 +117,7 @@ class ListCreate(SmartAPIView):
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),

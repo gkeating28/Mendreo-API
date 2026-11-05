@@ -10,6 +10,28 @@ class EditTest(TestCase):
     def _edit(self, data, access_token="", **kwargs):
         return super()._post("/settings", data, access_token=access_token)
 
+    def test_thin_answer_hint_enabled(self):
+        token = Auth.get_platform_admin_access_token()
+        listed = self._get("/settings", access_token=token)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertIs(listed.json["thin_answer_hint_enabled"], True)
+
+        turned_off = self._edit(
+            {"survey_enabled": True, "thin_answer_hint_enabled": False},
+            access_token=token,
+        )
+        self.assertEqual(turned_off.status_code, status.HTTP_200_OK, turned_off.data)
+        self.assertIs(turned_off.data["thin_answer_hint_enabled"], False)
+        listed = self._get("/settings", access_token=token)
+        self.assertIs(listed.json["thin_answer_hint_enabled"], False)
+
+        turned_on = self._edit(
+            {"survey_enabled": True, "thin_answer_hint_enabled": True},
+            access_token=token,
+        )
+        self.assertEqual(turned_on.status_code, status.HTTP_200_OK, turned_on.data)
+        self.assertIs(turned_on.data["thin_answer_hint_enabled"], True)
+
     def test_basic(self):
         data = {"survey_enabled": False}
 

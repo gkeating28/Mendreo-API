@@ -88,6 +88,7 @@ class SettingCreateSerializer(serializers.Serializer):
     history_max_turns = serializers.IntegerField(required=False, min_value=1)
     session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
+    thin_answer_hint_enabled = serializers.BooleanField(required=False)
     generic_answers_default = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -262,6 +263,11 @@ class SettingCreateSerializer(serializers.Serializer):
             words.value = str(validated_data["thin_answer_min_words"])
             words.save()
 
+        if "thin_answer_hint_enabled" in validated_data:
+            hint = Setting.get_or_create_thin_answer_hint_enabled()
+            hint.value = str(validated_data["thin_answer_hint_enabled"]).lower()
+            hint.save()
+
         if "generic_answers_default" in validated_data:
             generic = Setting.get_or_create_generic_answers_default()
             generic.value = json.dumps(validated_data["generic_answers_default"])
@@ -388,6 +394,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),

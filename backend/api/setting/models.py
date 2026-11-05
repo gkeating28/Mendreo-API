@@ -60,6 +60,7 @@ class Setting(SmartModel):
         Setting.get_or_create_knowledge_min_confidence()
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
+        Setting.get_or_create_thin_answer_hint_enabled()
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_chat_openers()
         Setting.get_or_create_risk_keywords()
@@ -300,6 +301,22 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.THIN_ANSWER_MIN_WORDS
+
+    @staticmethod
+    def get_or_create_thin_answer_hint_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+            defaults={"value": "true"},
+        )
+        return setting
+
+    @staticmethod
+    def get_thin_answer_hint_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+            Setting.get_or_create_thin_answer_hint_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
 
     @staticmethod
     def get_or_create_generic_answers_default():

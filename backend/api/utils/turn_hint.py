@@ -142,6 +142,10 @@ def shape_chips(chips, question_kind: str):
 
 def turn_hint_text(previous, user_text: str) -> str | None:
     """Hint for this model call only. None unless the previous question was open."""
+    from ..setting.models import Setting
+
+    if not Setting.get_thin_answer_hint_enabled():
+        return None
     if previous is None:
         return None
     kind = normalize_question_kind(getattr(previous, "question_kind", None))
@@ -368,6 +372,18 @@ def _note_thin_answer(session, user_message, winner: str | None) -> None:
     from ..setting.models import Setting
 
     if not turn_prompts_enabled():
+        return
+    if not Setting.get_thin_answer_hint_enabled():
+        note_turn_decision(
+            session,
+            {
+                "type": "thin_answer",
+                "fired": False,
+                "what": "No thin-answer hint was added.",
+                "why": "Thin-answer hint is switched off in settings.",
+                "inputs": {"thin": False},
+            },
+        )
         return
     text = getattr(user_message, "text", None) or ""
     word_count = len(text.split()) if text.strip() else 0
