@@ -17,6 +17,7 @@ from ...utils.SessionStateMachine import (
     consume_chip,
     handle_typed_while_awaiting,
     is_model_ready_chip,
+    is_ready_affirmation,
     is_ready_restatement,
     on_model_turn,
     prepare_model_readiness,
@@ -894,8 +895,10 @@ class GoalGateTests(BaseTest):
         self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
         self.assertNotIn("depth_hint_step_id", session.cached_prompt_meta or {})
         self.assertEqual(len(prompts), 1)
-        self.assertNotIn("<TURN_HINT>", prompts[0])
         self.assertNotIn("the location", prompts[0])
+        self.assertNotIn(hint, prompts[0])
+        if "<TURN_HINT>" in prompts[0]:
+            self.assertIn("The next part is: Ask for a plan.", prompts[0])
 
     def test_goal_hint_is_still_consumed_inside_the_same_step(self):
         session = self._session()
@@ -945,8 +948,10 @@ class GoalGateTests(BaseTest):
         self.assertEqual(session.current_step_no, 2)
         self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
         self.assertEqual(len(prompts), 1)
-        self.assertNotIn("<TURN_HINT>", prompts[0])
         self.assertNotIn("the plan", prompts[0])
+        self.assertNotIn(hint, prompts[0])
+        if "<TURN_HINT>" in prompts[0]:
+            self.assertIn("The next part is: Ask for a plan.", prompts[0])
 
     def test_yes_completes_when_the_completion_prompt_fails(self):
         session = self._two_steps()
@@ -976,7 +981,11 @@ class GoalGateTests(BaseTest):
             sender=user,
             text="yes, but I want to add something",
         )
-        outcome = confirm_readiness_reply(user_message)
+        with patch(
+            "api.utils.extraction.judge_ready_reply", return_value="other"
+        ) as judge:
+            outcome = confirm_readiness_reply(user_message)
+        judge.assert_called_once()
         self.assertIsNone(outcome)
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
@@ -1299,6 +1308,49 @@ class GoalGateTests(BaseTest):
     )
 
     @contextmanager
+    def _exact_yes(self, enabled=True):
+        from django.core.cache import cache
+
+        from ...setting.models import Setting
+
+        row = Setting.get_or_create_require_exact_yes()
+        previous = row.value
+        row.value = "true" if enabled else "false"
+        row.save()
+        try:
+            yield
+        finally:
+            row.value = previous
+            row.save()
+            cache.delete("setting:value:require_exact_yes")
+
+    @contextmanager
+    def _phrase_lists(self, ready, finish):
+        import json
+
+        from django.core.cache import cache
+
+        from ...setting.models import Setting
+
+        ready_row = Setting.get_or_create_ready_phrases()
+        finish_row = Setting.get_or_create_finish_phrases()
+        previous_ready = ready_row.value
+        previous_finish = finish_row.value
+        ready_row.value = json.dumps(ready)
+        ready_row.save()
+        finish_row.value = json.dumps(finish)
+        finish_row.save()
+        try:
+            yield
+        finally:
+            ready_row.value = previous_ready
+            ready_row.save()
+            finish_row.value = previous_finish
+            finish_row.save()
+            cache.delete("setting:value:ready_phrases")
+            cache.delete("setting:value:finish_phrases")
+
+    @contextmanager
     def _patches(self):
         with (
             patch(
@@ -1376,6 +1428,10 @@ class GoalGateTests(BaseTest):
             self.assertEqual(session.current_step_no, 2, phrase)
 
     def test_finish_phrases_do_not_advance_a_non_last_step(self):
+        with self._exact_yes():
+            self._finish_phrases_do_not_advance_a_non_last_step()
+
+    def _finish_phrases_do_not_advance_a_non_last_step(self):
         for phrase in ("ready to finish", "I want to finish the exercise", "I'm ready to stop"):
             session = self._awaiting(self._plain_two_steps())
             user_message = self._user_reply(session, phrase)
@@ -1437,6 +1493,10 @@ class GoalGateTests(BaseTest):
         self.assertTrue(session.completed)
 
     def test_an_unrecognised_typed_reply_still_retreats(self):
+        with self._exact_yes():
+            self._an_unrecognised_typed_reply_still_retreats()
+
+    def _an_unrecognised_typed_reply_still_retreats(self):
         for phrase in self._REJECTED_PHRASES:
             session = self._awaiting(self._plain_two_steps())
             user_message = self._user_reply(session, phrase)
@@ -1529,6 +1589,225 @@ class GoalGateTests(BaseTest):
         last.refresh_from_db()
         self.assertTrue(last.completed)
         self.assertEqual(last.state, Constants.SESSION_STATE_COMPLETED)
+
+    def _chat_reply(self):
+        return (
+            ExerciseStateResponse(
+                text="I'm here with you.",
+                reasoning="test",
+                suggested_responses=[],
+                question_kind="none",
+                step_goal_met=False,
+                asks_readiness=False,
+                risk_level="none",
+            ),
+            {},
+            None,
+            None,
+        )
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_judged_yes_confirms_without_the_chat_model(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch("api.utils.extraction.judge_ready_reply", return_value="yes") as judge,
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            patch("api.utils.Agent.get_response") as chat,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "sounds good to me"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_called_once()
+        chat.assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertTrue(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_judged_no_retreats_without_the_chat_model(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch("api.utils.extraction.judge_ready_reply", return_value="no") as judge,
+            patch("api.utils.Agent.get_response") as chat,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "I need a minute"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_called_once()
+        chat.assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 1)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_judged_other_stays_awaiting_and_goes_to_chat(self):
+        for text in ("my cat died yesterday", "what does that mean?"):
+            session = self._awaiting(self._plain_two_steps())
+            with (
+                patch("api.utils.extraction.judge_ready_reply", return_value="other") as judge,
+                patch("api.utils.Agent.get_response", return_value=self._chat_reply()) as chat,
+            ):
+                response = self._post(
+                    "/messages",
+                    {"session": session.id, "text": text},
+                    self.consumer_one_access_token,
+                )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+            judge.assert_called_once()
+            chat.assert_called_once()
+            session.refresh_from_db()
+            self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+            self.assertEqual(session.current_step_no, 1)
+            self.assertFalse(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_a_failed_judgement_does_not_confirm(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch(
+                "api.utils.extraction.judge_ready_reply",
+                side_effect=RuntimeError("down"),
+            ) as judge,
+            patch("api.utils.Agent.get_response", return_value=self._chat_reply()) as chat,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "maybe later on"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_called_once()
+        chat.assert_called_once()
+        session.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_a_listed_phrase_never_calls_the_judge(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch("api.utils.extraction.judge_ready_reply") as judge,
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.Agent.get_response") as chat,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "yes"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_not_called()
+        chat.assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_exact_yes_never_calls_the_judge(self):
+        session = self._awaiting(self._plain_two_steps())
+        with self._exact_yes():
+            with (
+                patch("api.utils.extraction.judge_ready_reply") as judge,
+                patch("api.utils.Agent.get_response") as chat,
+            ):
+                response = self._post(
+                    "/messages",
+                    {"session": session.id, "text": "sounds good to me"},
+                    self.consumer_one_access_token,
+                )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_not_called()
+        chat.assert_not_called()
+        session.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_empty_lists_with_exact_yes_leave_only_the_chips(self):
+        session = self._awaiting(self._plain_two_steps())
+        with self._exact_yes(), self._phrase_lists([], []):
+            with patch("api.utils.extraction.judge_ready_reply") as judge:
+                outcome = handle_typed_while_awaiting(self._user_reply(session, "yes"))
+        judge.assert_not_called()
+        self.assertEqual(outcome.message.text, "yes")
+        session.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_empty_lists_without_exact_yes_send_every_reply_to_the_judge(self):
+        session = self._awaiting(self._plain_two_steps())
+        with self._phrase_lists([], []):
+            with (
+                patch("api.utils.extraction.judge_ready_reply", return_value="yes") as judge,
+                patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            ):
+                outcome = handle_typed_while_awaiting(self._user_reply(session, "yes"))
+        judge.assert_called_once()
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 2)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_other_while_awaiting_still_runs_the_risk_prescreen(self):
+        session = self._awaiting(self._plain_two_steps())
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        with (
+            patch("api.utils.extraction.judge_ready_reply", return_value="other") as judge,
+            patch("api.utils.Agent.get_response", return_value=self._chat_reply()),
+            patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "I want to die"},
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        judge.assert_called_once()
+        session.refresh_from_db()
+        self.assertEqual(session.live_risk_level, Constants.LIVE_RISK_LEVEL_HIGH)
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_summary_agreement_does_not_read_ready_phrases(self):
+        with self._phrase_lists([], []):
+            session = self._session(done_when="The user confirmed the summary is accurate.")
+            step = self._agree_after_summary(session, "yes")
+            self.assertTrue(summary_was_confirmed(session, step))
+            self.assertTrue(is_summary_affirmation("yes"))
+            self.assertFalse(is_ready_affirmation("yes"))
+
+
+class ReadyReplyJudgeUnitTests(SimpleTestCase):
+    def test_an_error_or_invalid_answer_is_other(self):
+        from ...utils.extraction import judge_ready_reply
+
+        with patch("api.utils.extraction.AI.ask", side_effect=RuntimeError("down")):
+            self.assertEqual(
+                judge_ready_reply(question="Ready?", reply="yes", earlier=""),
+                "other",
+            )
+        with patch("api.utils.extraction.AI.ask", return_value={"answer": "maybe"}):
+            self.assertEqual(
+                judge_ready_reply(question="Ready?", reply="hmm", earlier=""),
+                "other",
+            )
 
 
 class SummaryConfirmationTests(SimpleTestCase):

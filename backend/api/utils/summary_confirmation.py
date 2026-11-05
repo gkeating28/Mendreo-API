@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from . import Constants
+
 _REQUIRED = re.compile(
     r"(?:confirm(?:ed|s|ing)?|agree(?:d|s)?)\s+(?:with\s+)?(?:that\s+)?(?:the\s+)?summary"
     r"|summary\s+is\s+accurate",
@@ -64,11 +66,17 @@ def is_summary_confirmation(text: str) -> bool:
     return bool(_ASK.search(_final_sentence(raw)))
 
 
+def matches_summary_affirmation(text: str) -> bool:
+    """The fixed agreement words. Editing ready phrases does not change this."""
+    normalized = " ".join(
+        (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
+    )
+    return normalized.rstrip(".!") in Constants.SUMMARY_AFFIRMATIONS
+
+
 def is_summary_affirmation(text: str) -> bool:
     """A short agreement after a summary. Used only by summary_was_confirmed."""
-    from .SessionStateMachine import is_ready_affirmation
-
-    if is_ready_affirmation(text):
+    if matches_summary_affirmation(text):
         return True
     raw = " ".join(
         (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
@@ -83,9 +91,9 @@ def is_summary_affirmation(text: str) -> bool:
 
 def summary_was_confirmed(session, step) -> bool:
     """True when the user agreed after an assistant summary in this step."""
-    from .SessionStateMachine import _is_last_step, is_ready_affirmation
+    from .SessionStateMachine import _is_last_step
 
-    agreed = is_summary_affirmation if _is_last_step(session) else is_ready_affirmation
+    agreed = is_summary_affirmation if _is_last_step(session) else matches_summary_affirmation
     pending = False
     for message in _step_messages(session, step):
         text = message.text or ""

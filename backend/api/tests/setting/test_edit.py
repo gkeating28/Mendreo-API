@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from rest_framework import status
 
 from ...utils import Constants
@@ -31,6 +32,70 @@ class EditTest(TestCase):
         )
         self.assertEqual(turned_on.status_code, status.HTTP_200_OK, turned_on.data)
         self.assertIs(turned_on.data["thin_answer_hint_enabled"], True)
+
+    def test_ready_reply_settings(self):
+        token = Auth.get_platform_admin_access_token()
+        listed = self._get("/settings", access_token=token)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertIs(listed.json["require_exact_yes"], False)
+        self.assertEqual(listed.json["ready_phrases"], Constants.DEFAULT_READY_PHRASES)
+        self.assertEqual(listed.json["finish_phrases"], Constants.DEFAULT_FINISH_PHRASES)
+        try:
+            self._ready_reply_settings_round_trip(token)
+        finally:
+            cache.delete_many(
+                [
+                    "setting:value:require_exact_yes",
+                    "setting:value:ready_phrases",
+                    "setting:value:finish_phrases",
+                ]
+            )
+
+    def _ready_reply_settings_round_trip(self, token):
+        saved = self._edit(
+            {
+                "survey_enabled": True,
+                "require_exact_yes": True,
+                "ready_phrases": ["Yes", "let's go"],
+                "finish_phrases": ["Finish"],
+            },
+            access_token=token,
+        )
+        self.assertEqual(saved.status_code, status.HTTP_200_OK, saved.data)
+        self.assertIs(saved.data["require_exact_yes"], True)
+        self.assertEqual(saved.data["ready_phrases"], ["Yes", "let's go"])
+        self.assertEqual(saved.data["finish_phrases"], ["Finish"])
+        listed = self._get("/settings", access_token=token)
+        self.assertIs(listed.json["require_exact_yes"], True)
+        self.assertEqual(listed.json["ready_phrases"], ["Yes", "let's go"])
+
+        emptied = self._edit(
+            {
+                "survey_enabled": True,
+                "require_exact_yes": False,
+                "ready_phrases": [],
+                "finish_phrases": [],
+            },
+            access_token=token,
+        )
+        self.assertEqual(emptied.status_code, status.HTTP_200_OK, emptied.data)
+        self.assertIs(emptied.data["require_exact_yes"], False)
+        self.assertEqual(emptied.data["ready_phrases"], [])
+        self.assertEqual(emptied.data["finish_phrases"], [])
+
+        rejected = (
+            ({"ready_phrases": ["Yes", "yes"]}, "unique"),
+            ({"ready_phrases": ["not yet"]}, "not"),
+            ({"finish_phrases": ["a" * 61]}, "60"),
+            ({"ready_phrases": [f"phrase {index}" for index in range(31)]}, "30"),
+        )
+        for extra, needle in rejected:
+            response = self._edit(
+                {"survey_enabled": True, **extra},
+                access_token=token,
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, extra)
+            self.assertIn(needle, str(response.data).lower())
 
     def test_basic(self):
         data = {"survey_enabled": False}

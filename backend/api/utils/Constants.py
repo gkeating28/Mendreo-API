@@ -167,6 +167,88 @@ CHIP_READY_YES = "Yes, I'm ready"
 CHIP_NOT_YET = "Not yet"
 CHIP_FINISH = "Finish exercise"
 
+# Short agreements. Still in code: agreeing to a summary must not follow the
+# editable ready-phrase list.
+SUMMARY_AFFIRMATIONS = frozenset(
+    {
+        "yes",
+        "yes please",
+        "yeah",
+        "yep",
+        "ok",
+        "okay",
+        "sure",
+        "ready",
+        "i'm ready",
+        "i am ready",
+        "im ready",
+        "yes i'm ready",
+        "yes, i'm ready",
+        "let's go",
+        "lets go",
+    }
+)
+
+# These move a step on only before the last step, and only when they are also
+# in the editable ready-phrase list. Still in code, so the last-step exclusion
+# cannot be edited away.
+NEXT_STEP_ONLY_PHRASES = frozenset(
+    {
+        "ready for next step",
+        "ready for the next step",
+        "i'm ready for the next step",
+        "ready to continue",
+        "ready to move on",
+        "i'm ready to move on",
+        "let's continue",
+        "continue",
+        "next",
+        "next step",
+        "move on",
+    }
+)
+
+DEFAULT_READY_PHRASES = [
+    "yes",
+    "yes please",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "ready",
+    "i'm ready",
+    "i am ready",
+    "im ready",
+    "yes i'm ready",
+    "yes, i'm ready",
+    "let's go",
+    "lets go",
+    "ready for next step",
+    "ready for the next step",
+    "i'm ready for the next step",
+    "ready to continue",
+    "ready to move on",
+    "i'm ready to move on",
+    "let's continue",
+    "continue",
+    "next",
+    "next step",
+    "move on",
+]
+
+DEFAULT_FINISH_PHRASES = [
+    "ready to finish",
+    "i'm ready to finish",
+    "i am ready to finish",
+    "finish",
+    "finish the exercise",
+    "i want to finish",
+    "i want to finish the exercise",
+    "i'm ready to stop",
+    "ready to stop",
+]
+
 SUGGESTED_RESPONSES_KIND_FREE = "free"
 SUGGESTED_RESPONSES_KIND_OFFER = "offer"
 SUGGESTED_RESPONSES_KIND_READY = "ready"
@@ -231,6 +313,9 @@ SETTING_KEY_AUTHORING_TEST_IDLE_MINUTES = "authoring_test_idle_minutes"
 THIN_ANSWER_MIN_WORDS = 4
 SETTING_KEY_THIN_ANSWER_MIN_WORDS = "thin_answer_min_words"
 SETTING_KEY_THIN_ANSWER_HINT_ENABLED = "thin_answer_hint_enabled"
+SETTING_KEY_REQUIRE_EXACT_YES = "require_exact_yes"
+SETTING_KEY_READY_PHRASES = "ready_phrases"
+SETTING_KEY_FINISH_PHRASES = "finish_phrases"
 THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
 SETTING_KEY_CHAT_OPENERS = "chat_openers"

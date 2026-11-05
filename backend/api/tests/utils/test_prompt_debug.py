@@ -608,13 +608,20 @@ class PromptDebugApiTests(BaseTest):
         session = Session.objects.get(id=started.json["session_id"])
         session.state = Constants.SESSION_STATE_AWAITING_READY
         session.save(update_fields=["state", "updated_at"])
-
-        typed = "I want to stay with this a bit longer."
-        sent = self._post(
-            f"/exercises/{exercise.id}/test-runs/{session.id}/messages",
-            {"text": typed},
-            self.admin_one_access_token,
-        )
+        exact = Setting.get_or_create_require_exact_yes()
+        exact.value = "true"
+        exact.save()
+        try:
+            typed = "I want to stay with this a bit longer."
+            sent = self._post(
+                f"/exercises/{exercise.id}/test-runs/{session.id}/messages",
+                {"text": typed},
+                self.admin_one_access_token,
+            )
+        finally:
+            exact.value = "false"
+            exact.save()
+            cache.delete("setting:value:require_exact_yes")
         self.assertEqual(sent.status_code, status.HTTP_200_OK, sent.json)
         self.assertEqual(sent.json["text"], typed)
         self.assertEqual(sent.json["debug"]["refusal_reason"], "not in readiness yes-list")
@@ -676,6 +683,19 @@ class PromptDebugApiTests(BaseTest):
         self.assertIn("Step Skipped", rows["qa_skip_step"]["text"])
         self.assertEqual(rows["user_fact_rule"]["text"], USER_FACT_RULE)
         self.assertEqual(rows["case_material_filter"]["text"], case_material_catalogue_text())
+        self.assertIn("Require an exact yes: Off", rows["ready_gate"]["text"])
+        self.assertIn("still in code (SUMMARY_AFFIRMATIONS)", rows["ready_gate"]["text"])
+        self.assertIn("still in code (NEXT_STEP_ONLY_PHRASES)", rows["ready_gate"]["text"])
+        self.assertIn("move on", rows["ready_gate"]["text"])
+        self.assertIn(
+            "editable in Settings (require_exact_yes, ready_phrases, finish_phrases)",
+            rows["ready_gate"]["applies"],
+        )
+        self.assertIn("Thin-answer hint: On", rows["thin_answer_hint"]["text"])
+        self.assertIn(
+            "editable in Settings (thin_answer_hint_enabled)",
+            rows["thin_answer_hint"]["applies"],
+        )
         self.assertNotIn("restructuring_rewrite", rows)
         self.assertIn("description_prefix", rows)
         self.assertEqual(rows["check_in_rules"]["text"], CHECK_IN_RULES)

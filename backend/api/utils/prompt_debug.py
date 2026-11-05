@@ -215,6 +215,23 @@ _SPECS = (
         "name": "case_material_reason",
         "text_fn": "case_material_catalogue_text",
     },
+    {
+        "label": "ready_gate",
+        "applies": (
+            "editable in Settings (require_exact_yes, ready_phrases, finish_phrases). "
+            "Summary agreement and the next-step-only split stay in code."
+        ),
+        "module": "api.utils.SessionStateMachine",
+        "name": "handle_typed_while_awaiting",
+        "text_fn": "ready_gate_catalogue_text",
+    },
+    {
+        "label": "thin_answer_hint",
+        "applies": "editable in Settings (thin_answer_hint_enabled)",
+        "module": "api.utils.turn_hint",
+        "name": "turn_hint_text",
+        "text_fn": "thin_answer_catalogue_text",
+    },
 )
 
 

@@ -41,6 +41,7 @@ class ListCreate(SmartAPIView):
                 Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
                 Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+                Constants.SETTING_KEY_REQUIRE_EXACT_YES,
             ):
                 data[setting.key] = setting.value.lower() == "true"
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
@@ -63,6 +64,10 @@ class ListCreate(SmartAPIView):
                         if setting.key == Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS
                         else Setting.get_session_inactivity_minutes()
                     )
+            elif setting.key == Constants.SETTING_KEY_READY_PHRASES:
+                data[setting.key] = Setting.get_ready_phrases()
+            elif setting.key == Constants.SETTING_KEY_FINISH_PHRASES:
+                data[setting.key] = Setting.get_finish_phrases()
             elif setting.key == Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT:
                 data[setting.key] = Setting.get_generic_answers_default()
             elif setting.key == Constants.SETTING_KEY_CHAT_OPENERS:
@@ -118,6 +123,9 @@ class ListCreate(SmartAPIView):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "require_exact_yes": Setting.get_require_exact_yes(),
+            "ready_phrases": Setting.get_ready_phrases(),
+            "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),

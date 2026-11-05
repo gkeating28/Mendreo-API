@@ -61,6 +61,9 @@ class Setting(SmartModel):
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
         Setting.get_or_create_thin_answer_hint_enabled()
+        Setting.get_or_create_require_exact_yes()
+        Setting.get_or_create_ready_phrases()
+        Setting.get_or_create_finish_phrases()
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_chat_openers()
         Setting.get_or_create_risk_keywords()
@@ -317,6 +320,54 @@ class Setting(SmartModel):
             Setting.get_or_create_thin_answer_hint_enabled,
         )
         return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_require_exact_yes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_require_exact_yes() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+            Setting.get_or_create_require_exact_yes,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_ready_phrases():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_READY_PHRASES,
+            defaults={"value": json.dumps(Constants.DEFAULT_READY_PHRASES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_ready_phrases() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_READY_PHRASES,
+            Setting.get_or_create_ready_phrases,
+        )
+        return _json_list(raw, Constants.DEFAULT_READY_PHRASES)
+
+    @staticmethod
+    def get_or_create_finish_phrases():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_FINISH_PHRASES,
+            defaults={"value": json.dumps(Constants.DEFAULT_FINISH_PHRASES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_finish_phrases() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_FINISH_PHRASES,
+            Setting.get_or_create_finish_phrases,
+        )
+        return _json_list(raw, Constants.DEFAULT_FINISH_PHRASES)
 
     @staticmethod
     def get_or_create_generic_answers_default():

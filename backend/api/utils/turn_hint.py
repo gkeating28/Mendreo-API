@@ -140,6 +140,24 @@ def shape_chips(chips, question_kind: str):
     return kept
 
 
+def thin_answer_catalogue_text() -> str:
+    """Built-in rules text. The switch is live; a database error shows the default on."""
+    try:
+        from ..setting.models import Setting
+
+        enabled = Setting.get_thin_answer_hint_enabled()
+    except Exception:
+        enabled = True
+    state = "On" if enabled else "Off"
+    return (
+        "Thin-answer hint. turn_hint_text adds a hint for this model call only, "
+        "and only after an open question when the reply is thin.\n"
+        f"Thin-answer hint: {state}. Editable in Settings (thin_answer_hint_enabled).\n"
+        f"Follow-up hint: {FOLLOW_UP_HINT}\n"
+        f"Accept hint, after two follow-ups: {ACCEPT_HINT}"
+    )
+
+
 def turn_hint_text(previous, user_text: str) -> str | None:
     """Hint for this model call only. None unless the previous question was open."""
     from ..setting.models import Setting

@@ -89,6 +89,19 @@ class SettingCreateSerializer(serializers.Serializer):
     session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
     thin_answer_hint_enabled = serializers.BooleanField(required=False)
+    require_exact_yes = serializers.BooleanField(required=False)
+    ready_phrases = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=60),
+        required=False,
+        allow_empty=True,
+        max_length=30,
+    )
+    finish_phrases = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=60),
+        required=False,
+        allow_empty=True,
+        max_length=30,
+    )
     generic_answers_default = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -167,6 +180,20 @@ class SettingCreateSerializer(serializers.Serializer):
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
+
+    def _phrase_list(self, value):
+        from ..utils.SessionStateMachine import ready_phrase_list_error
+
+        error = ready_phrase_list_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return [phrase.strip() for phrase in value]
+
+    def validate_ready_phrases(self, value):
+        return self._phrase_list(value)
+
+    def validate_finish_phrases(self, value):
+        return self._phrase_list(value)
 
     def validate_chat_openers(self, value):
         seen = set()
@@ -267,6 +294,21 @@ class SettingCreateSerializer(serializers.Serializer):
             hint = Setting.get_or_create_thin_answer_hint_enabled()
             hint.value = str(validated_data["thin_answer_hint_enabled"]).lower()
             hint.save()
+
+        if "require_exact_yes" in validated_data:
+            exact = Setting.get_or_create_require_exact_yes()
+            exact.value = str(validated_data["require_exact_yes"]).lower()
+            exact.save()
+
+        if "ready_phrases" in validated_data:
+            ready = Setting.get_or_create_ready_phrases()
+            ready.value = json.dumps(validated_data["ready_phrases"])
+            ready.save()
+
+        if "finish_phrases" in validated_data:
+            finish = Setting.get_or_create_finish_phrases()
+            finish.value = json.dumps(validated_data["finish_phrases"])
+            finish.save()
 
         if "generic_answers_default" in validated_data:
             generic = Setting.get_or_create_generic_answers_default()
@@ -395,6 +437,9 @@ class SettingCreateSerializer(serializers.Serializer):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "require_exact_yes": Setting.get_require_exact_yes(),
+            "ready_phrases": Setting.get_ready_phrases(),
+            "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
