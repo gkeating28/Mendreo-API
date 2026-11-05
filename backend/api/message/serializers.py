@@ -79,9 +79,12 @@ class MessageListSerializer(ListModelSerializer):
             "exercise",
             "exercise_session",
             "usage",
+            "step_no",
             "created_at",
             "updated_at",
         ]
+
+    step_no = serializers.IntegerField(read_only=True, allow_null=True)
 
     exercise_session = serializers.SerializerMethodField()
 

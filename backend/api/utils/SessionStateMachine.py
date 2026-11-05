@@ -47,13 +47,16 @@ def phase_of(session) -> str:
 
 
 def build_session_state(session, completion_card=None) -> dict:
+    from .session_progress import session_progress
+
+    progress = session_progress(session)
     phase = phase_of(session)
     if phase == Constants.SESSION_STATE_GENERAL:
         payload = {
             "session_id": session.id,
             "exercise_id": None,
             "phase": phase,
-            "current_step_no": None,
+            "current_step_no": progress.current_step_no,
             "steps": None,
             "pending_action": "none",
             "risk_level": session.live_risk_level or Constants.LIVE_RISK_LEVEL_NONE,
@@ -63,7 +66,7 @@ def build_session_state(session, completion_card=None) -> dict:
         return payload
 
     steps = []
-    current = session.current_step_no or 0
+    current = 0 if progress.current_step_no is None else progress.current_step_no
     for session_step in session.session_steps.select_related("step").order_by("order"):
         number = session_step.order + 1
         if session_step.completed:

@@ -160,6 +160,16 @@ class SessionProgressSerializerTests(TestCase):
 
         step_numbers = [step["step_no"] for step in detail["steps"]]
         self.assertEqual(step_numbers, [1, 2, 3])
+        state = detail["session_state"]
+        self.assertEqual(state["current_step_no"], 2)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertEqual(
+            [step["status"] for step in state["steps"]],
+            ["completed", "active", "pending"],
+        )
+        self.assertIn("phase", state)
+        self.assertIn("pending_action", state)
+        self.assertIn("session_id", state)
         first = detail["steps"][0]
         self.assertTrue(first["completed"])
         self.assertIn("completion_label", first)

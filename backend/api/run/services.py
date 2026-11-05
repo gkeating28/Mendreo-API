@@ -175,21 +175,18 @@ def _transcript_entry(message: Message) -> dict | None:
     return {"role": role, "text": text}
 
 
-def _transcript_buckets(
-    messages: list[Message],
-    *,
-    check_in_completed_at=None,
-) -> dict[int, list[dict]]:
-    """Same boundaries as the live chat's messagesForMachineStep.
+def iter_placed_transcript_steps(messages, *, check_in_completed_at=None):
+    """Yield (message, step_no) for rows the completion-label walk can place.
 
-    Messages at or before the check-in stamp are omitted. A guide message
-    with a completion_label closes the current step, and the user's confirming
-    reply stays with it. The next guide message opens the following step.
+    Messages at or before the check-in stamp are skipped. Empty text is
+    skipped. A guide message with a completion_label closes the current step,
+    and the user's confirming reply stays with it. The next guide message
+    opens the following step. The walk starts at step 1. It does not invent
+    a step for a message it skips.
     """
-    buckets: dict[int, list[dict]] = {}
     step = 1
     closed = False
-    loose: list[Message] = []
+    loose = []
     dated = []
     for message in messages:
         if getattr(message, "created_at", None) is None:
@@ -198,11 +195,10 @@ def _transcript_buckets(
             dated.append(message)
     dated.sort(key=lambda item: item.created_at)
 
-    def push(target: int, message: Message) -> None:
-        entry = _transcript_entry(message)
-        if entry is None:
-            return
-        buckets.setdefault(target, []).append(entry)
+    def placed(message, target):
+        if _transcript_entry(message) is None:
+            return None
+        return target
 
     for message in dated:
         if (
@@ -213,13 +209,34 @@ def _transcript_buckets(
         if closed and _is_guide(message):
             step += 1
             closed = False
-        push(step, message)
+        target = placed(message, step)
+        if target is not None:
+            yield message, target
         label = (getattr(message, "completion_label", None) or "").strip()
         if _is_guide(message) and label:
             closed = True
 
     for message in loose:
-        push(step, message)
+        target = placed(message, step)
+        if target is not None:
+            yield message, target
+
+
+def _transcript_buckets(
+    messages: list[Message],
+    *,
+    check_in_completed_at=None,
+) -> dict[int, list[dict]]:
+    """Same boundaries as the live chat's messagesForMachineStep."""
+    buckets: dict[int, list[dict]] = {}
+    for message, step in iter_placed_transcript_steps(
+        messages,
+        check_in_completed_at=check_in_completed_at,
+    ):
+        entry = _transcript_entry(message)
+        if entry is None:
+            continue
+        buckets.setdefault(step, []).append(entry)
     return buckets
 
 
