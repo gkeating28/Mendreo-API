@@ -112,6 +112,10 @@ class SettingCreateSerializer(serializers.Serializer):
         allow_empty=True,
         max_length=20,
     )
+    onboarding_copy_welcome = serializers.JSONField(required=False)
+    onboarding_copy_initial = serializers.JSONField(required=False)
+    onboarding_copy_return = serializers.JSONField(required=False)
+    onboarding_copy_refresh = serializers.JSONField(required=False)
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
@@ -202,6 +206,23 @@ class SettingCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Openers must be unique.")
             seen.add(text)
         return value
+
+    def _validate_onboarding_copy(self, value):
+        from ..onboarding.copy import validate_copy_payload
+
+        return validate_copy_payload(value)
+
+    def validate_onboarding_copy_welcome(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_initial(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_return(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_refresh(self, value):
+        return self._validate_onboarding_copy(value)
 
     def _insights_number(self, attrs, name, getter):
         incoming = getattr(self, "initial_data", {}) or {}
@@ -420,6 +441,13 @@ class SettingCreateSerializer(serializers.Serializer):
             )
             run_max.save()
 
+        for key, variant in Constants.ONBOARDING_COPY_SETTING_KEYS.items():
+            if key not in validated_data:
+                continue
+            row = Setting.get_or_create_onboarding_copy(variant)
+            row.value = json.dumps(validated_data[key])
+            row.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
@@ -461,4 +489,16 @@ class SettingCreateSerializer(serializers.Serializer):
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),
+            Constants.SETTING_KEY_ONBOARDING_COPY_WELCOME: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_WELCOME
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_INITIAL: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_INITIAL
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_RETURN: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_RETURN
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_REFRESH: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_REFRESH
+            ),
         }

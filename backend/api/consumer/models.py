@@ -20,6 +20,13 @@ class Consumer(SmartModel):
 
     onboarded = models.BooleanField(default=False)
 
+    # Set when the welcome flow is submitted complete. Null means "not submitted".
+    # No active welcome questions (or all skipped as already known) counts as
+    # complete without writing this timestamp.
+    welcome_completed_at = models.DateTimeField(
+        null=True, blank=True, default=None, db_default=None
+    )
+
     surveyed = models.BooleanField(default=False)
 
     # Last completed Initial / Return / Refresh onboarding flow (V2 Slice D).

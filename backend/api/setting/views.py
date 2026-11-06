@@ -74,6 +74,10 @@ class ListCreate(SmartAPIView):
                 data[setting.key] = Setting.get_chat_openers()
             elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
                 data[setting.key] = Setting.get_risk_keywords()
+            elif setting.key in Constants.ONBOARDING_COPY_SETTING_KEYS:
+                data[setting.key] = Setting.get_onboarding_copy(
+                    Constants.ONBOARDING_COPY_SETTING_KEYS[setting.key]
+                )
             elif setting.key in (
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
@@ -147,6 +151,18 @@ class ListCreate(SmartAPIView):
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),
+            Constants.SETTING_KEY_ONBOARDING_COPY_WELCOME: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_WELCOME
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_INITIAL: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_INITIAL
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_RETURN: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_RETURN
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_REFRESH: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_REFRESH
+            ),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

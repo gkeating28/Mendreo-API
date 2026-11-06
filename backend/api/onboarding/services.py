@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -32,7 +32,12 @@ def is_refresh_due(consumer) -> bool:
 
 
 def recommend_variant(consumer) -> str:
+    # Welcome is only in front of initial. An onboarded consumer keeps
+    # return/refresh even when welcome_completed_at is null and welcome
+    # questions exist. Restart clears onboarded, which opens welcome again.
     if not consumer.onboarded:
+        if not welcome_is_complete(consumer):
+            return Constants.KNOWLEDGE_FLOW_WELCOME
         return Constants.KNOWLEDGE_FLOW_INITIAL
     if is_refresh_due(consumer):
         return Constants.KNOWLEDGE_FLOW_REFRESH
@@ -43,10 +48,16 @@ def resolve_variant(consumer, requested: str | None = None) -> str:
     """
     Server-selected variant, or honor ?variant= when allowed.
 
-    - Not onboarded: always initial (other variants rejected)
+    - Not onboarded, welcome not finished: welcome (other variants rejected)
+    - Not onboarded, welcome finished: always initial (other variants rejected)
     - Onboarded: default return/refresh; an explicit variant is honored so
       replay/testing can load the initial knowledge flow again
     """
+    if not consumer.onboarded and not welcome_is_complete(consumer):
+        if requested and requested != Constants.KNOWLEDGE_FLOW_WELCOME:
+            raise serializers.ValidationError({"variant": "Welcome is the next step."})
+        return Constants.KNOWLEDGE_FLOW_WELCOME
+
     if not consumer.onboarded:
         if requested and requested != Constants.KNOWLEDGE_FLOW_INITIAL:
             raise serializers.ValidationError(
@@ -70,6 +81,43 @@ def questions_for_variant(variant: str):
     questions = list(qs)
     questions.sort(key=lambda q: (q.order_for_flow(variant), q.created_at))
     return questions
+
+
+def welcome_answer_known(consumer, question) -> bool:
+    """True when the welcome question's field already has a value.
+
+    A current Knowledge Entry counts. Synced fields also count a non-empty
+    account value (first or last name, or a date of birth).
+    """
+    field = question.target_field
+    if field is None:
+        return False
+    entry = KnowledgeEntry.current_for(consumer, field)
+    if entry is not None and str(entry.value or "").strip():
+        return True
+    sync = field.sync_to or Constants.KNOWLEDGE_SYNC_NONE
+    user = getattr(consumer, "user", None)
+    if sync == Constants.KNOWLEDGE_SYNC_FIRST_NAME:
+        return bool(user and (user.first_name or "").strip())
+    if sync == Constants.KNOWLEDGE_SYNC_LAST_NAME:
+        return bool(user and (user.last_name or "").strip())
+    if sync == Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH:
+        return consumer.date_of_birth is not None
+    return False
+
+
+def visible_questions_for_variant(consumer, variant: str):
+    questions = questions_for_variant(variant)
+    if variant != Constants.KNOWLEDGE_FLOW_WELCOME:
+        return questions
+    return [question for question in questions if not welcome_answer_known(consumer, question)]
+
+
+def welcome_is_complete(consumer) -> bool:
+    if getattr(consumer, "welcome_completed_at", None):
+        return True
+    # None configured, or every welcome question is already known.
+    return not visible_questions_for_variant(consumer, Constants.KNOWLEDGE_FLOW_WELCOME)
 
 
 def build_token_context(consumer) -> dict[str, str]:
@@ -96,11 +144,14 @@ def build_token_context(consumer) -> dict[str, str]:
 
 
 def build_flow_payload(consumer, variant: str) -> dict:
+    from .copy import resolved_flow_copy
+
     context = build_token_context(consumer)
-    questions = questions_for_variant(variant)
+    questions = visible_questions_for_variant(consumer, variant)
     serialized = []
     for question in questions:
         entry = KnowledgeEntry.current_for(consumer, question.target_field)
+        chip_replies = question.chip_replies if isinstance(question.chip_replies, dict) else {}
         serialized.append(
             {
                 "id": question.id,
@@ -108,6 +159,7 @@ def build_flow_payload(consumer, variant: str) -> dict:
                 "prompt_template": question.prompt,
                 "response_type": question.response_type,
                 "suggested_responses": question.suggested_responses or [],
+                "chip_replies": chip_replies,
                 "anchor_labels": question.anchor_labels,
                 "value_labels": question.value_labels,
                 "min_selections": question.min_selections,
@@ -119,34 +171,40 @@ def build_flow_payload(consumer, variant: str) -> dict:
                     "label": question.target_field.label,
                     "value_type": question.target_field.value_type,
                     "sensitive": question.target_field.sensitive,
+                    "sync_to": question.target_field.sync_to or Constants.KNOWLEDGE_SYNC_NONE,
                 },
                 "prior_value": entry.value if entry else None,
             }
         )
 
-    closing_action = (
-        "enter_mendreo"
-        if variant == Constants.KNOWLEDGE_FLOW_INITIAL
-        else "back_to_today"
-    )
+    if variant == Constants.KNOWLEDGE_FLOW_INITIAL:
+        closing_action = "enter_mendreo"
+    elif variant == Constants.KNOWLEDGE_FLOW_WELCOME:
+        closing_action = "continue"
+    else:
+        closing_action = "back_to_today"
     return {
         "variant": variant,
         "recommended_variant": recommend_variant(consumer),
         "questions": serialized,
         "questions_total": len(serialized),
         "closing_action": closing_action,
-        "abandonable": variant != Constants.KNOWLEDGE_FLOW_INITIAL,
+        "abandonable": variant
+        not in (Constants.KNOWLEDGE_FLOW_INITIAL, Constants.KNOWLEDGE_FLOW_WELCOME),
         "companion_name": "Toni",
+        "copy": resolved_flow_copy(variant, consumer),
     }
 
 
 def build_status_payload(consumer) -> dict:
     cadence = get_refresh_cadence_days()
     refresh_due = is_refresh_due(consumer)
+    next_step = recommend_variant(consumer)
     return {
         "onboarded": consumer.onboarded,
         "refresh_due": refresh_due,
-        "recommended_variant": recommend_variant(consumer),
+        "recommended_variant": next_step,
+        "next_step": next_step,
         "cadence_days": cadence,
         "last_completed_at": consumer.last_onboarding_flow_completed_at,
         "last_completed_variant": consumer.last_onboarding_flow_variant,
@@ -220,7 +278,50 @@ def validate_answer_value(question: KnowledgeQuestion, value) -> str:
             raise serializers.ValidationError({"value": "Select at least one option."})
         return ",".join(values)
 
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_DATE:
+        text = str(value).strip()
+        try:
+            parsed = date.fromisoformat(text)
+        except ValueError:
+            raise serializers.ValidationError({"value": "Enter a date as YYYY-MM-DD."})
+        if parsed.isoformat() != text:
+            raise serializers.ValidationError({"value": "Enter a date as YYYY-MM-DD."})
+        return text
+
     return str(value)
+
+
+def _reject_underage_welcome_dob(variant, field, value):
+    if variant != Constants.KNOWLEDGE_FLOW_WELCOME:
+        return
+    if (field.sync_to or Constants.KNOWLEDGE_SYNC_NONE) != Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH:
+        return
+    from ..consumer.age import meets_minimum_age
+
+    try:
+        dob = date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        raise serializers.ValidationError({"value": "Enter a date as YYYY-MM-DD."})
+    if not meets_minimum_age(dob):
+        raise serializers.ValidationError({"detail": Constants.WELCOME_UNDERAGE_MESSAGE})
+
+
+def _sync_account_value(consumer, field, value):
+    sync = field.sync_to or Constants.KNOWLEDGE_SYNC_NONE
+    text = str(value or "").strip()
+    if not text or sync == Constants.KNOWLEDGE_SYNC_NONE:
+        return
+    if sync == Constants.KNOWLEDGE_SYNC_FIRST_NAME:
+        consumer.user.first_name = text
+        consumer.user.save(update_fields=["first_name"])
+        return
+    if sync == Constants.KNOWLEDGE_SYNC_LAST_NAME:
+        consumer.user.last_name = text
+        consumer.user.save(update_fields=["last_name"])
+        return
+    if sync == Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH:
+        consumer.date_of_birth = date.fromisoformat(text[:10])
+        consumer.save(update_fields=["date_of_birth", "updated_at"])
 
 
 @transaction.atomic
@@ -237,10 +338,13 @@ def submit_flow_answers(
     is not blocked on one LLM call per free-text answer.
     """
     variant = resolve_variant(consumer, variant)
-    flow_questions = questions_for_variant(variant)
+    flow_questions = visible_questions_for_variant(consumer, variant)
     by_id = {q.id: q for q in flow_questions}
 
-    if variant != Constants.KNOWLEDGE_FLOW_INITIAL and not complete:
+    if variant not in (
+        Constants.KNOWLEDGE_FLOW_INITIAL,
+        Constants.KNOWLEDGE_FLOW_WELCOME,
+    ) and not complete:
         raise serializers.ValidationError(
             {
                 "complete": (
@@ -268,6 +372,8 @@ def submit_flow_answers(
         except serializers.ValidationError as exc:
             raise serializers.ValidationError({f"answers[{index}]": exc.detail})
 
+        _reject_underage_welcome_dob(variant, question.target_field, normalized)
+
         needs_followup = False
         followup_prompt = ""
         from ..utils.turn_hint import entry_quality, generic_answers_for
@@ -282,7 +388,11 @@ def submit_flow_answers(
             consumer=consumer,
             field=question.target_field,
             value=normalized,
-            source=Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
+            source=(
+                Constants.KNOWLEDGE_ENTRY_SOURCE_WELCOME
+                if variant == Constants.KNOWLEDGE_FLOW_WELCOME
+                else Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING
+            ),
             knowledge_question=question,
             confidence=confidence,
             review_status=review_status,
@@ -290,6 +400,7 @@ def submit_flow_answers(
             followup_prompt=followup_prompt,
             invalidate_prompt_cache=False,
         )
+        _sync_account_value(consumer, question.target_field, normalized)
         written.append(entry)
         answered_ids.add(question_id)
 
@@ -305,27 +416,31 @@ def submit_flow_answers(
                 }
             )
 
-        now = timezone.now()
-        consumer.last_onboarding_flow_completed_at = now
-        consumer.last_onboarding_flow_variant = variant
-        update_fields = [
-            "last_onboarding_flow_completed_at",
-            "last_onboarding_flow_variant",
-            "updated_at",
-        ]
-        if variant == Constants.KNOWLEDGE_FLOW_INITIAL and not consumer.onboarded:
-            consumer.onboarded = True
-            update_fields.append("onboarded")
-        if variant == Constants.KNOWLEDGE_FLOW_INITIAL:
-            consumer.onboarding_followup_classified_at = (
-                None if classify_vagueness else now
-            )
-            update_fields.append("onboarding_followup_classified_at")
-        consumer.save(update_fields=update_fields)
-        if variant == Constants.KNOWLEDGE_FLOW_INITIAL and classify_vagueness:
-            from ..knowledge.followup import schedule_onboarding_followup_classification
+        if variant == Constants.KNOWLEDGE_FLOW_WELCOME:
+            consumer.welcome_completed_at = timezone.now()
+            consumer.save(update_fields=["welcome_completed_at", "updated_at"])
+        else:
+            now = timezone.now()
+            consumer.last_onboarding_flow_completed_at = now
+            consumer.last_onboarding_flow_variant = variant
+            update_fields = [
+                "last_onboarding_flow_completed_at",
+                "last_onboarding_flow_variant",
+                "updated_at",
+            ]
+            if variant == Constants.KNOWLEDGE_FLOW_INITIAL and not consumer.onboarded:
+                consumer.onboarded = True
+                update_fields.append("onboarded")
+            if variant == Constants.KNOWLEDGE_FLOW_INITIAL:
+                consumer.onboarding_followup_classified_at = (
+                    None if classify_vagueness else now
+                )
+                update_fields.append("onboarding_followup_classified_at")
+            consumer.save(update_fields=update_fields)
+            if variant == Constants.KNOWLEDGE_FLOW_INITIAL and classify_vagueness:
+                from ..knowledge.followup import schedule_onboarding_followup_classification
 
-            schedule_onboarding_followup_classification(consumer)
+                schedule_onboarding_followup_classification(consumer)
 
     from ..knowledge.services import invalidate_consumer_prompt_cache
 
@@ -365,6 +480,9 @@ def placeholder_value_for(question: KnowledgeQuestion):
     """Deterministic skip-complete answers for local testing."""
     suggested = list(question.suggested_responses or [])
     response_type = question.response_type
+
+    if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_DATE:
+        return "2000-01-01"
 
     if response_type == Constants.KNOWLEDGE_RESPONSE_TYPE_SLIDER:
         return (Constants.SLIDER_MIN + Constants.SLIDER_MAX) // 2
@@ -436,14 +554,22 @@ def complete_onboarding_with_placeholders(consumer):
 
 def restart_onboarding(consumer):
     """
-    Clear onboarding progress so the initial flow can be re-run with new values.
-    Soft-deletes knowledge written during onboarding and legacy Attribute answers.
+    Clear onboarding progress so welcome and the initial flow can be re-run.
+    Soft-deletes Knowledge Entries whose source is welcome or onboarding.
+    Chat, exercise, and admin entries are left in place.
     """
     from ..knowledge.services import invalidate_consumer_prompt_cache
 
-    KnowledgeEntry.objects.filter(consumer=consumer).delete()
+    KnowledgeEntry.objects.filter(
+        consumer=consumer,
+        source__in=[
+            Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
+            Constants.KNOWLEDGE_ENTRY_SOURCE_WELCOME,
+        ],
+    ).delete()
 
     consumer.onboarded = False
+    consumer.welcome_completed_at = None
     consumer.last_onboarding_flow_completed_at = None
     consumer.last_onboarding_flow_variant = None
     consumer.onboarding_followup_consumed_at = None
@@ -453,6 +579,7 @@ def restart_onboarding(consumer):
     consumer.save(
         update_fields=[
             "onboarded",
+            "welcome_completed_at",
             "last_onboarding_flow_completed_at",
             "last_onboarding_flow_variant",
             "onboarding_followup_consumed_at",

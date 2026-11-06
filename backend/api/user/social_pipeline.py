@@ -46,10 +46,12 @@ def get_or_create_customer(details):
     details['password'] = str(uuid.uuid4())
     details["social_login"] = True
 
-    # todo get actual DOB
+    # Leave date_of_birth empty. A 2000-01-01 placeholder used to skip the age
+    # screen. Google and Apple are not configured to supply a date of birth,
+    # and ConsumerSocialCreateSerializer does not accept one. The existing age
+    # screen asks while Consumer.date_of_birth is null.
     data = {
         "user": details,
-        "date_of_birth": details.get("date_of_birth", "2000-01-01")
     }
 
     serializer = ConsumerSocialCreateSerializer(data=data)

@@ -89,6 +89,13 @@ class Setting(SmartModel):
         Setting.get_or_create_run_summary_prompt()
         Setting.get_or_create_run_summary_tone_guide()
         Setting.get_or_create_run_summary_max_length()
+        for variant in (
+            Constants.KNOWLEDGE_FLOW_WELCOME,
+            Constants.KNOWLEDGE_FLOW_INITIAL,
+            Constants.KNOWLEDGE_FLOW_RETURN,
+            Constants.KNOWLEDGE_FLOW_REFRESH,
+        ):
+            Setting.get_or_create_onboarding_copy(variant)
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -960,6 +967,18 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_onboarding_copy(variant: str):
+        from ..onboarding.copy import get_or_create_onboarding_copy
+
+        return get_or_create_onboarding_copy(variant)
+
+    @staticmethod
+    def get_onboarding_copy(variant: str) -> dict:
+        from ..onboarding.copy import get_onboarding_copy
+
+        return get_onboarding_copy(variant)
 
     @staticmethod
     def _cached_value(key: str, loader):
