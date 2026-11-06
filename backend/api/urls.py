@@ -21,6 +21,7 @@ urlpatterns = [
     path('subscriptions', include('api.subscription.urls')),
 
     path('onboarding', include('api.onboarding.urls')),
+    path('invite-codes', include('api.invite.urls')),
     path('survey', include('api.survey.urls')),
     
     path('sessions', include('api.session.urls')),
