@@ -172,6 +172,8 @@ def on_model_turn(session, agent_message, response) -> None:
         return
     if not getattr(session, "exercise_id", None):
         return
+    if _keep_ready_gate(session, agent_message):
+        return
 
     model_goal = bool(getattr(response, "step_goal_met", False))
     model_asks = bool(getattr(response, "asks_readiness", False))
@@ -517,20 +519,32 @@ def _same_chip(text: str, chip: str) -> bool:
 
 
 def _not_ready_outcome(session, user_message) -> ChipOutcome:
-    """Stay on this step, then ask Toni to answer the way a judged other does.
+    """Stay on the ready gate, then ask Toni to answer the way a judged other does.
 
+    The session stays awaiting_ready, so the next typed reply is judged again.
     The user message is counted here. The chat reply counts only the agent
     message, via not_ready_user_counted, so the two are not added twice.
+    not_ready_keep_gate tells that reply to carry the same chips as the gate.
     """
     from .turn_hint import NOT_READY_HINT
 
     _count_user_message(session, user_message)
-    _retreat(session)
+    session.cached_prompt = None
     meta = dict(session.cached_prompt_meta or {})
     meta["not_ready_hint"] = NOT_READY_HINT
     meta["not_ready_user_counted"] = True
+    meta["not_ready_keep_gate"] = True
     session.cached_prompt_meta = meta
-    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    session.save(
+        update_fields=[
+            "cached_prompt",
+            "cached_prompt_meta",
+            "messages_no",
+            "consumer_messages_no",
+            "last_message",
+            "updated_at",
+        ]
+    )
 
     from ..message.views import dispatch_chat_reply
 
@@ -564,8 +578,8 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
     """A yes after Toni asked to move on completes the step.
 
     A phrase from the lists confirms without a model call. Any other reply is
-    read by the model unless an exact yes is required. A clear no returns to
-    the step. Anything else stays in the chat.
+    read by the model unless an exact yes is required. A clear no stays on
+    this gate and Toni answers. Anything else stays in the chat.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -614,10 +628,10 @@ def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
     """A typed reply while waiting for readiness.
 
     A listed phrase confirms the step and does not call a model. When an exact
-    yes is not required, the model reads anything else. yes confirms, no goes
-    back to the step and Toni answers, and other leaves the session waiting so
-    the chat model can answer. The session stays awaiting_ready on other, so
-    the next typed reply is judged again.
+    yes is not required, the model reads anything else. yes confirms, no stays
+    on this gate and Toni answers, and other leaves the session waiting so
+    the chat model can answer. The session stays awaiting_ready on no and on
+    other, so the next typed reply is judged again.
     """
     session = user_message.session
     if session.state != Constants.SESSION_STATE_AWAITING_READY:
@@ -668,7 +682,7 @@ def ready_gate_catalogue_text() -> str:
         "Ready gate. A typed reply while the session is waiting to move on.\n"
         f"Require an exact yes: {exact_line}. Editable in Settings (require_exact_yes).\n"
         "Off: a reply that is not in the lists is read by the AI. "
-        "yes moves the step on, no goes back to the step and Toni answers, "
+        "yes moves the step on, no stays on this gate and Toni answers, "
         "other stays in the chat.\n"
         "On: only the phrases below and the chips move a step on.\n"
         "If both lists are empty and this is on, only the chips move the step on.\n"
@@ -1158,6 +1172,25 @@ def _retreat(session) -> None:
             "updated_at",
         ]
     )
+
+
+def _keep_ready_gate(session, agent_message) -> bool:
+    """Put the gate chips on Toni's not-ready reply and leave the gate open.
+
+    The flag is set by _not_ready_outcome and consumed once, when this reply
+    is saved. A step that has already moved on is left where it is.
+    """
+    meta = dict(session.cached_prompt_meta or {})
+    if not meta.pop("not_ready_keep_gate", False):
+        return False
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if session.state != Constants.SESSION_STATE_AWAITING_READY:
+        return True
+    session_step = _live_step(session)
+    if agent_message is not None and session_step is not None:
+        _enter_awaiting_ready(session, agent_message, session_step)
+    return True
 
 
 def _enter_awaiting_ready(session, agent_message, session_step) -> None:
