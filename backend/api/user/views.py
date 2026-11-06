@@ -428,10 +428,11 @@ def check_if_user_active(user):
     if user.deleted_at is not None or user.status != Constants.USER_STATUS_ACTIVE:
         raise PermissionDenied("Your account is no longer active")
 
-    from ..invite.access import invite_expired
+    from ..invite.access import invite_access_detail
 
-    if invite_expired(user):
-        raise PermissionDenied("This access code has expired.")
+    detail = invite_access_detail(user)
+    if detail:
+        raise PermissionDenied(detail)
 
 
 def can_send_verification_code(user):

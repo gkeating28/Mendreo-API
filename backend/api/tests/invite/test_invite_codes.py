@@ -1,6 +1,8 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.core.cache import cache
+from django.test import RequestFactory, override_settings
 from django.utils import timezone
 from rest_framework import status
 
@@ -8,8 +10,17 @@ from ..TestCase import TestCase
 from ..utils.BaseTest import BaseTest
 from ..utils.manager.Auth import _grant_current_consent
 from ...consumer.models import Consumer
+from ...invite.access import REVOKED_DETAIL
 from ...invite.models import InviteCode
-from ...invite.services import ALPHABET, INVALID_DETAIL, RATE_LIMIT_DETAIL
+from ...invite.services import (
+    ALPHABET,
+    GLOBAL_FAIL_KEY,
+    GLOBAL_LOCK_KEY,
+    INVALID_DETAIL,
+    RATE_LIMIT_DETAIL,
+    client_ip,
+)
+from ...utils.Token import create as create_token
 from ...session.models import Session
 from ...user.models import User
 from ...utils import Constants
@@ -208,6 +219,140 @@ class InviteCodeTests(BaseTest):
         )
         self.assertEqual(authed.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertEqual(authed.json["detail"], "This access code has expired.")
+
+    def test_revoke_cuts_off_tokens_and_reactivate_restores_them(self):
+        created = self._create()
+        redeemed = self._redeem(created.json[0]["code"], ip="10.6.7.1")
+        user = User.objects.get(id=redeemed.json["consumer"]["user"]["id"])
+        user.set_password("a-real-password")
+        user.save()
+        _grant_current_consent(user.consumer)
+        access = f"Bearer {redeemed.json['tokens']['access']}"
+        refresh = redeemed.json["tokens"]["refresh"]
+        code_id = created.json[0]["id"]
+
+        open_status = self._get_path("/onboarding/status", access)
+        self.assertEqual(open_status.status_code, status.HTTP_200_OK)
+
+        revoked = self._post(
+            f"/invite-codes/{code_id}/revoke",
+            {},
+            access_token=self.admin_one_access_token,
+        )
+        self.assertEqual(revoked.status_code, status.HTTP_200_OK)
+        self.assertEqual(revoked.json["status"], "revoked")
+
+        login = self._post(
+            "/user/login",
+            {"email": user.email, "password": "a-real-password"},
+        )
+        self.assertEqual(login.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(login.json["detail"], REVOKED_DETAIL)
+
+        refresh_blocked = self._post("/user/refresh-token", {"refresh": refresh})
+        self.assertEqual(refresh_blocked.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(refresh_blocked.json["detail"], REVOKED_DETAIL)
+
+        access_blocked = self._get_path("/onboarding/status", access)
+        self.assertEqual(access_blocked.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(access_blocked.json["detail"], REVOKED_DETAIL)
+
+        ordinary_tokens = create_token(self.consumer_one.user)
+        ordinary_refresh = self._post(
+            "/user/refresh-token",
+            {"refresh": ordinary_tokens["refresh"]},
+        )
+        self.assertEqual(ordinary_refresh.status_code, status.HTTP_200_OK)
+        ordinary_status = self._get_path(
+            "/onboarding/status",
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(ordinary_status.status_code, status.HTTP_200_OK)
+
+        restored = self._post(
+            f"/invite-codes/{code_id}/reactivate",
+            {},
+            access_token=self.admin_one_access_token,
+        )
+        self.assertEqual(restored.status_code, status.HTTP_200_OK)
+        self.assertEqual(restored.json["status"], "redeemed")
+
+        login_again = self._post(
+            "/user/login",
+            {"email": user.email, "password": "a-real-password"},
+        )
+        self.assertEqual(login_again.status_code, status.HTTP_200_OK)
+
+        refresh_again = self._post("/user/refresh-token", {"refresh": refresh})
+        self.assertEqual(refresh_again.status_code, status.HTTP_200_OK)
+        self.assertIn("access", refresh_again.json)
+
+        access_again = self._get_path("/onboarding/status", access)
+        self.assertEqual(access_again.status_code, status.HTTP_200_OK)
+
+    def _redeem_forwarded(self, code, forwarded, proxy="100.64.0.8"):
+        return self._post(
+            "/invite-codes/redeem",
+            {"code": code},
+            REMOTE_ADDR=proxy,
+            HTTP_X_FORWARDED_FOR=forwarded,
+            HTTP_X_REAL_IP="198.51.100.50",
+            HTTP_X_VERCEL_FORWARDED_FOR="198.51.100.9",
+        )
+
+    def test_rate_limit_counts_leftmost_forwarded_for_separately(self):
+        for _ in range(10):
+            response = self._redeem_forwarded("NOPECODE", "203.0.113.10, 100.64.0.8")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        other_visitor = self._redeem_forwarded("NOPECODE", "203.0.113.11, 100.64.0.8")
+        self.assertEqual(other_visitor.status_code, status.HTTP_400_BAD_REQUEST)
+
+        locked = self._redeem_forwarded("NOPECODE", "203.0.113.10, 100.64.0.8")
+        self.assertEqual(locked.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(locked.json["detail"], RATE_LIMIT_DETAIL)
+
+    def test_rotating_forwarded_for_stops_at_the_global_cap(self):
+        cache.delete(GLOBAL_FAIL_KEY)
+        cache.delete(GLOBAL_LOCK_KEY)
+        self.addCleanup(cache.delete, GLOBAL_FAIL_KEY)
+        self.addCleanup(cache.delete, GLOBAL_LOCK_KEY)
+
+        created = self._create()
+        display = created.json[0]["code"]
+
+        with patch("api.invite.services.GLOBAL_FAIL_LIMIT", 3):
+            for n in range(2):
+                response = self._redeem_forwarded("NOPECODE", f"203.0.113.{n}")
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+            success = self._redeem_forwarded(display, "203.0.113.50")
+            self.assertEqual(success.status_code, status.HTTP_200_OK)
+
+            third = self._redeem_forwarded("NOPECODE", "203.0.113.3")
+            self.assertEqual(third.status_code, status.HTTP_400_BAD_REQUEST)
+
+            capped = self._redeem_forwarded("NOPECODE", "203.0.113.4")
+            self.assertEqual(capped.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+            self.assertEqual(capped.json["detail"], RATE_LIMIT_DETAIL)
+
+            still_locked = self._redeem_forwarded(display, "203.0.113.99")
+            self.assertEqual(still_locked.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+            self.assertEqual(still_locked.json["detail"], RATE_LIMIT_DETAIL)
+
+    def test_client_ip_uses_leftmost_forwarded_for(self):
+        factory = RequestFactory()
+        request = factory.post("/invite-codes/redeem")
+        request.META["REMOTE_ADDR"] = "100.64.0.8"
+        request.META["HTTP_X_FORWARDED_FOR"] = "203.0.113.10, 100.64.0.8"
+        request.META["HTTP_X_REAL_IP"] = "198.51.100.1"
+        request.META["HTTP_X_VERCEL_FORWARDED_FOR"] = "198.51.100.9"
+        self.assertEqual(client_ip(request), "203.0.113.10")
+
+        del request.META["HTTP_X_FORWARDED_FOR"]
+        for target in ("local", "worker", "production", "vercel"):
+            with override_settings(DEPLOYMENT_TARGET=target):
+                self.assertEqual(client_ip(request), "100.64.0.8")
 
     def test_batch_create_revoke_and_reactivate(self):
         expires = (timezone.now() + timedelta(days=14)).isoformat()

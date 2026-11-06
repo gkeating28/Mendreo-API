@@ -23,8 +23,15 @@ INVALID_DETAIL = "That code isn't valid."
 RATE_LIMIT_DETAIL = "Too many attempts. Try again in 15 minutes."
 
 FAIL_LIMIT = 10
+# Shared across every visitor. Someone who sends a new leftmost
+# X-Forwarded-For on each guess can still trip this and lock redeem for
+# everyone, testers included, for LOCK_WINDOW_SECONDS. Acceptable for now.
+GLOBAL_FAIL_LIMIT = 200
 FAIL_WINDOW_SECONDS = 10 * 60
 LOCK_WINDOW_SECONDS = 15 * 60
+
+GLOBAL_FAIL_KEY = "invite_redeem_fail:all"
+GLOBAL_LOCK_KEY = "invite_redeem_lock:all"
 
 _IGNORED_IN_CODE = set(" \t\r\n-‐‑–—")
 
@@ -48,10 +55,26 @@ def display_code(code: str) -> str:
     return f"{code[:4]}-{code[4:]}"
 
 
+def _first_address(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    for part in value.split(","):
+        part = part.strip()
+        if part:
+            return part
+    return ""
+
+
 def client_ip(request) -> str:
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    """Leftmost X-Forwarded-For entry, otherwise the socket address.
+
+    Railway recommends X-Forwarded-For. Staff disagree on whether the edge
+    strips a value the caller sent, so this leftmost entry may be spoofable.
+    The global failure cap is what stops someone rotating it.
+    """
+    forwarded = _first_address(request.META.get("HTTP_X_FORWARDED_FOR", ""))
     if forwarded:
-        return forwarded.split(",")[0].strip() or "unknown"
+        return forwarded
     return request.META.get("REMOTE_ADDR") or "unknown"
 
 
@@ -67,25 +90,36 @@ def is_locked(ip: str) -> bool:
     return cache.get(_lock_key(ip)) is not None
 
 
+def global_locked() -> bool:
+    return cache.get(GLOBAL_LOCK_KEY) is not None
+
+
+def _increment(key: str) -> int:
+    if cache.add(key, 1, FAIL_WINDOW_SECONDS):
+        return 1
+    try:
+        return cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, FAIL_WINDOW_SECONDS)
+        return 1
+
+
 def record_failure(ip: str) -> bool:
     """Count a failed guess. True when this attempt should be answered with 429."""
-    if is_locked(ip):
+    if is_locked(ip) or global_locked():
         return True
 
-    key = _fail_key(ip)
-    if cache.add(key, 1, FAIL_WINDOW_SECONDS):
-        count = 1
-    else:
-        try:
-            count = cache.incr(key)
-        except ValueError:
-            cache.set(key, 1, FAIL_WINDOW_SECONDS)
-            count = 1
+    ip_count = _increment(_fail_key(ip))
+    global_count = _increment(GLOBAL_FAIL_KEY)
 
-    if count > FAIL_LIMIT:
+    locked = False
+    if ip_count > FAIL_LIMIT:
         cache.set(_lock_key(ip), 1, LOCK_WINDOW_SECONDS)
-        return True
-    return False
+        locked = True
+    if global_count > GLOBAL_FAIL_LIMIT:
+        cache.set(GLOBAL_LOCK_KEY, 1, LOCK_WINDOW_SECONDS)
+        locked = True
+    return locked
 
 
 def is_expired(code: InviteCode, now=None) -> bool:
@@ -195,7 +229,7 @@ def _create_account(code: InviteCode) -> User:
 
 def redeem(raw_code, request) -> dict:
     ip = client_ip(request)
-    if is_locked(ip):
+    if is_locked(ip) or global_locked():
         raise RedeemRejected(RATE_LIMIT_DETAIL, 429)
 
     normalized = normalize_code(raw_code)
