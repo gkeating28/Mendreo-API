@@ -55,6 +55,13 @@ _HINT_BODY = re.compile(r"<TURN_HINT>\n?(.*?)\n?</TURN_HINT>", re.DOTALL)
 # Substrings of the hints _hinted_user_prompt can inject, in that function's order.
 _LADDER = (
     {
+        "key": "not_ready",
+        "label": "Not ready",
+        "markers": ("not ready to move on",),
+        "won": "The person said they are not ready to move on.",
+        "missed": "This turn was not a not-ready reply.",
+    },
+    {
         "key": "about_the_user",
         "label": "About the user",
         "markers": ("is asking what you know about them",),

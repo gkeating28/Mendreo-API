@@ -234,8 +234,9 @@ class Ready(SmartAPIView):
             outcome = confirm_ready(session, confirm)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        user_text = Constants.CHIP_READY_YES if confirm else Constants.CHIP_NOT_YET
-        return _transition_response(session, outcome, user_text)
+        if not confirm:
+            return _chat_reply_response(outcome)
+        return _transition_response(session, outcome, Constants.CHIP_READY_YES)
 
     def has_permission(self, request, method):
         return method == "POST"
@@ -332,6 +333,17 @@ def _complete_check_in(session, summary):
     messages = [greeting] if greeting is not None else []
     payload["messages"] = _message_payloads(messages)
     return Response(payload, status=status.HTTP_200_OK)
+
+
+def _chat_reply_response(outcome):
+    """Same body as POST /messages when the chat model still has to answer."""
+    from ..message.serializers import MessageDetailSerializer
+
+    data = dict(MessageDetailSerializer(outcome.message).data)
+    data["session_state"] = outcome.session_state
+    if outcome.ai_pending:
+        data["ai_pending"] = True
+    return Response(data, status=status.HTTP_201_CREATED)
 
 
 def _transition_response(session, outcome, user_text):

@@ -1,7 +1,8 @@
 """Exercise session transitions. Active only when AI_STATE_MACHINE_ENABLED is on.
 
 Code owns the step. The model reports step_goal_met and asks_readiness.
-Chip taps do not call the chat model.
+A ready or finish chip does not call the chat model. Not yet does: Toni
+answers, and the session stays on this step.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ def enabled() -> bool:
 class ChipOutcome:
     message: object
     session_state: dict
+    ai_pending: bool = False
 
 
 def phase_of(session) -> str:
@@ -247,15 +249,17 @@ def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | N
     ):
         return None
 
-    if text == Constants.CHIP_NOT_YET:
-        _count_user_message(session, user_message)
-        _retreat(session)
-        return ChipOutcome(user_message, build_session_state(session))
+    if _same_chip(text, Constants.CHIP_NOT_YET):
+        return _not_ready_outcome(session, user_message)
 
-    if kind == Constants.SUGGESTED_RESPONSES_KIND_READY and text == Constants.CHIP_READY_YES:
+    if kind == Constants.SUGGESTED_RESPONSES_KIND_READY and _same_chip(
+        text, Constants.CHIP_READY_YES
+    ):
         return _confirm(session, user_message)
 
-    if kind == Constants.SUGGESTED_RESPONSES_KIND_FINISH and text == Constants.CHIP_FINISH:
+    if kind == Constants.SUGGESTED_RESPONSES_KIND_FINISH and _same_chip(
+        text, Constants.CHIP_FINISH
+    ):
         return _confirm(session, user_message, finishing=True)
 
     return None
@@ -507,10 +511,36 @@ def _ready_verdict(session, user_message) -> str:
     return answer
 
 
-def _retreat_outcome(session, user_message) -> ChipOutcome:
+def _same_chip(text: str, chip: str) -> bool:
+    """Chip labels match with case and surrounding whitespace ignored."""
+    return " ".join((text or "").split()).casefold() == " ".join((chip or "").split()).casefold()
+
+
+def _not_ready_outcome(session, user_message) -> ChipOutcome:
+    """Stay on this step, then ask Toni to answer the way a judged other does.
+
+    The user message is counted here. The chat reply counts only the agent
+    message, via not_ready_user_counted, so the two are not added twice.
+    """
+    from .turn_hint import NOT_READY_HINT
+
     _count_user_message(session, user_message)
     _retreat(session)
-    return ChipOutcome(user_message, build_session_state(session))
+    meta = dict(session.cached_prompt_meta or {})
+    meta["not_ready_hint"] = NOT_READY_HINT
+    meta["not_ready_user_counted"] = True
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+    from ..message.views import dispatch_chat_reply
+
+    message, pending = dispatch_chat_reply(user_message)
+    session.refresh_from_db()
+    return ChipOutcome(message, build_session_state(session), ai_pending=pending)
+
+
+def _retreat_outcome(session, user_message) -> ChipOutcome:
+    return _not_ready_outcome(session, user_message)
 
 
 def _confirm_listed_ready(session, user_message, session_step, *, last_step, summary_confirmed, text):
@@ -585,9 +615,9 @@ def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
 
     A listed phrase confirms the step and does not call a model. When an exact
     yes is not required, the model reads anything else. yes confirms, no goes
-    back to the step, and other leaves the session waiting so the chat model
-    can answer. The session stays awaiting_ready on other, so the next typed
-    reply is judged again.
+    back to the step and Toni answers, and other leaves the session waiting so
+    the chat model can answer. The session stays awaiting_ready on other, so
+    the next typed reply is judged again.
     """
     session = user_message.session
     if session.state != Constants.SESSION_STATE_AWAITING_READY:
@@ -638,7 +668,8 @@ def ready_gate_catalogue_text() -> str:
         "Ready gate. A typed reply while the session is waiting to move on.\n"
         f"Require an exact yes: {exact_line}. Editable in Settings (require_exact_yes).\n"
         "Off: a reply that is not in the lists is read by the AI. "
-        "yes moves the step on, no goes back to the step, other stays in the chat.\n"
+        "yes moves the step on, no goes back to the step and Toni answers, "
+        "other stays in the chat.\n"
         "On: only the phrases below and the chips move a step on.\n"
         "If both lists are empty and this is on, only the chips move the step on.\n"
         "Next-step phrases match only before the last step. "
@@ -735,9 +766,7 @@ def confirm_ready(session, confirm: bool):
     sender = Participant.objects.filter(session=session, consumer=session.consumer).first()
     user_message = Message.objects.create(session=session, sender=sender, text=text)
     if not confirm:
-        _count_user_message(session, user_message)
-        _retreat(session)
-        return ChipOutcome(user_message, build_session_state(session))
+        return _not_ready_outcome(session, user_message)
     return _confirm(session, user_message)
 
 

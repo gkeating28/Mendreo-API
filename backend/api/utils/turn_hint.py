@@ -40,6 +40,13 @@ LAST_STEP_HINT = (
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
+NOT_READY_HINT = (
+    "The person has just said they are not ready to move on. "
+    "Reply in one or two warm sentences. "
+    "Do not move to the next step, do not ask whether they are ready again, "
+    "and do not start a new technique. "
+    "Invite them to say more about this step or tell you when they are ready."
+)
 ABOUT_THE_USER_HINT = (
     "{user_name} is asking what you know about them. "
     "Everything you know is written between the <ABOUT_CLIENT> tags below, "
@@ -344,13 +351,42 @@ def user_prompt_with_hint(session, user_message) -> str:
     return final
 
 
+def _consume_not_ready_hint(session) -> str | None:
+    """One-shot hint stored when a not-ready reply goes to the chat model."""
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if "not_ready_hint" not in meta:
+        return None
+    hint = (meta.pop("not_ready_hint") or "").strip()
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if not hint:
+        return None
+    from ..message.turn_prompt import note_turn_decision
+
+    note_turn_decision(
+        session,
+        {
+            "type": "ready_reply",
+            "fired": False,
+            "what": "The reply was taken as not ready.",
+            "why": "The reply declines, or asks to wait.",
+            "inputs": {"verdict": "no"},
+        },
+    )
+    return hint
+
+
 def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
     winner = None
-    about = about_the_user_hint(session, text)
-    if about:
+    not_ready = _consume_not_ready_hint(session)
+    about = None if not_ready else about_the_user_hint(session, text)
+    if not_ready:
+        winner = "not_ready"
+        body = f"{text}\n\n<TURN_HINT>\n{not_ready}\n</TURN_HINT>"
+    elif about:
         winner = "about_the_user"
         body = f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
     else:

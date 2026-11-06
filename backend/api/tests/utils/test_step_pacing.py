@@ -1432,30 +1432,56 @@ class GoalGateTests(BaseTest):
             self._finish_phrases_do_not_advance_a_non_last_step()
 
     def _finish_phrases_do_not_advance_a_non_last_step(self):
+        from ...utils.turn_hint import NOT_READY_HINT
+
         for phrase in ("ready to finish", "I want to finish the exercise", "I'm ready to stop"):
             session = self._awaiting(self._plain_two_steps())
             user_message = self._user_reply(session, phrase)
-            with self._patches() as mocks:
+            with (
+                self._patches() as mocks,
+                override_settings(AI_ASYNC_MESSAGES=True),
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
+            ):
                 outcome = handle_typed_while_awaiting(user_message)
             mocks[2].assert_not_called()
+            ran.assert_not_called()
+            queued.assert_called_once_with(user_message)
+            self.assertTrue(outcome.ai_pending, phrase)
             self.assertEqual(outcome.message, user_message, phrase)
             session.refresh_from_db()
             self.assertEqual(session.current_step_no, 1, phrase)
             self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
             self.assertFalse(session.session_steps.get(order=0).completed, phrase)
+            self.assertEqual(
+                session.cached_prompt_meta.get("not_ready_hint"), NOT_READY_HINT, phrase
+            )
 
     def test_finish_phrases_do_not_complete_before_the_summary(self):
+        from ...utils.turn_hint import NOT_READY_HINT
+
         for phrase in self._FINISH_PHRASES:
             session = self._session(done_when="The user confirmed the summary is accurate.")
             self._awaiting(session, "Are you ready to finish?")
             user_message = self._user_reply(session, phrase)
-            with self._patches() as mocks:
+            with (
+                self._patches() as mocks,
+                override_settings(AI_ASYNC_MESSAGES=True),
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
+            ):
                 outcome = handle_typed_while_awaiting(user_message)
             mocks[2].assert_not_called()
+            ran.assert_not_called()
+            queued.assert_called_once_with(user_message)
+            self.assertTrue(outcome.ai_pending, phrase)
             self.assertEqual(outcome.message, user_message, phrase)
             session.refresh_from_db()
             self.assertFalse(session.completed, phrase)
             self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
+            self.assertEqual(
+                session.cached_prompt_meta.get("not_ready_hint"), NOT_READY_HINT, phrase
+            )
 
     def test_each_finish_phrase_uses_the_finish_chip_confirm(self):
         for phrase in self._FINISH_PHRASES:
@@ -1493,21 +1519,36 @@ class GoalGateTests(BaseTest):
         self.assertTrue(session.completed)
 
     def test_an_unrecognised_typed_reply_still_retreats(self):
-        with self._exact_yes():
+        with self._exact_yes(), override_settings(AI_ASYNC_MESSAGES=True):
             self._an_unrecognised_typed_reply_still_retreats()
 
     def _an_unrecognised_typed_reply_still_retreats(self):
+        from ...utils.turn_hint import NOT_READY_HINT
+
         for phrase in self._REJECTED_PHRASES:
             session = self._awaiting(self._plain_two_steps())
             user_message = self._user_reply(session, phrase)
-            with self._patches() as mocks:
+            with (
+                self._patches() as mocks,
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
+            ):
                 outcome = handle_typed_while_awaiting(user_message)
             mocks[2].assert_not_called()
+            ran.assert_not_called()
+            queued.assert_called_once_with(user_message)
+            self.assertTrue(outcome.ai_pending, phrase)
             self.assertEqual(outcome.message, user_message, phrase)
+            self.assertEqual(outcome.session_state["phase"], "step_active", phrase)
+            self.assertEqual(outcome.session_state["current_step_no"], 1, phrase)
+            self.assertNotIn("completion_card", outcome.session_state, phrase)
             session.refresh_from_db()
             self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, phrase)
             self.assertEqual(session.current_step_no, 1, phrase)
             self.assertFalse(session.session_steps.get(order=0).completed, phrase)
+            self.assertEqual(
+                session.cached_prompt_meta.get("not_ready_hint"), NOT_READY_HINT, phrase
+            )
 
     def test_ready_for_the_next_step_is_a_gate(self):
         self.assertTrue(is_advance_gate_text("Are you ready for the next step?"))
@@ -1631,25 +1672,173 @@ class GoalGateTests(BaseTest):
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
         self.assertTrue(session.session_steps.get(order=0).completed)
 
-    @override_settings(AI_ASYNC_MESSAGES=False)
+    def _mark_gate_chips(self, session, *, finish=False):
+        message = session.messages.order_by("-created_at").first()
+        if finish:
+            message.suggested_responses = [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET]
+            message.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FINISH
+        else:
+            message.suggested_responses = [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET]
+            message.suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_READY
+        message.save(
+            update_fields=["suggested_responses", "suggested_responses_kind", "updated_at"]
+        )
+        return message
+
+    def _assert_not_ready_poll(self, response, session, text):
+        from ...message.debug_payload import hint_ladder
+        from ...utils.turn_hint import NOT_READY_HINT, user_prompt_with_hint
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        self.assertIs(response.json.get("ai_pending"), True)
+        self.assertEqual(response.json["text"].strip(), text.strip())
+        self.assertEqual(response.json["session_state"]["phase"], "step_active")
+        self.assertEqual(response.json["session_state"]["current_step_no"], 1)
+        self.assertNotIn("completion_card", response.json["session_state"])
+        session.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.cached_prompt_meta.get("not_ready_hint"), NOT_READY_HINT)
+        user_message = Message.objects.get(id=response.json["id"])
+        with patch("api.message.turn_prompt.note_turn_decision") as note:
+            prompted = user_prompt_with_hint(session, user_message)
+        self.assertIn(NOT_READY_HINT, prompted)
+        self.assertEqual(hint_ladder(prompted)["winner"], "not_ready")
+        ready = [
+            call.args[1]
+            for call in note.call_args_list
+            if call.args[1].get("type") == "ready_reply"
+        ]
+        self.assertEqual(ready[0]["inputs"]["verdict"], "no")
+        self.assertFalse(ready[0]["fired"])
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
     def test_judged_no_retreats_without_the_chat_model(self):
         session = self._awaiting(self._plain_two_steps())
         with (
             patch("api.utils.extraction.judge_ready_reply", return_value="no") as judge,
             patch("api.utils.Agent.get_response") as chat,
+            patch("api.message.views.enqueue_agent_response") as queued,
+            patch("api.message.views.request_agent_response") as ran,
         ):
             response = self._post(
                 "/messages",
                 {"session": session.id, "text": "I need a minute"},
                 self.consumer_one_access_token,
             )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
         judge.assert_called_once()
         chat.assert_not_called()
+        ran.assert_not_called()
+        queued.assert_called_once()
+        self.assertEqual(queued.call_args.args[0].text, "I need a minute")
+        self._assert_not_ready_poll(response, session, "I need a minute")
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
+    def test_judged_no_while_awaiting_ready_still_gets_a_toni_reply(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch("api.utils.extraction.judge_ready_reply", return_value="no") as judge,
+            patch("api.utils.Agent.get_response") as chat,
+            patch("api.message.views.enqueue_agent_response") as queued,
+            patch("api.message.views.request_agent_response") as ran,
+        ):
+            response = self._post(
+                "/messages",
+                {"session": session.id, "text": "no, I need a minute"},
+                self.consumer_one_access_token,
+            )
+        judge.assert_called_once()
+        chat.assert_not_called()
+        ran.assert_not_called()
+        queued.assert_called_once()
+        self._assert_not_ready_poll(response, session, "no, I need a minute")
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
+    def test_not_yet_chip_matches_any_case_and_requests_a_reply(self):
+        for text in ("not yet", "Not Yet", " not yet "):
+            session = self._awaiting(self._plain_two_steps())
+            self._mark_gate_chips(session)
+            with (
+                patch("api.utils.extraction.judge_ready_reply") as judge,
+                patch("api.utils.Agent.get_response") as chat,
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
+            ):
+                response = self._post(
+                    "/messages",
+                    {
+                        "session": session.id,
+                        "text": text,
+                        "from_suggested_response": True,
+                    },
+                    self.consumer_one_access_token,
+                )
+            judge.assert_not_called()
+            chat.assert_not_called()
+            ran.assert_not_called()
+            queued.assert_called_once()
+            self._assert_not_ready_poll(response, session, text)
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
+    def test_ready_and_finish_chips_match_any_case(self):
+        session = self._awaiting(self._plain_two_steps())
+        self._mark_gate_chips(session)
+        with self._patches() as mocks:
+            response = self._post(
+                "/messages",
+                {
+                    "session": session.id,
+                    "text": " yes, i'm ready ",
+                    "from_suggested_response": True,
+                },
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        self.assertNotIn("ai_pending", response.json)
+        mocks[2].assert_not_called()
         session.refresh_from_db()
-        self.assertEqual(session.current_step_no, 1)
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 2)
+        self.assertTrue(session.session_steps.get(order=0).completed)
+
+        last = self._awaiting(self._session())
+        self._mark_gate_chips(last, finish=True)
+        with self._patches() as mocks:
+            response = self._post(
+                "/messages",
+                {
+                    "session": last.id,
+                    "text": " FINISH EXERCISE ",
+                    "from_suggested_response": True,
+                },
+                self.consumer_one_access_token,
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
+        self.assertNotIn("ai_pending", response.json)
+        mocks[2].assert_not_called()
+        last.refresh_from_db()
+        self.assertTrue(last.completed)
+        self.assertEqual(last.state, Constants.SESSION_STATE_COMPLETED)
+
+    @override_settings(AI_ASYNC_MESSAGES=True)
+    def test_confirm_ready_false_requests_the_same_reply(self):
+        session = self._awaiting(self._plain_two_steps())
+        with (
+            patch("api.utils.extraction.judge_ready_reply") as judge,
+            patch("api.utils.Agent.get_response") as chat,
+            patch("api.message.views.enqueue_agent_response") as queued,
+            patch("api.message.views.request_agent_response") as ran,
+        ):
+            response = self._post(
+                f"/sessions/{session.id}/ready",
+                {"confirm": False},
+                self.consumer_one_access_token,
+            )
+        judge.assert_not_called()
+        chat.assert_not_called()
+        ran.assert_not_called()
+        queued.assert_called_once()
+        self._assert_not_ready_poll(response, session, Constants.CHIP_NOT_YET)
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_judged_other_stays_awaiting_and_goes_to_chat(self):
@@ -1717,37 +1906,52 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertEqual(session.current_step_no, 2)
 
-    @override_settings(AI_ASYNC_MESSAGES=False)
+    @override_settings(AI_ASYNC_MESSAGES=True)
     def test_exact_yes_never_calls_the_judge(self):
         session = self._awaiting(self._plain_two_steps())
         with self._exact_yes():
             with (
                 patch("api.utils.extraction.judge_ready_reply") as judge,
                 patch("api.utils.Agent.get_response") as chat,
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
             ):
                 response = self._post(
                     "/messages",
                     {"session": session.id, "text": "sounds good to me"},
                     self.consumer_one_access_token,
                 )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
         judge.assert_not_called()
         chat.assert_not_called()
-        session.refresh_from_db()
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-        self.assertFalse(session.session_steps.get(order=0).completed)
+        ran.assert_not_called()
+        queued.assert_called_once()
+        self._assert_not_ready_poll(response, session, "sounds good to me")
 
-    @override_settings(AI_ASYNC_MESSAGES=False)
+    @override_settings(AI_ASYNC_MESSAGES=True)
     def test_empty_lists_with_exact_yes_leave_only_the_chips(self):
+        from ...utils.turn_hint import NOT_READY_HINT
+
         session = self._awaiting(self._plain_two_steps())
         with self._exact_yes(), self._phrase_lists([], []):
-            with patch("api.utils.extraction.judge_ready_reply") as judge:
-                outcome = handle_typed_while_awaiting(self._user_reply(session, "yes"))
+            with (
+                patch("api.utils.extraction.judge_ready_reply") as judge,
+                patch("api.message.views.enqueue_agent_response") as queued,
+                patch("api.message.views.request_agent_response") as ran,
+            ):
+                user_message = self._user_reply(session, "yes")
+                outcome = handle_typed_while_awaiting(user_message)
         judge.assert_not_called()
+        ran.assert_not_called()
+        queued.assert_called_once_with(user_message)
+        self.assertTrue(outcome.ai_pending)
         self.assertEqual(outcome.message.text, "yes")
+        self.assertEqual(outcome.session_state["phase"], "step_active")
+        self.assertEqual(outcome.session_state["current_step_no"], 1)
         session.refresh_from_db()
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(session.current_step_no, 1)
         self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.cached_prompt_meta.get("not_ready_hint"), NOT_READY_HINT)
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_empty_lists_without_exact_yes_send_every_reply_to_the_judge(self):

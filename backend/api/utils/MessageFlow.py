@@ -52,7 +52,6 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
             "last_asset",
             "messages_no",
             "agent_messages_no",
-            "consumer_messages_no",
             "updated_at",
         ]
         # A check-in reply that finishes after Start must not replace the
@@ -62,9 +61,18 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
         ):
             session.last_message = agent_message
             update_fields.append("last_message")
-        session.messages_no = F("messages_no") + 2
-        session.agent_messages_no = F("agent_messages_no") + 1
-        session.consumer_messages_no = F("consumer_messages_no") + 1
+        meta = dict(session.cached_prompt_meta or {})
+        user_already_counted = bool(meta.pop("not_ready_user_counted", False))
+        if user_already_counted:
+            session.cached_prompt_meta = meta
+            update_fields.append("cached_prompt_meta")
+            session.messages_no = F("messages_no") + 1
+            session.agent_messages_no = F("agent_messages_no") + 1
+        else:
+            update_fields.append("consumer_messages_no")
+            session.messages_no = F("messages_no") + 2
+            session.agent_messages_no = F("agent_messages_no") + 1
+            session.consumer_messages_no = F("consumer_messages_no") + 1
         if persist_step_progress:
             update_fields.extend(
                 ["current_step_no", "total_steps_no", "completed", "completed_at"]

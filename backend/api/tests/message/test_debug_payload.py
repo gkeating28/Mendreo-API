@@ -88,7 +88,7 @@ class HintLadderTests(SimpleTestCase):
         by_key = {row["key"]: row for row in ladder["candidates"]}
         self.assertEqual(
             [row["key"] for row in ladder["candidates"]],
-            ["about_the_user", "finish_summary", "goal", "depth", "thin_answer"],
+            ["not_ready", "about_the_user", "finish_summary", "goal", "depth", "thin_answer"],
         )
         self.assertTrue(by_key["thin_answer"]["won"])
         self.assertTrue(by_key["thin_answer"]["applicable"])
@@ -126,7 +126,7 @@ class HintLadderTests(SimpleTestCase):
     def test_no_hint_marks_every_candidate_inapplicable(self):
         ladder = hint_ladder("just the user text")
         self.assertIsNone(ladder["winner"])
-        self.assertEqual(len(ladder["candidates"]), 5)
+        self.assertEqual(len(ladder["candidates"]), 6)
         self.assertTrue(all(row["applicable"] is False for row in ladder["candidates"]))
 
 
