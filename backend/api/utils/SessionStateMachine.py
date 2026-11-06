@@ -542,6 +542,7 @@ def _not_ready_outcome(session, user_message) -> ChipOutcome:
             "messages_no",
             "consumer_messages_no",
             "last_message",
+            "resume_dismissed_at",
             "updated_at",
         ]
     )
@@ -896,6 +897,7 @@ def _confirm(
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )
@@ -920,6 +922,7 @@ def _confirm(
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )
@@ -1246,3 +1249,4 @@ def _count_user_message(session, user_message) -> None:
     session.messages_no = (session.messages_no or 0) + 1
     session.consumer_messages_no = (session.consumer_messages_no or 0) + 1
     session.last_message = user_message
+    session.resume_dismissed_at = None

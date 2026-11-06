@@ -54,7 +54,8 @@ class SessionListSerializer(ListModelSerializer):
     phase = serializers.SerializerMethodField()
     pre_exercise = serializers.SerializerMethodField()
     session_state = serializers.SerializerMethodField()
-    
+    resume_dismissed = serializers.SerializerMethodField()
+
     class Meta:
         model = Session
         # Internal AI state — large blobs (100s of KB) that must never go to clients.
@@ -69,6 +70,7 @@ class SessionListSerializer(ListModelSerializer):
             "history_summary",
             "authoring_test",
             "run_summary",
+            "resume_dismissed_at",
         ]
     
     @classmethod
@@ -120,6 +122,9 @@ class SessionListSerializer(ListModelSerializer):
             "completed_at": session.pre_exercise_completed_at,
             "start_button_label": label,
         }
+
+    def get_resume_dismissed(self, session):
+        return session.resume_dismissed_at is not None
 
     def get_session_state(self, session):
         from django.conf import settings

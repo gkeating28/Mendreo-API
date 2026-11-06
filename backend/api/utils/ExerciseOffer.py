@@ -230,11 +230,13 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
             session.last_message = user_message
             session.messages_no += 1
             session.consumer_messages_no += 1
+            session.resume_dismissed_at = None
             session.save(
                 update_fields=[
                     "last_message",
                     "messages_no",
                     "consumer_messages_no",
+                    "resume_dismissed_at",
                     "updated_at",
                 ]
             )
@@ -256,12 +258,14 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
         session.messages_no += 2
         session.consumer_messages_no += 1
         session.agent_messages_no += 1
+        session.resume_dismissed_at = None
         session.save(
             update_fields=[
                 "last_message",
                 "messages_no",
                 "consumer_messages_no",
                 "agent_messages_no",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )

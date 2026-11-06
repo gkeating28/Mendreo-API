@@ -242,6 +242,33 @@ class Ready(SmartAPIView):
         return method == "POST"
 
 
+class DismissResume(SmartAPIView):
+    """POST /sessions/<id>/dismiss-resume. Hide the resume card only.
+
+    The run stays in progress. updated_at is left alone so library order,
+    which sorts on that column, does not change.
+    """
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        if session.exercise_id is None or session.completed or session.abandoned:
+            return Response(
+                {"detail": "Resume can only be dismissed for an exercise in progress."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        Session.objects.filter(pk=session.pk).update(resume_dismissed_at=timezone.now())
+        session = SessionDetailSerializer.optimise(
+            Session.objects.filter(id=session.id)
+        ).first()
+        return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
 class CloseSession(SmartAPIView):
     permission_classes = [IsConsumerPermission]
 

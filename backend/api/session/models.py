@@ -107,6 +107,14 @@ class Session(SmartModel):
     # that omit it are rejected, which is what fails POST /sessions.
     authoring_test = models.BooleanField(default=False, db_default=False)
 
+    # Set when the person hides the "pick up where you left off" card.
+    # The run stays in progress. A new message clears it.
+    # Nullable with a database default so older code can insert a session
+    # without naming the column.
+    resume_dismissed_at = models.DateTimeField(
+        null=True, blank=True, default=None, db_default=None
+    )
+
     class Meta:
         indexes = [
             models.Index(

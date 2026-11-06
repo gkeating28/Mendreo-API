@@ -63,6 +63,10 @@ def apply_agent_response(user_message: Message, agent_message: Message) -> Messa
             update_fields.append("last_message")
         meta = dict(session.cached_prompt_meta or {})
         user_already_counted = bool(meta.pop("not_ready_user_counted", False))
+        # A new user message brings the resume card back. Same save as the
+        # count, so updated_at moves exactly when it did before.
+        session.resume_dismissed_at = None
+        update_fields.append("resume_dismissed_at")
         if user_already_counted:
             session.cached_prompt_meta = meta
             update_fields.append("cached_prompt_meta")
