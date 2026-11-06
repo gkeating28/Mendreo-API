@@ -291,21 +291,6 @@ def validate_answer_value(question: KnowledgeQuestion, value) -> str:
     return str(value)
 
 
-def _reject_underage_welcome_dob(variant, field, value):
-    if variant != Constants.KNOWLEDGE_FLOW_WELCOME:
-        return
-    if (field.sync_to or Constants.KNOWLEDGE_SYNC_NONE) != Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH:
-        return
-    from ..consumer.age import meets_minimum_age
-
-    try:
-        dob = date.fromisoformat(str(value).strip()[:10])
-    except ValueError:
-        raise serializers.ValidationError({"value": "Enter a date as YYYY-MM-DD."})
-    if not meets_minimum_age(dob):
-        raise serializers.ValidationError({"detail": Constants.WELCOME_UNDERAGE_MESSAGE})
-
-
 def _sync_account_value(consumer, field, value):
     sync = field.sync_to or Constants.KNOWLEDGE_SYNC_NONE
     text = str(value or "").strip()
@@ -320,7 +305,17 @@ def _sync_account_value(consumer, field, value):
         consumer.user.save(update_fields=["last_name"])
         return
     if sync == Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH:
-        consumer.date_of_birth = date.fromisoformat(text[:10])
+        # Same 18+ rule for every variant. submit_flow_answers is atomic, so
+        # a rejection rolls back the Knowledge Entry written earlier in this
+        # request as well as this account update.
+        from ..consumer.age import meets_minimum_age
+
+        dob = date.fromisoformat(text[:10])
+        if not meets_minimum_age(dob):
+            raise serializers.ValidationError(
+                {"detail": Constants.WELCOME_UNDERAGE_MESSAGE}
+            )
+        consumer.date_of_birth = dob
         consumer.save(update_fields=["date_of_birth", "updated_at"])
 
 
@@ -338,8 +333,18 @@ def submit_flow_answers(
     is not blocked on one LLM call per free-text answer.
     """
     variant = resolve_variant(consumer, variant)
-    flow_questions = visible_questions_for_variant(consumer, variant)
+    # Validate against every active question in the variant. The client
+    # resends answers it already posted; skip-if-known hides those on the
+    # next read, but they are still part of the variant and not an error.
+    flow_questions = questions_for_variant(variant)
     by_id = {q.id: q for q in flow_questions}
+    known_ids = set()
+    if variant == Constants.KNOWLEDGE_FLOW_WELCOME:
+        known_ids = {
+            question.id
+            for question in flow_questions
+            if welcome_answer_known(consumer, question)
+        }
 
     if variant not in (
         Constants.KNOWLEDGE_FLOW_INITIAL,
@@ -358,7 +363,9 @@ def submit_flow_answers(
         raise serializers.ValidationError({"answers": "Provide at least one answer."})
 
     written = []
-    answered_ids = set()
+    # Known welcome answers already satisfy complete=true, whether or not
+    # the client sends them again.
+    answered_ids = set(known_ids)
 
     for index, raw in enumerate(answers):
         question_id = raw.get("knowledge_question_id") or raw.get("question_id")
@@ -366,13 +373,13 @@ def submit_flow_answers(
             raise serializers.ValidationError(
                 {f"answers[{index}]": "Unknown knowledge_question_id for this variant."}
             )
+        if question_id in known_ids:
+            continue
         question = by_id[question_id]
         try:
             normalized = validate_answer_value(question, raw.get("value"))
         except serializers.ValidationError as exc:
             raise serializers.ValidationError({f"answers[{index}]": exc.detail})
-
-        _reject_underage_welcome_dob(variant, question.target_field, normalized)
 
         needs_followup = False
         followup_prompt = ""

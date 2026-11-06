@@ -650,3 +650,322 @@ class WelcomeFlowTests(BaseTest):
         self.assertEqual(edited.status_code, status.HTTP_200_OK, edited.json)
         self.assertEqual(set(edited.json["chip_replies"]), {"Yes", "No"})
         self.assertNotIn("Later", edited.json["chip_replies"])
+
+    def _detail(self, response):
+        detail = response.json.get("detail")
+        if isinstance(detail, list):
+            detail = detail[0]
+        return detail
+
+    def _synced_pair(self, flow, suffix):
+        name = KnowledgeField.objects.create(
+            key=f"given_name_{suffix}",
+            label="First name",
+            category="Profile",
+            sync_to=Constants.KNOWLEDGE_SYNC_FIRST_NAME,
+            active=True,
+        )
+        born = KnowledgeField.objects.create(
+            key=f"born_on_{suffix}",
+            label="Date of birth",
+            category="Profile",
+            sync_to=Constants.KNOWLEDGE_SYNC_DATE_OF_BIRTH,
+            active=True,
+        )
+        name_q = self._question(
+            name,
+            "Your name?",
+            flow=flow,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+        )
+        born_q = self._question(
+            born,
+            "When were you born?",
+            flow=flow,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_DATE,
+            order=2,
+        )
+        return name, born, name_q, born_q
+
+    def _post_answers(self, variant, questions_and_values, complete):
+        return self._post(
+            "/onboarding/answers",
+            {
+                "variant": variant,
+                "complete": complete,
+                "answers": [
+                    {"knowledge_question_id": question.id, "value": value}
+                    for question, value in questions_and_values
+                ],
+            },
+            self.consumer_one_access_token,
+        )
+
+    def test_final_welcome_post_accepts_already_known_answers(self):
+        name, born, name_q, born_q = self._synced_pair(
+            Constants.KNOWLEDGE_FLOW_WELCOME, "welcome_final"
+        )
+        reason = KnowledgeField.objects.create(
+            key="came_for", label="Reason", category="Profile", active=True
+        )
+        reason_q = self._question(
+            reason,
+            "What brought you here?",
+            flow=Constants.KNOWLEDGE_FLOW_WELCOME,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+            order=3,
+        )
+        self._clear_account()
+
+        partial = self._post_answers(
+            "welcome",
+            [(name_q, "Ada"), (born_q, "1990-01-15")],
+            complete=False,
+        )
+        self.assertEqual(partial.status_code, status.HTTP_200_OK, partial.json)
+        self.consumer_one.refresh_from_db()
+        self.consumer_one.user.refresh_from_db()
+        self.assertEqual(self.consumer_one.user.first_name, "Ada")
+        self.assertEqual(self.consumer_one.date_of_birth, date(1990, 1, 15))
+        self.assertIsNone(self.consumer_one.welcome_completed_at)
+
+        finished = self._post_answers(
+            "welcome",
+            [
+                (name_q, "Ada"),
+                (born_q, "1990-01-15"),
+                (reason_q, "Sleep"),
+            ],
+            complete=True,
+        )
+        self.assertEqual(finished.status_code, status.HTTP_200_OK, finished.json)
+        self.assertEqual(finished.json["status"]["next_step"], "initial")
+
+        self.consumer_one.refresh_from_db()
+        self.consumer_one.user.refresh_from_db()
+        self.assertIsNotNone(self.consumer_one.welcome_completed_at)
+        self.assertEqual(self.consumer_one.user.first_name, "Ada")
+        self.assertEqual(self.consumer_one.date_of_birth, date(1990, 1, 15))
+        self.assertEqual(KnowledgeEntry.current_for(self.consumer_one, name).value, "Ada")
+        self.assertEqual(
+            KnowledgeEntry.current_for(self.consumer_one, born).value, "1990-01-15"
+        )
+        self.assertEqual(
+            KnowledgeEntry.current_for(self.consumer_one, reason).value, "Sleep"
+        )
+
+        status_resp = self._get_path("/onboarding/status", self.consumer_one_access_token)
+        self.assertEqual(status_resp.status_code, status.HTTP_200_OK, status_resp.json)
+        self.assertEqual(status_resp.json["next_step"], "initial")
+
+    def test_unknown_question_id_is_still_rejected(self):
+        field = KnowledgeField.objects.create(
+            key="welcome_unknown_guard", label="Name", category="Profile", active=True
+        )
+        self._question(
+            field,
+            "Your name?",
+            flow=Constants.KNOWLEDGE_FLOW_WELCOME,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+        )
+        self._clear_account()
+
+        response = self._post(
+            "/onboarding/answers",
+            {
+                "variant": "welcome",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": "knq_not_a_real_question",
+                        "value": "Ada",
+                    }
+                ],
+            },
+            self.consumer_one_access_token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(
+            "Unknown knowledge_question_id for this variant.",
+            str(response.json),
+        )
+        self.consumer_one.refresh_from_db()
+        self.assertIsNone(self.consumer_one.welcome_completed_at)
+
+    def test_resending_a_known_answer_does_not_overwrite(self):
+        name, born, name_q, born_q = self._synced_pair(
+            Constants.KNOWLEDGE_FLOW_WELCOME, "welcome_resend"
+        )
+        reason = KnowledgeField.objects.create(
+            key="came_for_resend", label="Reason", category="Profile", active=True
+        )
+        reason_q = self._question(
+            reason,
+            "What brought you here?",
+            flow=Constants.KNOWLEDGE_FLOW_WELCOME,
+            response_type=Constants.KNOWLEDGE_RESPONSE_TYPE_TEXT,
+            order=3,
+        )
+        self._clear_account()
+
+        saved = self._post_answers(
+            "welcome",
+            [(name_q, "Ada"), (born_q, "1990-01-15")],
+            complete=False,
+        )
+        self.assertEqual(saved.status_code, status.HTTP_200_OK, saved.json)
+
+        resent = self._post_answers(
+            "welcome",
+            [(name_q, "Bea"), (born_q, "2001-02-02"), (reason_q, "Sleep")],
+            complete=True,
+        )
+        self.assertEqual(resent.status_code, status.HTTP_200_OK, resent.json)
+        self.assertEqual(
+            KnowledgeEntry.current_for(self.consumer_one, reason).value, "Sleep"
+        )
+
+        self.consumer_one.refresh_from_db()
+        self.consumer_one.user.refresh_from_db()
+        self.assertIsNotNone(self.consumer_one.welcome_completed_at)
+        self.assertEqual(self.consumer_one.user.first_name, "Ada")
+        self.assertEqual(self.consumer_one.date_of_birth, date(1990, 1, 15))
+        self.assertEqual(KnowledgeEntry.current_for(self.consumer_one, name).value, "Ada")
+        self.assertEqual(
+            KnowledgeEntry.current_for(self.consumer_one, born).value, "1990-01-15"
+        )
+        self.assertEqual(
+            KnowledgeEntry.objects.filter(consumer=self.consumer_one, field=name).count(),
+            1,
+        )
+
+    def _assert_underage_saved_nothing(self, response):
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self._detail(response), "You need to be 18 or over to use Mendreo.")
+        self.consumer_one.refresh_from_db()
+        self.consumer_one.user.refresh_from_db()
+        self.assertEqual(self.consumer_one.user.first_name, "")
+        self.assertIsNone(self.consumer_one.date_of_birth)
+        self.assertIsNone(self.consumer_one.welcome_completed_at)
+        self.assertFalse(
+            KnowledgeEntry.objects.filter(consumer=self.consumer_one).exists()
+        )
+
+    def test_under_18_rejected_for_welcome_partial_and_complete(self):
+        _, _, name_q, born_q = self._synced_pair(
+            Constants.KNOWLEDGE_FLOW_WELCOME, "welcome_underage"
+        )
+        self._clear_account()
+        answers = [(name_q, "Ada"), (born_q, "2015-06-01")]
+
+        self._assert_underage_saved_nothing(
+            self._post_answers("welcome", answers, complete=False)
+        )
+        self._assert_underage_saved_nothing(
+            self._post_answers("welcome", answers, complete=True)
+        )
+
+    def test_under_18_rejected_for_initial_return_and_refresh(self):
+        pairs = {}
+        for flow in (
+            Constants.KNOWLEDGE_FLOW_INITIAL,
+            Constants.KNOWLEDGE_FLOW_RETURN,
+            Constants.KNOWLEDGE_FLOW_REFRESH,
+        ):
+            pairs[flow] = self._synced_pair(flow, flow)
+
+        self._clear_account()
+        self.consumer_one.onboarded = False
+        self.consumer_one.welcome_completed_at = None
+        self.consumer_one.last_onboarding_flow_completed_at = None
+        self.consumer_one.save(
+            update_fields=[
+                "onboarded",
+                "welcome_completed_at",
+                "last_onboarding_flow_completed_at",
+            ]
+        )
+
+        _, _, name_q, born_q = pairs[Constants.KNOWLEDGE_FLOW_INITIAL]
+        self._assert_underage_saved_nothing(
+            self._post_answers(
+                "initial",
+                [(name_q, "Ada"), (born_q, "2015-06-01")],
+                complete=True,
+            )
+        )
+        self.consumer_one.refresh_from_db()
+        self.assertFalse(self.consumer_one.onboarded)
+
+        self.consumer_one.onboarded = True
+        self.consumer_one.save(update_fields=["onboarded"])
+        for flow in (Constants.KNOWLEDGE_FLOW_RETURN, Constants.KNOWLEDGE_FLOW_REFRESH):
+            _, _, name_q, born_q = pairs[flow]
+            self._assert_underage_saved_nothing(
+                self._post_answers(
+                    flow,
+                    [(name_q, "Ada"), (born_q, "2015-06-01")],
+                    complete=True,
+                )
+            )
+            self.consumer_one.refresh_from_db()
+            self.assertTrue(self.consumer_one.onboarded)
+            self.assertIsNone(self.consumer_one.last_onboarding_flow_completed_at)
+
+    def test_adult_date_of_birth_accepted_for_every_variant(self):
+        welcome = self._synced_pair(Constants.KNOWLEDGE_FLOW_WELCOME, "adult_welcome")
+        _, _, welcome_name_q, welcome_born_q = welcome
+        self._clear_account()
+
+        partial = self._post_answers(
+            "welcome",
+            [(welcome_name_q, "Ada"), (welcome_born_q, "1990-01-15")],
+            complete=False,
+        )
+        self.assertEqual(partial.status_code, status.HTTP_200_OK, partial.json)
+        self.consumer_one.refresh_from_db()
+        self.assertEqual(self.consumer_one.date_of_birth, date(1990, 1, 15))
+        self.assertIsNone(self.consumer_one.welcome_completed_at)
+
+        KnowledgeEntry.objects.filter(consumer=self.consumer_one).delete()
+        self._clear_account()
+        finished = self._post_answers(
+            "welcome",
+            [(welcome_name_q, "Ada"), (welcome_born_q, "1990-01-15")],
+            complete=True,
+        )
+        self.assertEqual(finished.status_code, status.HTTP_200_OK, finished.json)
+        self.consumer_one.refresh_from_db()
+        self.assertEqual(self.consumer_one.date_of_birth, date(1990, 1, 15))
+        self.assertIsNotNone(self.consumer_one.welcome_completed_at)
+
+        for question in (welcome_name_q, welcome_born_q):
+            question.active = False
+            question.save(update_fields=["active"])
+        KnowledgeEntry.objects.filter(consumer=self.consumer_one).delete()
+        self._clear_account()
+        self.consumer_one.welcome_completed_at = None
+        self.consumer_one.onboarded = False
+        self.consumer_one.save(update_fields=["welcome_completed_at", "onboarded"])
+
+        expected = {
+            "initial": date(1991, 2, 2),
+            "return": date(1992, 3, 3),
+            "refresh": date(1993, 4, 4),
+        }
+        for flow, born_on in expected.items():
+            _, _, name_q, born_q = self._synced_pair(flow, f"adult_{flow}")
+            if flow != "initial":
+                self.consumer_one.onboarded = True
+                self.consumer_one.save(update_fields=["onboarded"])
+            response = self._post_answers(
+                flow,
+                [(name_q, "Ada"), (born_q, born_on.isoformat())],
+                complete=True,
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+            self.consumer_one.refresh_from_db()
+            self.assertEqual(self.consumer_one.date_of_birth, born_on)
+            for question in (name_q, born_q):
+                question.active = False
+                question.save(update_fields=["active"])
