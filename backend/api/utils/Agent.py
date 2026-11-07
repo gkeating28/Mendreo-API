@@ -344,6 +344,8 @@ def _grounded_or_previous(candidate, previous, user_blob, keep) -> str:
 _OFFERS_TO_END = re.compile(
     r"\bready to finish\b"
     r"|\bready to wrap up\b"
+    r"|\bready to conclude\b"
+    r"|\bcompleted all the steps\b"
     r"|\bwrap(?:ping)? up (?:this|the|our) (?:exercise|session)\b"
     r"|\bwrapping up\b"
     r"|\bfinish (?:this|the|our) (?:exercise|session)\b"
@@ -413,6 +415,57 @@ def _current_step_instructions(session) -> str | None:
         getattr(step, "reference_material", None) or "",
     )
     return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def _note_reply_decisions(session, *, before, after, on_step_retried, on_step_held, exercise) -> None:
+    from ..message.turn_prompt import note_turn_decision
+    from .prompt_debug import reply_style_report
+
+    if exercise and on_step_held:
+        off_what = "The reply was replaced with the on-step fallback."
+        off_why = "The retry still left the written instructions."
+    elif exercise and on_step_retried:
+        off_what = "The reply was retried once to stay on the step."
+        off_why = "The first reply left the written instructions. The retry stayed on them."
+    elif exercise:
+        off_what = "The reply stayed on the written step."
+        off_why = "It did not start an activity the step does not name."
+    else:
+        off_what = "No off-script retry."
+        off_why = "This turn is not an exercise step."
+    note_turn_decision(
+        session,
+        {
+            "type": "off_script",
+            "fired": bool(exercise and (on_step_retried or on_step_held)),
+            "what": off_what,
+            "why": off_why,
+            "inputs": {
+                "on_step_retried": bool(on_step_retried),
+                "on_step_held": bool(on_step_held),
+            },
+        },
+    )
+    report = reply_style_report(before, after)
+    rules = list(report.get("rules") or [])
+    note_turn_decision(
+        session,
+        {
+            "type": "reply_cleaner",
+            "fired": bool(report.get("changed")),
+            "what": (
+                "The reply cleaner changed the text."
+                if report.get("changed")
+                else "The reply cleaner left the text as written."
+            ),
+            "why": (
+                "Rules that changed it: " + ", ".join(rules) + "."
+                if rules
+                else "No dash, spelling, or opening rule matched."
+            ),
+            "inputs": {"rules": rules},
+        },
+    )
 
 
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
@@ -626,6 +679,14 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     raw_reply = response_data.text
     response_data.text = normalise_reply(response_data.text)
+    _note_reply_decisions(
+        session,
+        before=raw_reply,
+        after=response_data.text,
+        on_step_retried=on_step_retried,
+        on_step_held=on_step_held,
+        exercise=bool(session.exercise_id),
+    )
     if capture_on():
         remember_reply(raw_reply, response_data.text)
         looked_up = debug_result if debug_result is not None else result
@@ -707,17 +768,20 @@ def _register_tools(agent: Agent[Dependencies, BaseModel], session=None) -> None
     # get_exercise is the general-chat catalogue tool. Inside an exercise,
     # including check-in, calling it makes Gemini fail the structured turn.
     # get_asset is only useful once a real step is underway.
+    # A chat linked to a finished run must not be offered a new start.
     in_exercise = bool(session and session.exercise_id)
     in_check_in = bool(session and session.in_pre_exercise_phase())
+    finished_run = bool(session and getattr(session, "source_run_id", None))
     if _state_machine_enabled():
         if in_exercise and not in_check_in:
             _register_get_asset(agent)
-        if not in_exercise:
+        if not in_exercise and not finished_run:
             _register_get_exercise(agent)
         return
 
     _register_get_asset(agent)
-    _register_get_exercise(agent)
+    if not finished_run:
+        _register_get_exercise(agent)
 
 
 def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
@@ -1000,6 +1064,63 @@ def style_instructions_stale(cached: str, reply_length: str, one_question: str) 
     return False
 
 
+def _source_run_background(session) -> str:
+    """Short background for a general chat opened from a finished run.
+
+    Empty unless that run has a summary. Read from the database so a cached
+    prompt cannot keep a missing or outdated copy.
+    """
+    source_id = getattr(session, "source_run_id", None)
+    if not source_id:
+        return ""
+    from ..session.models import Session as SessionModel
+
+    source = (
+        SessionModel.objects.select_related("exercise")
+        .defer("cached_prompt", "cached_prompt_meta", "history_summary")
+        .filter(id=source_id)
+        .first()
+    )
+    if source is None:
+        return ""
+    summary = source.run_summary if isinstance(source.run_summary, dict) else None
+    if not summary:
+        return ""
+    line = str(summary.get("line") or "").strip()
+    bullets = []
+    raw_bullets = summary.get("bullets") or []
+    if isinstance(raw_bullets, list):
+        for item in raw_bullets:
+            text = str(item or "").strip()
+            if text:
+                bullets.append(text)
+    if not line and not bullets:
+        return ""
+    exercise = source.exercise
+    title = (exercise.title if exercise else "") or "Exercise"
+    finished = source.completed_at or source.updated_at
+    finished_text = finished.strftime("%d %B %Y") if finished else ""
+    lines = [
+        "This is background about an exercise the user has already finished. It is not something the user said.",
+        "In your first reply, say back in two or three plain sentences what the user got from this exercise, using the background below, then ask if that feels right.",
+        "Do not offer to start, repeat, resume or begin the exercise. It is finished. After the user answers, follow their lead.",
+        "This outranks triage and get_exercise, including when the user's first message only names this exercise.",
+        f"Exercise: {title}",
+    ]
+    if finished_text:
+        lines.append(f"Finished: {finished_text}")
+    if line:
+        lines.append(line)
+    lines.extend(f"- {bullet}" for bullet in bullets)
+    return "\n".join(lines)
+
+
+def _with_source_run_background(session_context: str, source_block: str) -> str:
+    if not source_block:
+        return session_context
+    return f"{session_context}\n\n{source_block}"
+
+
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     from ..grounding.retrieval import session_retrieval_enabled
@@ -1009,6 +1130,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
     bare_opening = _session_is_bare_opening(session)
+    source_block = _source_run_background(session)
     from ..setting.models import Setting
 
     consumer = session.consumer
@@ -1075,6 +1197,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             getattr(getattr(session.consumer, "user", None), "first_name", "") or ""
         ).strip()
         stale_name = bool(first_name) and f"Name: {first_name}" not in cached
+        stale_source = (meta.get("source_run_block") or "") != source_block
         if not any((
             stale_placeholders,
             stale_click,
@@ -1090,6 +1213,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_offer,
             stale_protocol,
             stale_name,
+            stale_source,
         )):
             return cached
         session.cached_prompt = None
@@ -1196,7 +1320,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "onboarding_followup_block": format_onboarding_followup_block(session),
             "goals": bodies.get(Constants.PROMPT_KEY_GOALS, ""),
             "triage": bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
-            "session_context": render_session_context(consumer, session),
+            "session_context": _with_source_run_background(
+                render_session_context(consumer, session),
+                source_block,
+            ),
             "knowledge": render_knowledge(consumer, "general"),
         }
 
@@ -1251,6 +1378,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["state_machine"] = _state_machine_enabled()
     meta["retrieval_instruction"] = retrieval_on
     meta["bare_opening"] = bare_opening
+    meta["source_run_block"] = source_block
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(

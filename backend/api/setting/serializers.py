@@ -36,6 +36,50 @@ class SettingCreateSerializer(serializers.Serializer):
         min_value=1,
         default=Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH,
     )
+    insights_instruction = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=Constants.DEFAULT_INSIGHTS_INSTRUCTION,
+    )
+    insights_tone_guide = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=Constants.DEFAULT_INSIGHTS_TONE_GUIDE,
+    )
+    insights_enabled = serializers.BooleanField(
+        required=False,
+        default=Constants.DEFAULT_INSIGHTS_ENABLED,
+    )
+    insights_pool_cap = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_POOL_CAP,
+    )
+    insights_shown_count = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_SHOWN_COUNT,
+    )
+    insights_recent_runs = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_RECENT_RUNS,
+    )
+    insights_min_pool_before_shuffle = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+    )
+    insights_max_length = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_MAX_LENGTH,
+    )
+    insights_batch_size = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=Constants.DEFAULT_INSIGHTS_BATCH_SIZE,
+    )
     knowledge_min_confidence = serializers.FloatField(
         required=False,
         min_value=0,
@@ -44,10 +88,34 @@ class SettingCreateSerializer(serializers.Serializer):
     history_max_turns = serializers.IntegerField(required=False, min_value=1)
     session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
+    thin_answer_hint_enabled = serializers.BooleanField(required=False)
+    require_exact_yes = serializers.BooleanField(required=False)
+    ready_phrases = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=60),
+        required=False,
+        allow_empty=True,
+        max_length=30,
+    )
+    finish_phrases = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=60),
+        required=False,
+        allow_empty=True,
+        max_length=30,
+    )
     generic_answers_default = serializers.ListField(
         child=serializers.CharField(),
         required=False,
     )
+    chat_openers = serializers.ListField(
+        child=serializers.CharField(min_length=1, max_length=120),
+        required=False,
+        allow_empty=True,
+        max_length=20,
+    )
+    onboarding_copy_welcome = serializers.JSONField(required=False)
+    onboarding_copy_initial = serializers.JSONField(required=False)
+    onboarding_copy_return = serializers.JSONField(required=False)
+    onboarding_copy_refresh = serializers.JSONField(required=False)
     risk_keywords = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
@@ -74,6 +142,14 @@ class SettingCreateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         incoming = set(getattr(self, "initial_data", {}) or {})
+        if Constants.SETTING_KEY_AI_LAST_ANSWERER in incoming:
+            raise serializers.ValidationError(
+                {
+                    Constants.SETTING_KEY_AI_LAST_ANSWERER: (
+                        "This value is recorded by the server and cannot be edited."
+                    )
+                }
+            )
         blocked = [name for name in PROMPT_SETTING_FIELDS if name in incoming]
         if blocked:
             raise serializers.ValidationError(
@@ -82,7 +158,77 @@ class SettingCreateSerializer(serializers.Serializer):
                     for name in blocked
                 }
             )
+        pool_cap = self._insights_number(
+            attrs, "insights_pool_cap", Setting.get_insights_pool_cap
+        )
+        shown_count = self._insights_number(
+            attrs, "insights_shown_count", Setting.get_insights_shown_count
+        )
+        min_pool = self._insights_number(
+            attrs,
+            "insights_min_pool_before_shuffle",
+            Setting.get_insights_min_pool_before_shuffle,
+        )
+        batch_size = self._insights_number(
+            attrs, "insights_batch_size", Setting.get_insights_batch_size
+        )
+        errors = {}
+        if pool_cap < shown_count:
+            errors["insights_pool_cap"] = "Must be at least insights_shown_count."
+        if min_pool < shown_count:
+            errors["insights_min_pool_before_shuffle"] = (
+                "Must be at least insights_shown_count."
+            )
+        if batch_size > pool_cap:
+            errors["insights_batch_size"] = "Must be at most insights_pool_cap."
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
+
+    def _phrase_list(self, value):
+        from ..utils.SessionStateMachine import ready_phrase_list_error
+
+        error = ready_phrase_list_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return [phrase.strip() for phrase in value]
+
+    def validate_ready_phrases(self, value):
+        return self._phrase_list(value)
+
+    def validate_finish_phrases(self, value):
+        return self._phrase_list(value)
+
+    def validate_chat_openers(self, value):
+        seen = set()
+        for text in value:
+            if text in seen:
+                raise serializers.ValidationError("Openers must be unique.")
+            seen.add(text)
+        return value
+
+    def _validate_onboarding_copy(self, value):
+        from ..onboarding.copy import validate_copy_payload
+
+        return validate_copy_payload(value)
+
+    def validate_onboarding_copy_welcome(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_initial(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_return(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def validate_onboarding_copy_refresh(self, value):
+        return self._validate_onboarding_copy(value)
+
+    def _insights_number(self, attrs, name, getter):
+        incoming = getattr(self, "initial_data", {}) or {}
+        if name in incoming:
+            return attrs[name]
+        return getter()
 
     def create(self, validated_data):
 
@@ -115,6 +261,36 @@ class SettingCreateSerializer(serializers.Serializer):
         )
         obs_max.save()
 
+        incoming = getattr(self, "initial_data", {}) or {}
+        if "insights_enabled" in incoming:
+            insights_enabled = Setting.get_or_create_insights_enabled()
+            insights_enabled.value = str(validated_data["insights_enabled"]).lower()
+            insights_enabled.save()
+        if "insights_pool_cap" in incoming:
+            insights_pool_cap = Setting.get_or_create_insights_pool_cap()
+            insights_pool_cap.value = str(validated_data["insights_pool_cap"])
+            insights_pool_cap.save()
+        if "insights_shown_count" in incoming:
+            insights_shown_count = Setting.get_or_create_insights_shown_count()
+            insights_shown_count.value = str(validated_data["insights_shown_count"])
+            insights_shown_count.save()
+        if "insights_recent_runs" in incoming:
+            insights_recent_runs = Setting.get_or_create_insights_recent_runs()
+            insights_recent_runs.value = str(validated_data["insights_recent_runs"])
+            insights_recent_runs.save()
+        if "insights_min_pool_before_shuffle" in incoming:
+            insights_min_pool = Setting.get_or_create_insights_min_pool_before_shuffle()
+            insights_min_pool.value = str(validated_data["insights_min_pool_before_shuffle"])
+            insights_min_pool.save()
+        if "insights_max_length" in incoming:
+            insights_max_length = Setting.get_or_create_insights_max_length()
+            insights_max_length.value = str(validated_data["insights_max_length"])
+            insights_max_length.save()
+        if "insights_batch_size" in incoming:
+            insights_batch_size = Setting.get_or_create_insights_batch_size()
+            insights_batch_size.value = str(validated_data["insights_batch_size"])
+            insights_batch_size.save()
+
         if "knowledge_min_confidence" in validated_data:
             confidence = Setting.get_or_create_knowledge_min_confidence()
             confidence.value = str(validated_data["knowledge_min_confidence"])
@@ -135,10 +311,35 @@ class SettingCreateSerializer(serializers.Serializer):
             words.value = str(validated_data["thin_answer_min_words"])
             words.save()
 
+        if "thin_answer_hint_enabled" in validated_data:
+            hint = Setting.get_or_create_thin_answer_hint_enabled()
+            hint.value = str(validated_data["thin_answer_hint_enabled"]).lower()
+            hint.save()
+
+        if "require_exact_yes" in validated_data:
+            exact = Setting.get_or_create_require_exact_yes()
+            exact.value = str(validated_data["require_exact_yes"]).lower()
+            exact.save()
+
+        if "ready_phrases" in validated_data:
+            ready = Setting.get_or_create_ready_phrases()
+            ready.value = json.dumps(validated_data["ready_phrases"])
+            ready.save()
+
+        if "finish_phrases" in validated_data:
+            finish = Setting.get_or_create_finish_phrases()
+            finish.value = json.dumps(validated_data["finish_phrases"])
+            finish.save()
+
         if "generic_answers_default" in validated_data:
             generic = Setting.get_or_create_generic_answers_default()
             generic.value = json.dumps(validated_data["generic_answers_default"])
             generic.save()
+
+        if "chat_openers" in validated_data:
+            openers = Setting.get_or_create_chat_openers()
+            openers.value = json.dumps(validated_data["chat_openers"])
+            openers.save()
 
         if "risk_keywords" in validated_data:
             keywords = Setting.get_or_create_risk_keywords()
@@ -170,7 +371,6 @@ class SettingCreateSerializer(serializers.Serializer):
             exercise_retrieval.value = str(validated_data["ai_retrieval_exercise_enabled"]).lower()
             exercise_retrieval.save()
 
-        incoming = getattr(self, "initial_data", {}) or {}
         if "update_summary" in incoming:
             summary_prompt = Setting.get_or_create_update_summary()
             summary_prompt.value = validated_data.get("update_summary") or ""
@@ -241,16 +441,35 @@ class SettingCreateSerializer(serializers.Serializer):
             )
             run_max.save()
 
+        for key, variant in Constants.ONBOARDING_COPY_SETTING_KEYS.items():
+            if key not in validated_data:
+                continue
+            row = Setting.get_or_create_onboarding_copy(variant)
+            row.value = json.dumps(validated_data[key])
+            row.save()
+
         return {
             "survey_enabled": validated_data.get("survey_enabled"),
             "refresh_onboarding_cadence_days": int(cadence.value),
             "observations_enabled": obs_enabled.value == "true",
             "observations_max_length": int(obs_max.value),
+            "insights_enabled": Setting.get_insights_enabled(),
+            "insights_pool_cap": Setting.get_insights_pool_cap(),
+            "insights_shown_count": Setting.get_insights_shown_count(),
+            "insights_recent_runs": Setting.get_insights_recent_runs(),
+            "insights_min_pool_before_shuffle": Setting.get_insights_min_pool_before_shuffle(),
+            "insights_max_length": Setting.get_insights_max_length(),
+            "insights_batch_size": Setting.get_insights_batch_size(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "require_exact_yes": Setting.get_require_exact_yes(),
+            "ready_phrases": Setting.get_ready_phrases(),
+            "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
+            "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
@@ -270,4 +489,16 @@ class SettingCreateSerializer(serializers.Serializer):
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),
+            Constants.SETTING_KEY_ONBOARDING_COPY_WELCOME: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_WELCOME
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_INITIAL: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_INITIAL
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_RETURN: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_RETURN
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_REFRESH: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_REFRESH
+            ),
         }

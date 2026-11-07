@@ -9,6 +9,9 @@ ADMIN = "admin"
 USER_TYPE_CONSUMER = CONSUMER
 USER_TYPE_ADMIN = ADMIN
 
+SIGNUP_SOURCE_REGISTER = "register"
+SIGNUP_SOURCE_INVITE_CODE = "invite_code"
+
 USER_TYPES = [USER_TYPE_CONSUMER, USER_TYPE_ADMIN]
 
 USER_STATUS_ACTIVE = "active"
@@ -167,6 +170,88 @@ CHIP_READY_YES = "Yes, I'm ready"
 CHIP_NOT_YET = "Not yet"
 CHIP_FINISH = "Finish exercise"
 
+# Short agreements. Still in code: agreeing to a summary must not follow the
+# editable ready-phrase list.
+SUMMARY_AFFIRMATIONS = frozenset(
+    {
+        "yes",
+        "yes please",
+        "yeah",
+        "yep",
+        "ok",
+        "okay",
+        "sure",
+        "ready",
+        "i'm ready",
+        "i am ready",
+        "im ready",
+        "yes i'm ready",
+        "yes, i'm ready",
+        "let's go",
+        "lets go",
+    }
+)
+
+# These move a step on only before the last step, and only when they are also
+# in the editable ready-phrase list. Still in code, so the last-step exclusion
+# cannot be edited away.
+NEXT_STEP_ONLY_PHRASES = frozenset(
+    {
+        "ready for next step",
+        "ready for the next step",
+        "i'm ready for the next step",
+        "ready to continue",
+        "ready to move on",
+        "i'm ready to move on",
+        "let's continue",
+        "continue",
+        "next",
+        "next step",
+        "move on",
+    }
+)
+
+DEFAULT_READY_PHRASES = [
+    "yes",
+    "yes please",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "ready",
+    "i'm ready",
+    "i am ready",
+    "im ready",
+    "yes i'm ready",
+    "yes, i'm ready",
+    "let's go",
+    "lets go",
+    "ready for next step",
+    "ready for the next step",
+    "i'm ready for the next step",
+    "ready to continue",
+    "ready to move on",
+    "i'm ready to move on",
+    "let's continue",
+    "continue",
+    "next",
+    "next step",
+    "move on",
+]
+
+DEFAULT_FINISH_PHRASES = [
+    "ready to finish",
+    "i'm ready to finish",
+    "i am ready to finish",
+    "finish",
+    "finish the exercise",
+    "i want to finish",
+    "i want to finish the exercise",
+    "i'm ready to stop",
+    "ready to stop",
+]
+
 SUGGESTED_RESPONSES_KIND_FREE = "free"
 SUGGESTED_RESPONSES_KIND_OFFER = "offer"
 SUGGESTED_RESPONSES_KIND_READY = "ready"
@@ -203,6 +288,8 @@ PROMPT_KEY_GOALS = "goals"
 PROMPT_KEY_TRIAGE = "triage"
 PROMPT_KEY_OBSERVATIONS_INSTRUCTION = "observations_instruction"
 PROMPT_KEY_OBSERVATIONS_TONE_GUIDE = "observations_tone_guide"
+PROMPT_KEY_INSIGHTS_INSTRUCTION = "insights_instruction"
+PROMPT_KEY_INSIGHTS_TONE_GUIDE = "insights_tone_guide"
 PROMPT_KEY_RESOURCES = "resources"
 
 PROMPT_KEYS = [
@@ -211,6 +298,8 @@ PROMPT_KEYS = [
     PROMPT_KEY_TRIAGE,
     PROMPT_KEY_OBSERVATIONS_INSTRUCTION,
     PROMPT_KEY_OBSERVATIONS_TONE_GUIDE,
+    PROMPT_KEY_INSIGHTS_INSTRUCTION,
+    PROMPT_KEY_INSIGHTS_TONE_GUIDE,
     PROMPT_KEY_RESOURCES,
 ]
 
@@ -226,14 +315,21 @@ AUTHORING_TEST_IDLE_MINUTES = 120
 SETTING_KEY_AUTHORING_TEST_IDLE_MINUTES = "authoring_test_idle_minutes"
 THIN_ANSWER_MIN_WORDS = 4
 SETTING_KEY_THIN_ANSWER_MIN_WORDS = "thin_answer_min_words"
+SETTING_KEY_THIN_ANSWER_HINT_ENABLED = "thin_answer_hint_enabled"
+SETTING_KEY_REQUIRE_EXACT_YES = "require_exact_yes"
+SETTING_KEY_READY_PHRASES = "ready_phrases"
+SETTING_KEY_FINISH_PHRASES = "finish_phrases"
 THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
+SETTING_KEY_CHAT_OPENERS = "chat_openers"
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
 SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
 SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
 SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED = "ai_retrieval_exercise_enabled"
 SETTING_KEY_STORE_TURN_PROMPTS = "store_turn_prompts"
 SETTING_KEY_CHAT_DEBUG_ENABLED = "chat_debug_enabled"
+# Written by the AI worker. Not part of the settings form or GET /settings.
+SETTING_KEY_AI_LAST_ANSWERER = "ai_last_answerer"
 SETTING_KEY_RETRIEVAL_MIN_SIMILARITY = "retrieval_min_similarity"
 SETTING_KEY_RETRIEVAL_MAX_CHUNKS = "retrieval_max_chunks"
 SETTING_KEY_RETRIEVAL_MAX_TOKENS = "retrieval_max_tokens"
@@ -283,6 +379,18 @@ RETRIEVAL_MAX_TOKENS_DEFAULT = 1500
 RETRIEVAL_CONTEXT_MIN_WORDS_DEFAULT = 8
 
 DEFAULT_GENERIC_ANSWERS = ["fine", "ok", "not sure", "good", "bad"]
+DEFAULT_CHAT_OPENERS = [
+    "Hi {name}, tell me how you are feeling today.",
+    "Hi {name}, what's on your mind right now?",
+    "Hi {name}, how has your day been so far?",
+    "Good to see you, {name}. What would you like to talk about?",
+    "Hi {name}, what's been taking up space in your head lately?",
+    "Hey {name}, how are you doing today?",
+    "Hi {name}, is there anything you'd like to get off your chest?",
+    "Hi {name}, how are things with you today?",
+    "Hi {name}, what's one thing on your mind today?",
+    "Hi {name}, take a moment. How are you arriving today?",
+]
 DEFAULT_RISK_KEYWORDS = {
     "high": ["suicide", "kill myself", "end my life", "want to die"],
     "moderate": ["self-harm", "self harm", "hurt myself"],
@@ -620,6 +728,7 @@ KNOWLEDGE_VALUE_TYPES = [
 ]
 
 KNOWLEDGE_ENTRY_SOURCE_ONBOARDING = "onboarding"
+KNOWLEDGE_ENTRY_SOURCE_WELCOME = "welcome"
 KNOWLEDGE_ENTRY_SOURCE_QUESTION = "question"
 KNOWLEDGE_ENTRY_SOURCE_AI = "ai"
 KNOWLEDGE_ENTRY_SOURCE_ADMIN = "admin"
@@ -627,6 +736,7 @@ KNOWLEDGE_ENTRY_SOURCE_EXERCISE = "exercise"
 
 KNOWLEDGE_ENTRY_SOURCES = [
     KNOWLEDGE_ENTRY_SOURCE_ONBOARDING,
+    KNOWLEDGE_ENTRY_SOURCE_WELCOME,
     KNOWLEDGE_ENTRY_SOURCE_QUESTION,
     KNOWLEDGE_ENTRY_SOURCE_AI,
     KNOWLEDGE_ENTRY_SOURCE_ADMIN,
@@ -645,30 +755,66 @@ KNOWLEDGE_TRIGGERS = [
     KNOWLEDGE_TRIGGER_MANUAL_ONLY,
 ]
 
+KNOWLEDGE_FLOW_WELCOME = "welcome"
 KNOWLEDGE_FLOW_INITIAL = "initial"
 KNOWLEDGE_FLOW_RETURN = "return"
 KNOWLEDGE_FLOW_REFRESH = "refresh"
 KNOWLEDGE_FLOW_GENERAL_CHAT = "general_chat"
 
 KNOWLEDGE_FLOWS = [
+    KNOWLEDGE_FLOW_WELCOME,
     KNOWLEDGE_FLOW_INITIAL,
     KNOWLEDGE_FLOW_RETURN,
     KNOWLEDGE_FLOW_REFRESH,
     KNOWLEDGE_FLOW_GENERAL_CHAT,
 ]
 
+# Where a Knowledge Field answer is also written on the account.
+# "none" keeps the value on the Knowledge Entry only (pronouns, and anything else).
+KNOWLEDGE_SYNC_NONE = "none"
+KNOWLEDGE_SYNC_FIRST_NAME = "first_name"
+KNOWLEDGE_SYNC_LAST_NAME = "last_name"
+KNOWLEDGE_SYNC_DATE_OF_BIRTH = "date_of_birth"
+
+KNOWLEDGE_SYNC_TARGETS = [
+    KNOWLEDGE_SYNC_NONE,
+    KNOWLEDGE_SYNC_FIRST_NAME,
+    KNOWLEDGE_SYNC_LAST_NAME,
+    KNOWLEDGE_SYNC_DATE_OF_BIRTH,
+]
+
+# Welcome-flow rejection. Registration uses a different wording for the same 18+ rule.
+WELCOME_UNDERAGE_MESSAGE = "You need to be 18 or over to use Mendreo."
+
+CHIP_REPLY_MAX_LENGTH = 500
+
 # Response controls for onboarding/knowledge questions (spec §3.5)
 KNOWLEDGE_RESPONSE_TYPE_TEXT = "text"
 KNOWLEDGE_RESPONSE_TYPE_SINGLE_CHOICE = "single_choice"
 KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE = "multiple_choice"
 KNOWLEDGE_RESPONSE_TYPE_SLIDER = "slider"
+KNOWLEDGE_RESPONSE_TYPE_DATE = "date"
 
 KNOWLEDGE_RESPONSE_TYPES = [
     KNOWLEDGE_RESPONSE_TYPE_TEXT,
     KNOWLEDGE_RESPONSE_TYPE_SINGLE_CHOICE,
     KNOWLEDGE_RESPONSE_TYPE_MULTIPLE_CHOICE,
     KNOWLEDGE_RESPONSE_TYPE_SLIDER,
+    KNOWLEDGE_RESPONSE_TYPE_DATE,
 ]
+
+# One JSON settings row per onboarding variant. See onboarding/copy.py.
+SETTING_KEY_ONBOARDING_COPY_WELCOME = "onboarding_copy_welcome"
+SETTING_KEY_ONBOARDING_COPY_INITIAL = "onboarding_copy_initial"
+SETTING_KEY_ONBOARDING_COPY_RETURN = "onboarding_copy_return"
+SETTING_KEY_ONBOARDING_COPY_REFRESH = "onboarding_copy_refresh"
+
+ONBOARDING_COPY_SETTING_KEYS = {
+    SETTING_KEY_ONBOARDING_COPY_WELCOME: KNOWLEDGE_FLOW_WELCOME,
+    SETTING_KEY_ONBOARDING_COPY_INITIAL: KNOWLEDGE_FLOW_INITIAL,
+    SETTING_KEY_ONBOARDING_COPY_RETURN: KNOWLEDGE_FLOW_RETURN,
+    SETTING_KEY_ONBOARDING_COPY_REFRESH: KNOWLEDGE_FLOW_REFRESH,
+}
 
 KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 
@@ -731,6 +877,31 @@ DEFAULT_OBSERVATIONS_INSTRUCTION = (
 DEFAULT_OBSERVATIONS_TONE_GUIDE = (
     "Warm, specific, and non-judgmental. Avoid clinical jargon and scorekeeping."
 )
+DEFAULT_INSIGHTS_INSTRUCTION = (
+    "Write short, second-person conversation starters for this user, each one or two "
+    "sentences they could send as their own first message. Early on, when there are "
+    "few finished exercise runs, lean on the knowledge. As finished runs accumulate, "
+    "let those runs dominate. Never quote or allude to sensitive topics. If a starter "
+    "is about one specific run, set source_run_id to that run's id; otherwise leave "
+    "it empty. Do not repeat a topic already in the current pool."
+)
+DEFAULT_INSIGHTS_TONE_GUIDE = (
+    "Warm, specific and non-judgmental. No clinical jargon, no scorekeeping."
+)
+SETTING_KEY_INSIGHTS_ENABLED = "insights_enabled"
+SETTING_KEY_INSIGHTS_POOL_CAP = "insights_pool_cap"
+SETTING_KEY_INSIGHTS_SHOWN_COUNT = "insights_shown_count"
+SETTING_KEY_INSIGHTS_RECENT_RUNS = "insights_recent_runs"
+SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE = "insights_min_pool_before_shuffle"
+SETTING_KEY_INSIGHTS_MAX_LENGTH = "insights_max_length"
+SETTING_KEY_INSIGHTS_BATCH_SIZE = "insights_batch_size"
+DEFAULT_INSIGHTS_ENABLED = True
+DEFAULT_INSIGHTS_POOL_CAP = 12
+DEFAULT_INSIGHTS_SHOWN_COUNT = 4
+DEFAULT_INSIGHTS_RECENT_RUNS = 5
+DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE = 5
+DEFAULT_INSIGHTS_MAX_LENGTH = 24
+DEFAULT_INSIGHTS_BATCH_SIZE = 4
 
 PROGRESS_MOOD_FIELD_KEY = "mood"
 PROGRESS_STRESS_FIELD_KEY = "stress_points"

@@ -54,7 +54,8 @@ class SessionListSerializer(ListModelSerializer):
     phase = serializers.SerializerMethodField()
     pre_exercise = serializers.SerializerMethodField()
     session_state = serializers.SerializerMethodField()
-    
+    resume_dismissed = serializers.SerializerMethodField()
+
     class Meta:
         model = Session
         # Internal AI state — large blobs (100s of KB) that must never go to clients.
@@ -69,6 +70,7 @@ class SessionListSerializer(ListModelSerializer):
             "history_summary",
             "authoring_test",
             "run_summary",
+            "resume_dismissed_at",
         ]
     
     @classmethod
@@ -86,7 +88,8 @@ class SessionListSerializer(ListModelSerializer):
     @classmethod
     def get_prefetch_related_fields(cls):
         # List uses ExerciseListSerializer (no steps/questions) — do not prefetch them.
-        return []
+        # session_steps feeds session_progress without a query per row.
+        return ["session_steps"]
 
     def get_exercise(self, session):
 
@@ -120,6 +123,9 @@ class SessionListSerializer(ListModelSerializer):
             "start_button_label": label,
         }
 
+    def get_resume_dismissed(self, session):
+        return session.resume_dismissed_at is not None
+
     def get_session_state(self, session):
         from django.conf import settings
 
@@ -132,7 +138,13 @@ class SessionListSerializer(ListModelSerializer):
     def to_representation(self, instance):
         from django.conf import settings
 
+        from ..utils.session_progress import session_progress
+
         data = super().to_representation(instance)
+        progress = session_progress(instance)
+        data["completed_steps"] = progress.completed_steps
+        data["total_steps"] = progress.total_steps
+        data["current_step_no"] = progress.current_step_no
         if not getattr(settings, "AI_STATE_MACHINE_ENABLED", True):
             data.pop("session_state", None)
         request = self.context.get("request")
@@ -146,6 +158,7 @@ class SessionListSerializer(ListModelSerializer):
 class SessionStepListSerializer(ListModelSerializer):
 
     last_asset = AssetListSerializer()
+    step_no = serializers.SerializerMethodField()
 
     class Meta:
         model = SessionStep
@@ -156,7 +169,11 @@ class SessionStepListSerializer(ListModelSerializer):
             "completion_label",
             "completion_result",
             "result_confidence",
+            "step_no",
         ]
+
+    def get_step_no(self, session_step):
+        return session_step.order + 1
 
 
 class SessionDetailSerializer(SessionListSerializer):

@@ -16,6 +16,7 @@ from .services import (
 from .models import UserObservation
 from ..utils.Permissions import IsConsumerPermission
 from ..utils.Views import SmartAPIView
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -119,4 +120,111 @@ class Observation(_ProgressBase):
                 "dismissed_at": observation.dismissed_at.isoformat(),
             },
             status=status.HTTP_200_OK,
+        )
+
+
+def _insight_source(item):
+    run = item.source_run
+    if run is None:
+        return None
+    exercise = run.exercise
+    completed_at = run.completed_at.isoformat() if run.completed_at is not None else None
+    return {
+        "exercise_name": exercise.title if exercise is not None else None,
+        "completed_at": completed_at,
+    }
+
+
+def _insights_payload(consumer, force_rotate):
+    from ..setting.models import Setting
+    from .insights import next_hand
+
+    if not Setting.get_insights_enabled():
+        return {
+            "insights_enabled": False,
+            "can_refresh": False,
+            "insights": [],
+        }
+    hand = next_hand(consumer, force_rotate=force_rotate)
+    return {
+        "insights_enabled": True,
+        "can_refresh": hand.can_refresh,
+        "insights": [
+            {
+                "id": item.id,
+                "text": item.text,
+                "source_run_id": item.source_run_id,
+                "source": _insight_source(item),
+            }
+            for item in hand.items
+        ],
+    }
+
+
+def _open_insight_session(consumer, insight):
+    """General chat whose first message is Toni saying the insight."""
+    from ..message.models import Message
+    from ..participant.models import Participant
+    from ..session.models import Session
+
+    with transaction.atomic():
+        session = Session.create_general(consumer, assign_opener=False)
+        if insight.source_run_id:
+            session.source_run_id = insight.source_run_id
+            session.save(update_fields=["source_run", "updated_at"])
+
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        message = Message.objects.create(session=session, sender=agent, text=insight.text)
+        session.last_message = message
+        session.messages_no = 1
+        session.agent_messages_no = 1
+        session.save(
+            update_fields=["last_message", "messages_no", "agent_messages_no", "updated_at"]
+        )
+        return session
+
+
+class Insights(_ProgressBase):
+    def get(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(_insights_payload(consumer, force_rotate=False), status=status.HTTP_200_OK)
+
+
+class InsightsRefresh(_ProgressBase):
+    def has_permission(self, request, method):
+        return method == "POST"
+
+    def post(self, request):
+        consumer = self.get_consumer_from_request()
+        return Response(_insights_payload(consumer, force_rotate=True), status=status.HTTP_200_OK)
+
+
+class InsightsStart(_ProgressBase):
+    def has_permission(self, request, method):
+        return method == "POST"
+
+    def post(self, request, id):
+        from ..session.serializers import SessionDetailSerializer
+        from ..setting.models import Setting
+        from .models import UserInsight
+
+        if not Setting.get_insights_enabled():
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        consumer = self.get_consumer_from_request()
+        insight = UserInsight.objects.filter(
+            consumer=consumer,
+            id=id,
+            retired_at__isnull=True,
+        ).first()
+        if insight is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        session = _open_insight_session(consumer, insight)
+        session = SessionDetailSerializer.optimise(
+            type(session).objects.filter(id=session.id)
+        ).first()
+        return Response(
+            SessionDetailSerializer(session).data,
+            status=status.HTTP_201_CREATED,
         )

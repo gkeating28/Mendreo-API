@@ -105,14 +105,12 @@ class ListCreate(SmartPaginationAPIView):
         if outcome is not None:
             instance = outcome.message
             request._session_state = outcome.session_state
-        elif settings.AI_ASYNC_MESSAGES:
-            enqueue_agent_response(instance)
-            request._ai_pending = True
+            if outcome.ai_pending:
+                request._ai_pending = True
         else:
-            instance = request_agent_response(
-                user_message=instance, session=instance.session
-            )
-            instance.session.refresh_from_db()
+            instance, pending = dispatch_chat_reply(instance)
+            if pending:
+                request._ai_pending = True
 
         detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data
@@ -206,6 +204,8 @@ class MessageDebug(SmartAPIView):
 
         meta = message.session.cached_prompt_meta or {}
         history = prompt.history or []
+        from .debug_payload import hint_ladder, prompt_layers
+
         return Response(
             {
                 "message_id": message.id,
@@ -221,6 +221,9 @@ class MessageDebug(SmartAPIView):
                 "system_prompt": prompt.system_prompt,
                 "user_prompt": prompt.user_prompt,
                 "step_decision": _step_decision(message),
+                "layers": prompt_layers(prompt.system_prompt, prompt.user_prompt),
+                "hint_ladder": hint_ladder(prompt.user_prompt),
+                "decisions": list(prompt.decisions or []),
             }
         )
 
@@ -250,6 +253,21 @@ class MessagePrompt(SmartAPIView):
                 "created_at": prompt.created_at,
             }
         )
+
+
+def dispatch_chat_reply(user_message):
+    """Enqueue or run the chat model. Same branch for other and not-ready.
+
+    Returns the message the client should see, and whether it must poll.
+    An authoring test run stays in this request, the same as its other replies.
+    """
+    session = user_message.session
+    if settings.AI_ASYNC_MESSAGES and not getattr(session, "authoring_test", False):
+        enqueue_agent_response(user_message)
+        return user_message, True
+    agent_message = request_agent_response(user_message=user_message, session=session)
+    agent_message.session.refresh_from_db()
+    return agent_message, False
 
 
 def _from_suggested_response(data) -> bool:

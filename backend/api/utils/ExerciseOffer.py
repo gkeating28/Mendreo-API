@@ -21,8 +21,11 @@ def force_offer_suggested_responses(exercise, session) -> list | None:
     """Yes/No chips when Toni attaches an exercise in general chat.
 
     Decision of *whether* to attach an exercise is unchanged; this only
-    shapes the message that is persisted for the client.
+    shapes the message that is persisted for the client. A chat linked to
+    a finished run never gets that offer.
     """
+    if getattr(session, "source_run_id", None):
+        return None
     if exercise and not session.exercise_id:
         return list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES)
     return None
@@ -227,11 +230,13 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
             session.last_message = user_message
             session.messages_no += 1
             session.consumer_messages_no += 1
+            session.resume_dismissed_at = None
             session.save(
                 update_fields=[
                     "last_message",
                     "messages_no",
                     "consumer_messages_no",
+                    "resume_dismissed_at",
                     "updated_at",
                 ]
             )
@@ -253,12 +258,14 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
         session.messages_no += 2
         session.consumer_messages_no += 1
         session.agent_messages_no += 1
+        session.resume_dismissed_at = None
         session.save(
             update_fields=[
                 "last_message",
                 "messages_no",
                 "consumer_messages_no",
                 "agent_messages_no",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )

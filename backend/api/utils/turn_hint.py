@@ -40,6 +40,13 @@ LAST_STEP_HINT = (
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
 )
+NOT_READY_HINT = (
+    "The person has just said they are not ready to move on. "
+    "Reply in one or two warm sentences. "
+    "Do not move to the next step, do not ask whether they are ready again, "
+    "and do not start a new technique. "
+    "Invite them to say more about this step or tell you when they are ready."
+)
 ABOUT_THE_USER_HINT = (
     "{user_name} is asking what you know about them. "
     "Everything you know is written between the <ABOUT_CLIENT> tags below, "
@@ -140,8 +147,30 @@ def shape_chips(chips, question_kind: str):
     return kept
 
 
+def thin_answer_catalogue_text() -> str:
+    """Built-in rules text. The switch is live; a database error shows the default on."""
+    try:
+        from ..setting.models import Setting
+
+        enabled = Setting.get_thin_answer_hint_enabled()
+    except Exception:
+        enabled = True
+    state = "On" if enabled else "Off"
+    return (
+        "Thin-answer hint. turn_hint_text adds a hint for this model call only, "
+        "and only after an open question when the reply is thin.\n"
+        f"Thin-answer hint: {state}. Editable in Settings (thin_answer_hint_enabled).\n"
+        f"Follow-up hint: {FOLLOW_UP_HINT}\n"
+        f"Accept hint, after two follow-ups: {ACCEPT_HINT}"
+    )
+
+
 def turn_hint_text(previous, user_text: str) -> str | None:
     """Hint for this model call only. None unless the previous question was open."""
+    from ..setting.models import Setting
+
+    if not Setting.get_thin_answer_hint_enabled():
+        return None
     if previous is None:
         return None
     kind = normalize_question_kind(getattr(previous, "question_kind", None))
@@ -316,35 +345,172 @@ def _with_step_sequence(session, body: str) -> str:
 
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
-    return _with_step_sequence(session, _hinted_user_prompt(session, user_message))
+    hinted = _hinted_user_prompt(session, user_message)
+    final = _with_step_sequence(session, hinted)
+    _note_hint(session, user_message, final)
+    return final
+
+
+def _consume_not_ready_hint(session) -> str | None:
+    """One-shot hint stored when a not-ready reply goes to the chat model."""
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if "not_ready_hint" not in meta:
+        return None
+    hint = (meta.pop("not_ready_hint") or "").strip()
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if not hint:
+        return None
+    from ..message.turn_prompt import note_turn_decision
+
+    note_turn_decision(
+        session,
+        {
+            "type": "ready_reply",
+            "fired": False,
+            "what": "The reply was taken as not ready.",
+            "why": "The reply declines, or asks to wait.",
+            "inputs": {"verdict": "no"},
+        },
+    )
+    return hint
 
 
 def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
-    about = about_the_user_hint(session, text)
-    if about:
-        return f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
-    finish = finish_after_confirmed_summary_hint(session)
-    if finish:
-        _consume_goal_hint(session)
-        return f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
-    goal = _consume_goal_hint(session)
-    if goal:
-        return f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
-    depth = _consume_depth_hint(session)
-    if depth:
-        return f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
-    previous = (
-        Message.objects.filter(session=session, sender__agent__isnull=False)
-        .order_by("-created_at")
-        .first()
+    winner = None
+    not_ready = _consume_not_ready_hint(session)
+    about = None if not_ready else about_the_user_hint(session, text)
+    if not_ready:
+        winner = "not_ready"
+        body = f"{text}\n\n<TURN_HINT>\n{not_ready}\n</TURN_HINT>"
+    elif about:
+        winner = "about_the_user"
+        body = f"{text}\n\n<TURN_HINT>\n{about}\n</TURN_HINT>"
+    else:
+        finish = finish_after_confirmed_summary_hint(session)
+        if finish:
+            _consume_goal_hint(session)
+            winner = "finish_summary"
+            body = f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
+        else:
+            goal = _consume_goal_hint(session)
+            if goal:
+                winner = "goal"
+                body = f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
+            else:
+                depth = _consume_depth_hint(session)
+                if depth:
+                    winner = "depth"
+                    body = f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
+                else:
+                    previous = (
+                        Message.objects.filter(session=session, sender__agent__isnull=False)
+                        .order_by("-created_at")
+                        .first()
+                    )
+                    hint = turn_hint_text(previous, text)
+                    if hint:
+                        winner = "thin_answer"
+                        body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+                    else:
+                        body = text
+    _note_thin_answer(session, user_message, winner)
+    return body
+
+
+def _note_thin_answer(session, user_message, winner: str | None) -> None:
+    from ..message.turn_prompt import note_turn_decision, turn_prompts_enabled
+    from ..setting.models import Setting
+
+    if not turn_prompts_enabled():
+        return
+    if not Setting.get_thin_answer_hint_enabled():
+        note_turn_decision(
+            session,
+            {
+                "type": "thin_answer",
+                "fired": False,
+                "what": "No thin-answer hint was added.",
+                "why": "Thin-answer hint is switched off in settings.",
+                "inputs": {"thin": False},
+            },
+        )
+        return
+    text = getattr(user_message, "text", None) or ""
+    word_count = len(text.split()) if text.strip() else 0
+    min_words = Setting.get_thin_answer_min_words()
+    previous = last_agent_message(session)
+    probe_count = int(getattr(previous, "probe_count", 0) or 0) if previous is not None else 0
+    kind = normalize_question_kind(getattr(previous, "question_kind", None) if previous else None)
+    thin = bool(previous is not None and is_thin_answer(text))
+    fired = winner == "thin_answer"
+    if fired and probe_count >= 2:
+        what = "The thin-answer hint accepted the reply."
+        why = "The open question had already been followed up twice."
+    elif fired:
+        what = "The thin-answer hint asked for one follow-up."
+        why = "The previous question was open and this reply was thin."
+    elif winner:
+        what = "The thin-answer check was not used."
+        why = "An earlier hint was chosen."
+    else:
+        what = "No thin-answer hint was added."
+        why = "The previous question was not open, or the reply was not thin."
+    note_turn_decision(
+        session,
+        {
+            "type": "thin_answer",
+            "fired": fired,
+            "what": what,
+            "why": why,
+            "inputs": {
+                "word_count": word_count,
+                "min_words": min_words,
+                "probe_count": probe_count,
+                "question_kind": kind,
+                "thin": thin,
+            },
+        },
     )
-    hint = turn_hint_text(previous, text)
-    if not hint:
-        return text
-    return f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+
+
+def _note_hint(session, user_message, prompted: str) -> None:
+    from ..message.debug_payload import hint_ladder
+    from ..message.turn_prompt import note_turn_decision, turn_prompts_enabled
+
+    if not turn_prompts_enabled():
+        return
+    ladder = hint_ladder(prompted)
+    winner = ladder.get("winner")
+    sequence = "The next part is:" in (prompted or "")
+    if winner and sequence:
+        what = "A priority hint was added, then the next step line."
+        why = "The ladder chose a hint, and the step still had a next instruction."
+    elif winner:
+        what = "A priority hint was added."
+        why = next(
+            (row["reason"] for row in ladder["candidates"] if row.get("won")),
+            "A hint from the ladder was used.",
+        )
+    elif sequence:
+        what = "The next step line was added."
+        why = "No ladder hint applied, and the step still had a next instruction."
+    else:
+        what = "No turn hint was added."
+        why = "None of the ladder hints applied."
+    note_turn_decision(
+        session,
+        {
+            "type": "hint",
+            "fired": bool(winner or sequence),
+            "what": what,
+            "why": why,
+            "inputs": {"winner": winner, "sequence": sequence},
+        },
+    )
 
 
 def _consume_goal_hint(session) -> str | None:

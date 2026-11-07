@@ -28,15 +28,20 @@ class ListCreate(SmartAPIView):
         data = {}
 
         for setting in settings:
+            if setting.key == Constants.SETTING_KEY_AI_LAST_ANSWERER:
+                continue
             data[setting.key] = setting.value
 
             if setting.key in (
                 "survey_enabled",
                 "observations_enabled",
+                Constants.SETTING_KEY_INSIGHTS_ENABLED,
                 Constants.SETTING_KEY_STORE_TURN_PROMPTS,
                 Constants.SETTING_KEY_CHAT_DEBUG_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_ENABLED,
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
+                Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+                Constants.SETTING_KEY_REQUIRE_EXACT_YES,
             ):
                 data[setting.key] = setting.value.lower() == "true"
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
@@ -59,14 +64,30 @@ class ListCreate(SmartAPIView):
                         if setting.key == Constants.SETTING_KEY_THIN_ANSWER_MIN_WORDS
                         else Setting.get_session_inactivity_minutes()
                     )
+            elif setting.key == Constants.SETTING_KEY_READY_PHRASES:
+                data[setting.key] = Setting.get_ready_phrases()
+            elif setting.key == Constants.SETTING_KEY_FINISH_PHRASES:
+                data[setting.key] = Setting.get_finish_phrases()
             elif setting.key == Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT:
                 data[setting.key] = Setting.get_generic_answers_default()
+            elif setting.key == Constants.SETTING_KEY_CHAT_OPENERS:
+                data[setting.key] = Setting.get_chat_openers()
             elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
                 data[setting.key] = Setting.get_risk_keywords()
+            elif setting.key in Constants.ONBOARDING_COPY_SETTING_KEYS:
+                data[setting.key] = Setting.get_onboarding_copy(
+                    Constants.ONBOARDING_COPY_SETTING_KEYS[setting.key]
+                )
             elif setting.key in (
                 "refresh_onboarding_cadence_days",
                 "observations_max_length",
                 Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH,
+                Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+                Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+                Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+                Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+                Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+                Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
             ):
                 try:
                     data[setting.key] = int(setting.value)
@@ -75,6 +96,18 @@ class ListCreate(SmartAPIView):
                         data[setting.key] = Setting.get_refresh_onboarding_cadence_days()
                     elif setting.key == Constants.SETTING_KEY_RUN_SUMMARY_MAX_LENGTH:
                         data[setting.key] = Setting.get_run_summary_max_length()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_POOL_CAP:
+                        data[setting.key] = Setting.get_insights_pool_cap()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT:
+                        data[setting.key] = Setting.get_insights_shown_count()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS:
+                        data[setting.key] = Setting.get_insights_recent_runs()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE:
+                        data[setting.key] = Setting.get_insights_min_pool_before_shuffle()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH:
+                        data[setting.key] = Setting.get_insights_max_length()
+                    elif setting.key == Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE:
+                        data[setting.key] = Setting.get_insights_batch_size()
                     else:
                         data[setting.key] = Setting.get_observations_max_length()
 
@@ -82,11 +115,23 @@ class ListCreate(SmartAPIView):
             "refresh_onboarding_cadence_days": Setting.get_refresh_onboarding_cadence_days(),
             "observations_enabled": Setting.get_observations_enabled(),
             "observations_max_length": Setting.get_observations_max_length(),
+            "insights_enabled": Setting.get_insights_enabled(),
+            "insights_pool_cap": Setting.get_insights_pool_cap(),
+            "insights_shown_count": Setting.get_insights_shown_count(),
+            "insights_recent_runs": Setting.get_insights_recent_runs(),
+            "insights_min_pool_before_shuffle": Setting.get_insights_min_pool_before_shuffle(),
+            "insights_max_length": Setting.get_insights_max_length(),
+            "insights_batch_size": Setting.get_insights_batch_size(),
             "knowledge_min_confidence": Setting.get_knowledge_min_confidence(),
             "history_max_turns": Setting.get_history_max_turns(),
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
+            "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "require_exact_yes": Setting.get_require_exact_yes(),
+            "ready_phrases": Setting.get_ready_phrases(),
+            "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
+            "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
@@ -106,6 +151,18 @@ class ListCreate(SmartAPIView):
             "run_summary_prompt": Setting.get_run_summary_prompt(),
             "run_summary_tone_guide": Setting.get_run_summary_tone_guide(),
             "run_summary_max_length": Setting.get_run_summary_max_length(),
+            Constants.SETTING_KEY_ONBOARDING_COPY_WELCOME: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_WELCOME
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_INITIAL: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_INITIAL
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_RETURN: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_RETURN
+            ),
+            Constants.SETTING_KEY_ONBOARDING_COPY_REFRESH: Setting.get_onboarding_copy(
+                Constants.KNOWLEDGE_FLOW_REFRESH
+            ),
         }
         for key, value in defaults.items():
             data.setdefault(key, value)

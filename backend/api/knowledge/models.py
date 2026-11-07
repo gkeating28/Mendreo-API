@@ -20,6 +20,15 @@ class KnowledgeField(SmartModel):
     value_type = EnumField(options=Constants.KNOWLEDGE_VALUE_TYPES, default=Constants.KNOWLEDGE_VALUE_TYPE_TEXT)
     sensitive = models.BooleanField(default=False)
     active = models.BooleanField(default=True)
+    # Also write the account value when an answer to this field is saved.
+    # Null (rows inserted before the column existed) means "none".
+    sync_to = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        default=Constants.KNOWLEDGE_SYNC_NONE,
+        db_default=None,
+    )
 
     def __str__(self):
         return f"KnowledgeField: {self.key}"
@@ -49,6 +58,9 @@ class KnowledgeQuestion(SmartModel):
         blank=True,
         null=True,
     )
+    # {"<chip text>": {"reply": "<text>", "media": "<asset id or null>"}}
+    # Keys must match suggested_responses exactly. Null means {}.
+    chip_replies = models.JSONField(default=dict, blank=True, null=True, db_default=None)
     extraction_prompt = models.TextField(blank=True, default="")
     flows = ArrayField(
         models.CharField(max_length=255),

@@ -1,7 +1,8 @@
 """Exercise session transitions. Active only when AI_STATE_MACHINE_ENABLED is on.
 
 Code owns the step. The model reports step_goal_met and asks_readiness.
-Chip taps do not call the chat model.
+A ready or finish chip does not call the chat model. Not yet does: Toni
+answers, and the session stays on this step.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ def enabled() -> bool:
 class ChipOutcome:
     message: object
     session_state: dict
+    ai_pending: bool = False
 
 
 def phase_of(session) -> str:
@@ -47,13 +49,16 @@ def phase_of(session) -> str:
 
 
 def build_session_state(session, completion_card=None) -> dict:
+    from .session_progress import session_progress
+
+    progress = session_progress(session)
     phase = phase_of(session)
     if phase == Constants.SESSION_STATE_GENERAL:
         payload = {
             "session_id": session.id,
             "exercise_id": None,
             "phase": phase,
-            "current_step_no": None,
+            "current_step_no": progress.current_step_no,
             "steps": None,
             "pending_action": "none",
             "risk_level": session.live_risk_level or Constants.LIVE_RISK_LEVEL_NONE,
@@ -63,7 +68,7 @@ def build_session_state(session, completion_card=None) -> dict:
         return payload
 
     steps = []
-    current = session.current_step_no or 0
+    current = 0 if progress.current_step_no is None else progress.current_step_no
     for session_step in session.session_steps.select_related("step").order_by("order"):
         number = session_step.order + 1
         if session_step.completed:
@@ -167,6 +172,8 @@ def on_model_turn(session, agent_message, response) -> None:
         return
     if not getattr(session, "exercise_id", None):
         return
+    if _keep_ready_gate(session, agent_message):
+        return
 
     model_goal = bool(getattr(response, "step_goal_met", False))
     model_asks = bool(getattr(response, "asks_readiness", False))
@@ -244,42 +251,148 @@ def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | N
     ):
         return None
 
-    if text == Constants.CHIP_NOT_YET:
-        _count_user_message(session, user_message)
-        _retreat(session)
-        return ChipOutcome(user_message, build_session_state(session))
+    if _same_chip(text, Constants.CHIP_NOT_YET):
+        return _not_ready_outcome(session, user_message)
 
-    if kind == Constants.SUGGESTED_RESPONSES_KIND_READY and text == Constants.CHIP_READY_YES:
+    if kind == Constants.SUGGESTED_RESPONSES_KIND_READY and _same_chip(
+        text, Constants.CHIP_READY_YES
+    ):
         return _confirm(session, user_message)
 
-    if kind == Constants.SUGGESTED_RESPONSES_KIND_FINISH and text == Constants.CHIP_FINISH:
+    if kind == Constants.SUGGESTED_RESPONSES_KIND_FINISH and _same_chip(
+        text, Constants.CHIP_FINISH
+    ):
         return _confirm(session, user_message, finishing=True)
 
     return None
 
 
-_READY_AFFIRMATIONS = {
-    "yes",
-    "yes please",
-    "yeah",
-    "yep",
-    "ok",
-    "okay",
-    "sure",
-    "ready",
-    "i'm ready",
-    "i am ready",
-    "im ready",
-    "yes i'm ready",
-    "yes, i'm ready",
-    "let's go",
-    "lets go",
-}
+_READY_BLOCK = re.compile(
+    r"\b(?:not|no|wait|yet|later)\b|hold on|n't",
+    re.IGNORECASE,
+)
+
+
+def _ready_text(text: str) -> str:
+    """Lower case, collapsed spaces, trailing . ! and quotes removed."""
+    normalised = " ".join(
+        (text or "")
+        .strip()
+        .lower()
+        .replace("\u2019", "'")
+        .replace("\u2018", "'")
+        .split()
+    )
+    return normalised.strip("\"'\u201c\u201d").rstrip(".!").strip("\"'\u201c\u201d")
+
+
+def _phrase_set(raw) -> set[str]:
+    return {normalised for item in raw or [] if (normalised := _ready_text(str(item)))}
+
+
+def ready_phrase_list_error(phrases) -> str | None:
+    """Why a saved phrase list is rejected. None when it can be stored."""
+    if not isinstance(phrases, list) or len(phrases) > 30:
+        return "Add at most 30 phrases."
+    seen: set[str] = set()
+    for phrase in phrases:
+        if not isinstance(phrase, str):
+            return "Each phrase must be 1 to 60 characters."
+        text = phrase.strip()
+        if not text or len(text) > 60:
+            return "Each phrase must be 1 to 60 characters."
+        normalised = _ready_text(text)
+        if not normalised:
+            return "Each phrase must be 1 to 60 characters."
+        if normalised in seen:
+            return "Phrases must be unique."
+        if _READY_BLOCK.search(normalised):
+            return (
+                "A phrase cannot contain not, no, wait, yet, later, hold on, or n't."
+            )
+        seen.add(normalised)
+    return None
+
+
+def _ready_phrase_set() -> set[str]:
+    from ..setting.models import Setting
+
+    return _phrase_set(Setting.get_ready_phrases())
+
+
+def _finish_phrase_set() -> set[str]:
+    from ..setting.models import Setting
+
+    return _phrase_set(Setting.get_finish_phrases())
+
+
+def _exact_yes_required() -> bool:
+    from ..setting.models import Setting
+
+    return Setting.get_require_exact_yes()
 
 
 def is_ready_affirmation(text: str) -> bool:
-    normalized = " ".join((text or "").strip().lower().replace("\u2019", "'").split())
-    return normalized.rstrip(".!") in _READY_AFFIRMATIONS
+    """A ready-phrase that counts on every step, including the last.
+
+    Next-step wording is excluded here. It matches only through
+    is_ready_restatement, and only before the last step.
+    """
+    if "?" in (text or ""):
+        return False
+    normalised = _ready_text(text)
+    if not normalised or _READY_BLOCK.search(normalised):
+        return False
+    if normalised in Constants.NEXT_STEP_ONLY_PHRASES:
+        return False
+    return normalised in _ready_phrase_set()
+
+
+def is_ready_restatement(text, *, last_step, summary_confirmed) -> bool:
+    """Next-step wording before the last step, or finish wording after the summary.
+
+    A ready-phrase that is not next-step wording is an affirmation instead, so
+    "yes" still matches on the last step.
+    """
+    if "?" in (text or ""):
+        return False
+    normalised = _ready_text(text)
+    if not normalised or _READY_BLOCK.search(normalised):
+        return False
+    if (
+        not last_step
+        and normalised in _ready_phrase_set()
+        and normalised in Constants.NEXT_STEP_ONLY_PHRASES
+    ):
+        return True
+    return bool(
+        last_step and summary_confirmed and normalised in _finish_phrase_set()
+    )
+
+
+def _summary_confirmed(session) -> bool:
+    session_step = _live_step(session)
+    if session_step is None or getattr(session_step, "step", None) is None:
+        return False
+    from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+    done_when = getattr(session_step.step, "done_when", None) or ""
+    if not summary_confirmation_required(done_when):
+        return True
+    return summary_was_confirmed(session, session_step.step)
+
+
+def _confirm_typed_ready(session, user_message, *, last_step, summary_confirmed, extracted=None):
+    """Finish wording uses the Finish exercise chip's _confirm call."""
+    if (
+        last_step
+        and summary_confirmed
+        and _ready_text(user_message.text or "") in _finish_phrase_set()
+    ):
+        return _confirm(session, user_message, finishing=True)
+    if extracted is None:
+        return _confirm(session, user_message)
+    return _confirm(session, user_message, extracted=extracted)
 
 
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
@@ -294,7 +407,9 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
-    if not is_ready_affirmation(user_message.text or ""):
+    from .summary_confirmation import matches_summary_affirmation
+
+    if not matches_summary_affirmation(user_message.text or ""):
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
@@ -325,30 +440,127 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     return _confirm(session, user_message)
 
 
-def confirm_readiness_reply(user_message) -> ChipOutcome | None:
-    """A short yes after Toni asked to move on completes the step.
+def _judge_applies(*, last_step, summary_confirmed) -> bool:
+    """The model reads a reply only when an exact yes is not required.
 
-    The chat model does not run. Done-when and the depth check stay in place
-    for every other reply. The completion prompt still records the result.
+    On the last step that wait is the same one finish phrases use: the summary
+    has to be confirmed first.
     """
-    session = user_message.session
-    if not session.exercise_id or session.in_pre_exercise_phase():
-        return None
-    if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
-        return None
-    if not is_ready_affirmation(user_message.text or ""):
-        return None
-    session_step = _live_step(session)
-    if session_step is None or session_step.completed:
-        return None
+    if _exact_yes_required():
+        return False
+    if last_step and not summary_confirmed:
+        return False
+    return True
+
+
+def _earlier_ready_lines(session, user_message) -> str:
+    from ..message.models import Message
+
+    messages = list(
+        Message.objects.filter(session=session, created_at__lt=user_message.created_at)
+        .select_related("sender")
+        .order_by("-created_at")[:2]
+    )
+    lines = []
+    for message in reversed(messages):
+        who = "User" if getattr(message.sender, "consumer_id", None) else "Assistant"
+        text = (message.text or "").strip()
+        if text:
+            lines.append(f"{who}: {text}")
+    return "\n".join(lines)
+
+
+def _ready_verdict(session, user_message) -> str:
+    """yes, no, or other. A failed check is other, and the chat model still runs."""
+    from ..message.turn_prompt import note_turn_decision
+    from .extraction import judge_ready_reply
+
     previous = _last_agent_message(session, before=user_message)
-    if previous is None:
-        return None
+    question = (previous.text or "") if previous is not None else ""
+    try:
+        answer = judge_ready_reply(
+            question=question,
+            reply=user_message.text or "",
+            earlier=_earlier_ready_lines(session, user_message),
+        )
+    except Exception:
+        logger.exception(
+            "ready reply judgement failed for session=%s",
+            getattr(session, "id", None),
+        )
+        answer = "other"
+    if answer not in {"yes", "no", "other"}:
+        answer = "other"
+    if answer == "yes":
+        what = "The reply was taken as ready to move on."
+        why = "The reply clearly agrees to move on now."
+    elif answer == "no":
+        what = "The reply was taken as not ready."
+        why = "The reply declines, or asks to wait."
+    else:
+        what = "The reply stayed in the chat."
+        why = "The reply is not a clear agreement or refusal."
+    note_turn_decision(
+        session,
+        {
+            "type": "ready_reply",
+            "fired": answer == "yes",
+            "what": what,
+            "why": why,
+            "inputs": {"verdict": answer},
+        },
+    )
+    return answer
 
-    from .StepProgress import is_advance_gate_text
 
-    if not is_advance_gate_text(previous.text):
-        return None
+def _same_chip(text: str, chip: str) -> bool:
+    """Chip labels match with case and surrounding whitespace ignored."""
+    return " ".join((text or "").split()).casefold() == " ".join((chip or "").split()).casefold()
+
+
+def _not_ready_outcome(session, user_message) -> ChipOutcome:
+    """Stay on the ready gate, then ask Toni to answer the way a judged other does.
+
+    The session stays awaiting_ready, so the next typed reply is judged again.
+    The user message is counted here. The chat reply counts only the agent
+    message, via not_ready_user_counted, so the two are not added twice.
+    not_ready_keep_gate tells that reply to carry the same chips as the gate.
+    """
+    from .turn_hint import NOT_READY_HINT
+
+    _count_user_message(session, user_message)
+    session.cached_prompt = None
+    meta = dict(session.cached_prompt_meta or {})
+    meta["not_ready_hint"] = NOT_READY_HINT
+    meta["not_ready_user_counted"] = True
+    meta["not_ready_keep_gate"] = True
+    session.cached_prompt_meta = meta
+    session.save(
+        update_fields=[
+            "cached_prompt",
+            "cached_prompt_meta",
+            "messages_no",
+            "consumer_messages_no",
+            "last_message",
+            "resume_dismissed_at",
+            "updated_at",
+        ]
+    )
+
+    from ..message.views import dispatch_chat_reply
+
+    message, pending = dispatch_chat_reply(user_message)
+    session.refresh_from_db()
+    return ChipOutcome(message, build_session_state(session), ai_pending=pending)
+
+
+def _retreat_outcome(session, user_message) -> ChipOutcome:
+    return _not_ready_outcome(session, user_message)
+
+
+def _confirm_listed_ready(session, user_message, session_step, *, last_step, summary_confirmed, text):
+    if _ready_text(text) in _finish_phrase_set() and last_step and summary_confirmed:
+        return _confirm(session, user_message, finishing=True)
 
     from .extraction import extract_step_result
 
@@ -363,19 +575,132 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
     return _confirm(session, user_message, extracted=extracted)
 
 
-def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
-    """A typed reply while waiting for readiness does not call the chat model.
+def confirm_readiness_reply(user_message) -> ChipOutcome | None:
+    """A yes after Toni asked to move on completes the step.
 
-    A plain yes confirms the step. Anything else returns to the live step.
+    A phrase from the lists confirms without a model call. Any other reply is
+    read by the model unless an exact yes is required. A clear no stays on
+    this gate and Toni answers. Anything else stays in the chat.
+    """
+    session = user_message.session
+    if not session.exercise_id or session.in_pre_exercise_phase():
+        return None
+    if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
+        return None
+    last_step = _is_last_step(session)
+    summary_confirmed = _summary_confirmed(session) if last_step else False
+    text = user_message.text or ""
+    listed = is_ready_affirmation(text) or is_ready_restatement(
+        text, last_step=last_step, summary_confirmed=summary_confirmed
+    )
+    if not listed and not _judge_applies(
+        last_step=last_step, summary_confirmed=summary_confirmed
+    ):
+        return None
+    session_step = _live_step(session)
+    if session_step is None or session_step.completed:
+        return None
+    previous = _last_agent_message(session, before=user_message)
+    if previous is None:
+        return None
+
+    from .StepProgress import is_advance_gate_text
+
+    if not is_advance_gate_text(previous.text):
+        return None
+
+    if not listed:
+        verdict = _ready_verdict(session, user_message)
+        if verdict == "no":
+            return _retreat_outcome(session, user_message)
+        if verdict != "yes":
+            return None
+    return _confirm_listed_ready(
+        session,
+        user_message,
+        session_step,
+        last_step=last_step,
+        summary_confirmed=summary_confirmed,
+        text=text,
+    )
+
+
+def handle_typed_while_awaiting(user_message) -> ChipOutcome | None:
+    """A typed reply while waiting for readiness.
+
+    A listed phrase confirms the step and does not call a model. When an exact
+    yes is not required, the model reads anything else. yes confirms, no stays
+    on this gate and Toni answers, and other leaves the session waiting so
+    the chat model can answer. The session stays awaiting_ready on no and on
+    other, so the next typed reply is judged again.
     """
     session = user_message.session
     if session.state != Constants.SESSION_STATE_AWAITING_READY:
         return None
-    if is_ready_affirmation(user_message.text or ""):
-        return _confirm(session, user_message)
-    _count_user_message(session, user_message)
-    _retreat(session)
-    return ChipOutcome(user_message, build_session_state(session))
+    last_step = _is_last_step(session)
+    summary_confirmed = _summary_confirmed(session) if last_step else False
+    text = user_message.text or ""
+    if is_ready_affirmation(text) or is_ready_restatement(
+        text, last_step=last_step, summary_confirmed=summary_confirmed
+    ):
+        return _confirm_typed_ready(
+            session,
+            user_message,
+            last_step=last_step,
+            summary_confirmed=summary_confirmed,
+        )
+    if _judge_applies(last_step=last_step, summary_confirmed=summary_confirmed):
+        verdict = _ready_verdict(session, user_message)
+        if verdict == "yes":
+            return _confirm_typed_ready(
+                session,
+                user_message,
+                last_step=last_step,
+                summary_confirmed=summary_confirmed,
+            )
+        if verdict == "no":
+            return _retreat_outcome(session, user_message)
+        return None
+    return _retreat_outcome(session, user_message)
+
+
+def ready_gate_catalogue_text() -> str:
+    """Built-in rules text. Settings are live; a database error falls back to the seeds."""
+    try:
+        from ..setting.models import Setting
+
+        exact = Setting.get_require_exact_yes()
+        ready = list(Setting.get_ready_phrases())
+        finish = list(Setting.get_finish_phrases())
+    except Exception:
+        exact = False
+        ready = list(Constants.DEFAULT_READY_PHRASES)
+        finish = list(Constants.DEFAULT_FINISH_PHRASES)
+    exact_line = "On" if exact else "Off"
+    summary = ", ".join(sorted(Constants.SUMMARY_AFFIRMATIONS))
+    next_only = ", ".join(sorted(Constants.NEXT_STEP_ONLY_PHRASES))
+    return (
+        "Ready gate. A typed reply while the session is waiting to move on.\n"
+        f"Require an exact yes: {exact_line}. Editable in Settings (require_exact_yes).\n"
+        "Off: a reply that is not in the lists is read by the AI. "
+        "yes moves the step on, no stays on this gate and Toni answers, "
+        "other stays in the chat.\n"
+        "On: only the phrases below and the chips move a step on.\n"
+        "If both lists are empty and this is on, only the chips move the step on.\n"
+        "Next-step phrases match only before the last step. "
+        "On the last step, ready phrases still match yes and I'm ready. "
+        "Finish phrases match only after the summary was confirmed.\n"
+        f"Ready phrases, editable in Settings (ready_phrases): {', '.join(ready)}\n"
+        f"Finish phrases, editable in Settings (finish_phrases): {', '.join(finish)}\n"
+        "Next-step-only phrases, still in code (NEXT_STEP_ONLY_PHRASES): "
+        f"{next_only}\n"
+        "Summary agreement, still in code (SUMMARY_AFFIRMATIONS): "
+        f"{summary}\n"
+        "is_summary_affirmation also accepts a short start such as correct, right, "
+        "exactly, that's right, sounds good, looks good, or perfect. Still in code.\n"
+        "Chips, still in code: "
+        f"{Constants.CHIP_READY_YES}; {Constants.CHIP_NOT_YET}; {Constants.CHIP_FINISH}."
+    )
 
 
 HIDDEN_OPENER_STEP_ONE = (
@@ -456,9 +781,7 @@ def confirm_ready(session, confirm: bool):
     sender = Participant.objects.filter(session=session, consumer=session.consumer).first()
     user_message = Message.objects.create(session=session, sender=sender, text=text)
     if not confirm:
-        _count_user_message(session, user_message)
-        _retreat(session)
-        return ChipOutcome(user_message, build_session_state(session))
+        return _not_ready_outcome(session, user_message)
     return _confirm(session, user_message)
 
 
@@ -574,6 +897,7 @@ def _confirm(
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )
@@ -598,6 +922,7 @@ def _confirm(
                 "messages_no",
                 "consumer_messages_no",
                 "last_message",
+                "resume_dismissed_at",
                 "updated_at",
             ]
         )
@@ -852,6 +1177,25 @@ def _retreat(session) -> None:
     )
 
 
+def _keep_ready_gate(session, agent_message) -> bool:
+    """Put the gate chips on Toni's not-ready reply and leave the gate open.
+
+    The flag is set by _not_ready_outcome and consumed once, when this reply
+    is saved. A step that has already moved on is left where it is.
+    """
+    meta = dict(session.cached_prompt_meta or {})
+    if not meta.pop("not_ready_keep_gate", False):
+        return False
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if session.state != Constants.SESSION_STATE_AWAITING_READY:
+        return True
+    session_step = _live_step(session)
+    if agent_message is not None and session_step is not None:
+        _enter_awaiting_ready(session, agent_message, session_step)
+    return True
+
+
 def _enter_awaiting_ready(session, agent_message, session_step) -> None:
     last = _is_last_step(session)
     if last:
@@ -905,3 +1249,4 @@ def _count_user_message(session, user_message) -> None:
     session.messages_no = (session.messages_no or 0) + 1
     session.consumer_messages_no = (session.consumer_messages_no or 0) + 1
     session.last_message = user_message
+    session.resume_dismissed_at = None

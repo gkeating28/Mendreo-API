@@ -182,10 +182,9 @@ def dob_validation(serializer, date_of_birth):
     if not date_of_birth:
         return date_of_birth
 
-    today = datetime.datetime.today()
-    threshold = datetime.date(today.year - Constants.CONSUMER_MINIMUM_AGE, date_of_birth.month, date_of_birth.day)
+    from .age import meets_minimum_age
 
-    if date_of_birth > threshold:
+    if not meets_minimum_age(date_of_birth):
         raise serializer.raise_validation_error(
             "date_of_birth", f"must be at least {Constants.CONSUMER_MINIMUM_AGE}"
         )

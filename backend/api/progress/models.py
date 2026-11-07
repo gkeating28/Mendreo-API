@@ -47,6 +47,65 @@ class UserObservation(SmartModel):
         )
 
 
+class UserInsight(SmartModel):
+    """One conversation starter in a consumer's insight pool."""
+
+    id = CharIDField(primary_key=True, prefix="uins_")
+
+    consumer = models.ForeignKey(
+        Consumer,
+        related_name="insights",
+        on_delete=models.CASCADE,
+    )
+    text = models.TextField()
+    topic_key = models.CharField(max_length=255)
+    source_run = models.ForeignKey(
+        "api.Session",
+        related_name="sourced_insights",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    generated_at = models.DateTimeField()
+    last_shown_at = models.DateTimeField(blank=True, null=True)
+    show_count = models.PositiveIntegerField(default=0)
+    in_hand = models.BooleanField(default=False)
+    retired_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["consumer", "generated_at"], name="api_uins_cons_gen_idx"),
+            models.Index(fields=["consumer", "last_shown_at"], name="api_uins_cons_shown_idx"),
+            models.Index(fields=["consumer", "in_hand"], name="api_uins_cons_hand_idx"),
+        ]
+
+    def __str__(self):
+        return f"UserInsight: {self.id}"
+
+    def get_permission_key(self):
+        return "sessions"
+
+
+class UserInsightCursor(SmartModel):
+    """Last source fingerprint checked for a consumer. One row per consumer."""
+
+    id = CharIDField(primary_key=True, prefix="uicur_")
+
+    consumer = models.OneToOneField(
+        Consumer,
+        related_name="insight_cursor",
+        on_delete=models.CASCADE,
+    )
+    source_fingerprint = models.CharField(max_length=64)
+    checked_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"UserInsightCursor: {self.id}"
+
+    def get_permission_key(self):
+        return "sessions"
+
+
 class ScaleSubmission(SmartModel):
     """
     One completed psychological scale for a consumer on a calendar day.

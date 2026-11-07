@@ -339,6 +339,82 @@ def generate_user_observation(consumer_id):
 
 
 @shared_task(
+    base=PeriodicTask,
+    run_every=crontab(minute=0, hour=2),  # 2:00 AM
+    name="generate_user_insights",
+    ignore_result=True,
+)
+def generate_user_insights():
+    """Fan-out overnight insight generation for active consumers."""
+    from .consumer.models import Consumer
+    from .setting.models import Setting
+
+    if not Setting.get_insights_enabled():
+        logger.info("generate_user_insights skipped — insights disabled")
+        return
+
+    since = timezone.now() - timedelta(days=30)
+    consumer_ids = set(
+        Consumer.objects.filter(sessions__created_at__gte=since)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    consumer_ids.update(
+        Consumer.objects.filter(knowledge_entries__created_at__gte=since)
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+
+    # Eager mode runs the child in this process. Calling delay() from inside
+    # the parent task breaks that path, so run the body directly and keep going
+    # when one consumer fails. A real worker still queues one task each.
+    eager = getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False)
+    for consumer_id in consumer_ids:
+        if eager:
+            try:
+                generate_user_insight.run(consumer_id)
+            except Exception as exc:
+                logger.warning(
+                    "generate_user_insights failed for %s (%s)",
+                    consumer_id,
+                    type(exc).__name__,
+                )
+        else:
+            generate_user_insight.delay_on_commit(consumer_id)
+
+    logger.info("generate_user_insights queued %s consumers", len(consumer_ids))
+
+
+@shared_task(
+    name="generate_user_insight",
+    ignore_result=True,
+    base=TransactionAwareTask,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def generate_user_insight(consumer_id):
+    from .consumer.models import Consumer
+    from .progress.insights import generate_insights_for_consumer
+
+    logger.info("Start > generate_user_insight %s", consumer_id)
+    consumer = Consumer.objects.filter(pk=consumer_id).first()
+    if not consumer:
+        logger.warning("generate_user_insight: consumer %s not found", consumer_id)
+        return
+    try:
+        result = generate_insights_for_consumer(consumer)
+    except Exception as exc:
+        logger.warning(
+            "generate_user_insight failed for %s (%s)",
+            consumer_id,
+            type(exc).__name__,
+        )
+        return
+    logger.info("End > generate_user_insight %s -> %s", consumer_id, result)
+    return result
+
+
+@shared_task(
     name="classify_onboarding_followups",
     ignore_result=True,
     base=TransactionAwareTask,

@@ -11,6 +11,7 @@ from .views import (
     Summary,
     Today,
     CloseSession,
+    DismissResume,
     FormAnswers,
 )
 
@@ -22,6 +23,7 @@ urlpatterns = [
     path('/<str:id>/ready', Ready.as_view()),
     path('/<str:id>/finish', Finish.as_view()),
     path('/<str:id>/close', CloseSession.as_view()),
+    path('/<str:id>/dismiss-resume', DismissResume.as_view()),
     path('/<str:id>/form-answers', FormAnswers.as_view()),
     path('/<str:id>', Detail.as_view()),
     path('/<str:id>/summary', Summary.as_view())

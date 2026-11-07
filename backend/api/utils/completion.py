@@ -35,6 +35,40 @@ _QA_COMMAND_TEXTS = {
 }
 
 
+_TRAILING_CHIP_PHRASES = (
+    "yes, i'm ready",
+    "not yet",
+    "finish exercise",
+)
+
+
+def strip_trailing_readiness_phrase(value: Optional[str]) -> Optional[str]:
+    """Drop a readiness chip tacked onto the end of a real finding."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    previous = None
+    while text and text != previous:
+        previous = text
+        normalised = text.replace("\u2019", "'").replace("\u2018", "'").strip()
+        lower = normalised.lower()
+        cut = None
+        for phrase in _TRAILING_CHIP_PHRASES:
+            for suffix in (phrase + ".", phrase + "!", phrase):
+                if not lower.endswith(suffix):
+                    continue
+                start = len(normalised) - len(suffix)
+                if start == 0 or normalised[start - 1].isspace():
+                    cut = start
+                    break
+            if cut is not None:
+                break
+        if cut is None:
+            break
+        text = normalised[:cut].rstrip(" \t;,-:")
+    return text or None
+
+
 def is_usable_completion_result(value: Optional[str]) -> bool:
     """True when the model (or a user turn) is a real captured answer, not a placeholder."""
     text = (value or "").strip()

@@ -50,10 +50,22 @@ class Setting(SmartModel):
         Setting.get_or_create_refresh_onboarding_cadence_days()
         Setting.get_or_create_observations_enabled()
         Setting.get_or_create_observations_max_length()
+        Setting.get_or_create_insights_enabled()
+        Setting.get_or_create_insights_pool_cap()
+        Setting.get_or_create_insights_shown_count()
+        Setting.get_or_create_insights_recent_runs()
+        Setting.get_or_create_insights_min_pool_before_shuffle()
+        Setting.get_or_create_insights_max_length()
+        Setting.get_or_create_insights_batch_size()
         Setting.get_or_create_knowledge_min_confidence()
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
+        Setting.get_or_create_thin_answer_hint_enabled()
+        Setting.get_or_create_require_exact_yes()
+        Setting.get_or_create_ready_phrases()
+        Setting.get_or_create_finish_phrases()
         Setting.get_or_create_generic_answers_default()
+        Setting.get_or_create_chat_openers()
         Setting.get_or_create_risk_keywords()
         Setting.get_or_create_trust_and_safety_email()
         Setting.get_or_create_ai_retrieval_enabled()
@@ -77,6 +89,13 @@ class Setting(SmartModel):
         Setting.get_or_create_run_summary_prompt()
         Setting.get_or_create_run_summary_tone_guide()
         Setting.get_or_create_run_summary_max_length()
+        for variant in (
+            Constants.KNOWLEDGE_FLOW_WELCOME,
+            Constants.KNOWLEDGE_FLOW_INITIAL,
+            Constants.KNOWLEDGE_FLOW_RETURN,
+            Constants.KNOWLEDGE_FLOW_REFRESH,
+        ):
+            Setting.get_or_create_onboarding_copy(variant)
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -294,6 +313,70 @@ class Setting(SmartModel):
             return Constants.THIN_ANSWER_MIN_WORDS
 
     @staticmethod
+    def get_or_create_thin_answer_hint_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+            defaults={"value": "true"},
+        )
+        return setting
+
+    @staticmethod
+    def get_thin_answer_hint_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
+            Setting.get_or_create_thin_answer_hint_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_require_exact_yes():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+            defaults={"value": "false"},
+        )
+        return setting
+
+    @staticmethod
+    def get_require_exact_yes() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+            Setting.get_or_create_require_exact_yes,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_ready_phrases():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_READY_PHRASES,
+            defaults={"value": json.dumps(Constants.DEFAULT_READY_PHRASES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_ready_phrases() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_READY_PHRASES,
+            Setting.get_or_create_ready_phrases,
+        )
+        return _json_list(raw, Constants.DEFAULT_READY_PHRASES)
+
+    @staticmethod
+    def get_or_create_finish_phrases():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_FINISH_PHRASES,
+            defaults={"value": json.dumps(Constants.DEFAULT_FINISH_PHRASES)},
+        )
+        return setting
+
+    @staticmethod
+    def get_finish_phrases() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_FINISH_PHRASES,
+            Setting.get_or_create_finish_phrases,
+        )
+        return _json_list(raw, Constants.DEFAULT_FINISH_PHRASES)
+
+    @staticmethod
     def get_or_create_generic_answers_default():
         setting, _ = Setting.objects.get_or_create(
             key=Constants.SETTING_KEY_GENERIC_ANSWERS_DEFAULT,
@@ -308,6 +391,22 @@ class Setting(SmartModel):
             Setting.get_or_create_generic_answers_default,
         )
         return _json_list(raw, Constants.DEFAULT_GENERIC_ANSWERS)
+
+    @staticmethod
+    def get_or_create_chat_openers():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_CHAT_OPENERS,
+            defaults={"value": json.dumps(Constants.DEFAULT_CHAT_OPENERS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_chat_openers() -> list:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_CHAT_OPENERS,
+            Setting.get_or_create_chat_openers,
+        )
+        return _json_list(raw, Constants.DEFAULT_CHAT_OPENERS)
 
     @staticmethod
     def get_or_create_risk_keywords():
@@ -499,6 +598,136 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.DEFAULT_OBSERVATIONS_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_insights_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_ENABLED,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_ENABLED).lower()},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_enabled() -> bool:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_ENABLED,
+            Setting.get_or_create_insights_enabled,
+        )
+        return str(raw).lower() == "true"
+
+    @staticmethod
+    def get_or_create_insights_pool_cap():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_POOL_CAP)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_pool_cap() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_POOL_CAP,
+            Setting.get_or_create_insights_pool_cap,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_POOL_CAP
+
+    @staticmethod
+    def get_or_create_insights_shown_count():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_SHOWN_COUNT)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_shown_count() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_SHOWN_COUNT,
+            Setting.get_or_create_insights_shown_count,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_SHOWN_COUNT
+
+    @staticmethod
+    def get_or_create_insights_recent_runs():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_RECENT_RUNS)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_recent_runs() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_RECENT_RUNS,
+            Setting.get_or_create_insights_recent_runs,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_RECENT_RUNS
+
+    @staticmethod
+    def get_or_create_insights_min_pool_before_shuffle():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_min_pool_before_shuffle() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE,
+            Setting.get_or_create_insights_min_pool_before_shuffle,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_MIN_POOL_BEFORE_SHUFFLE
+
+    @staticmethod
+    def get_or_create_insights_max_length():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_MAX_LENGTH)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_max_length() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_MAX_LENGTH,
+            Setting.get_or_create_insights_max_length,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_insights_batch_size():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
+            defaults={"value": str(Constants.DEFAULT_INSIGHTS_BATCH_SIZE)},
+        )
+        return setting
+
+    @staticmethod
+    def get_insights_batch_size() -> int:
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_INSIGHTS_BATCH_SIZE,
+            Setting.get_or_create_insights_batch_size,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return Constants.DEFAULT_INSIGHTS_BATCH_SIZE
 
     @staticmethod
     def get_or_create_update_summary():
@@ -738,6 +967,18 @@ class Setting(SmartModel):
             return max(1, int(raw))
         except (TypeError, ValueError):
             return Constants.DEFAULT_RUN_SUMMARY_MAX_LENGTH
+
+    @staticmethod
+    def get_or_create_onboarding_copy(variant: str):
+        from ..onboarding.copy import get_or_create_onboarding_copy
+
+        return get_or_create_onboarding_copy(variant)
+
+    @staticmethod
+    def get_onboarding_copy(variant: str) -> dict:
+        from ..onboarding.copy import get_onboarding_copy
+
+        return get_onboarding_copy(variant)
 
     @staticmethod
     def _cached_value(key: str, loader):

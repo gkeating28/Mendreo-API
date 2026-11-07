@@ -81,13 +81,35 @@ def augment_user_prompt(session, user_message, prompted_text: str) -> str:
     session._pending_retrieval = None
     session._retrieval_skipped = ""
     if not session_retrieval_enabled(session):
+        _note_retrieval(
+            session,
+            fired=False,
+            what="Retrieval did not run.",
+            why="Retrieval is off for this session.",
+            inputs={"retrieval_enabled": False},
+        )
         return prompted_text
     text = getattr(user_message, "text", None) or ""
-    if _skip(text):
+    skipped = _skip_reason(text)
+    if skipped:
+        _note_retrieval(
+            session,
+            fired=False,
+            what="Retrieval was skipped.",
+            why=skipped,
+            inputs={},
+        )
         return prompted_text
     if asks_about_user(text):
         session._pending_retrieval = []
         session._retrieval_skipped = Constants.RETRIEVAL_SKIP_ABOUT_USER
+        _note_retrieval(
+            session,
+            fired=False,
+            what="Retrieval was skipped.",
+            why="The message asks what Toni knows about the user.",
+            inputs={"skipped": Constants.RETRIEVAL_SKIP_ABOUT_USER},
+        )
         return prompted_text
     try:
         selected, _below = search_chunks(_query(session, text), session.exercise_id)
@@ -96,11 +118,25 @@ def augment_user_prompt(session, user_message, prompted_text: str) -> str:
             "retrieval failed for session=%s",
             getattr(session, "id", None),
         )
+        _note_retrieval(
+            session,
+            fired=False,
+            what="Retrieval did not run.",
+            why="The library search failed.",
+            inputs={},
+        )
         return prompted_text
     if not selected:
         session._pending_retrieval = None
+        _note_retrieval(
+            session,
+            fired=False,
+            what="Retrieval did not run.",
+            why="No library chunk was close enough.",
+            inputs={},
+        )
         return prompted_text
-    session._pending_retrieval = [
+    chunks = [
         {
             "chunk_id": item["chunk_id"],
             "source_id": item["source_id"],
@@ -109,6 +145,14 @@ def augment_user_prompt(session, user_message, prompted_text: str) -> str:
         }
         for item in selected
     ]
+    session._pending_retrieval = chunks
+    _note_retrieval(
+        session,
+        fired=True,
+        what=f"Attached {len(chunks)} library chunk(s).",
+        why="They were within the similarity and size limits.",
+        inputs={"chunks": chunks},
+    )
     return f"{render_retrieved_block(selected)}\n\n{prompted_text}"
 
 
@@ -182,12 +226,35 @@ def asks_about_user(text: str) -> bool:
 
 
 def _skip(text: str) -> bool:
+    return _skip_reason(text) is not None
+
+
+def _skip_reason(text: str) -> str | None:
     stripped = (text or "").strip()
     if not stripped:
-        return True
-    if stripped in _CHIPS or _BEGIN_STEP.match(stripped) or _STEP_OPEN.match(stripped):
-        return True
-    return risk_prescreen(stripped) == Constants.LIVE_RISK_LEVEL_HIGH
+        return "The message was empty."
+    if stripped in _CHIPS:
+        return "The message is a chip."
+    if _BEGIN_STEP.match(stripped) or _STEP_OPEN.match(stripped):
+        return "The message opens a step."
+    if risk_prescreen(stripped) == Constants.LIVE_RISK_LEVEL_HIGH:
+        return "The message was screened as high risk."
+    return None
+
+
+def _note_retrieval(session, *, fired: bool, what: str, why: str, inputs: dict) -> None:
+    from ..message.turn_prompt import note_turn_decision
+
+    note_turn_decision(
+        session,
+        {
+            "type": "retrieval",
+            "fired": fired,
+            "what": what,
+            "why": why,
+            "inputs": inputs,
+        },
+    )
 
 
 def _query(session, text: str) -> str:

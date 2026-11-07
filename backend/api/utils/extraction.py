@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from . import Constants
 from .AI import AI
+from .completion import is_usable_completion_result, strip_trailing_readiness_phrase
 
 
 class _Extraction(BaseModel):
     value: str = Field(description="The user's result for this step, in their words")
     confidence: float = Field(description="Confidence from 0 to 1")
+
+
+logger = logging.getLogger(__name__)
+
+
+class _ReadyVerdict(BaseModel):
+    answer: Literal["yes", "no", "other"] = Field(
+        description=(
+            "yes only for a clear agreement to move on now. "
+            "no for a decline, a wait, or not being ready. "
+            "other for a question, new information, something emotional, "
+            "an unrelated message, or anything ambiguous."
+        )
+    )
 
 
 class _GoalCheck(BaseModel):
@@ -31,6 +49,36 @@ def _as_bool(value) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return str(value or "").strip().lower() in {"true", "yes", "y", "1"}
+
+
+def judge_ready_reply(*, question: str, reply: str, earlier: str) -> str:
+    """yes, no, or other. Errors and invalid answers are other."""
+    try:
+        data = AI.ask(
+            (
+                "You are judging one reply to a readiness question in an exercise.\n"
+                "Answer yes only if the user clearly agrees to move on now.\n"
+                "Answer no if they decline, want to wait, or are not ready.\n"
+                "Answer other for a question, new information, something emotional, "
+                "an unrelated message, or anything ambiguous.\n"
+                "Prefer other when unsure.\n\n"
+                "Earlier messages:\n"
+                f"{earlier or '(none)'}\n\n"
+                "Readiness question:\n"
+                f"{question or '(none)'}\n\n"
+                "User reply:\n"
+                f"{reply}"
+            ),
+            _ReadyVerdict,
+            temperature=0.1,
+        )
+    except Exception:
+        logger.exception("ready reply judgement failed")
+        return "other"
+    answer = str((data or {}).get("answer") or "").strip().lower()
+    if answer not in {"yes", "no", "other"}:
+        return "other"
+    return answer
 
 
 def check_done_when(session, step) -> dict | None:
@@ -89,7 +137,9 @@ def extract_step_result(session, step) -> dict | None:
         _Extraction,
         temperature=0.1,
     )
-    value = (data.get("value") or "").strip() or None
+    value = strip_trailing_readiness_phrase((data.get("value") or "").strip())
+    if not getattr(step, "result_field_id", None) and not is_usable_completion_result(value):
+        value = None
     try:
         confidence = float(data.get("confidence") or 0)
     except (TypeError, ValueError):

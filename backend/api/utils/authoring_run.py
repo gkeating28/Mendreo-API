@@ -179,7 +179,6 @@ def post_authoring_message(session, text, from_suggested_response):
         confirm_readiness_reply,
         consume_chip,
         handle_typed_while_awaiting,
-        is_ready_affirmation,
     )
     from .prompt_debug import capture, finish_debug
 
@@ -195,14 +194,21 @@ def post_authoring_message(session, text, from_suggested_response):
         raise ValueError("This test run has no participant.")
 
     awaiting = session.state == Constants.SESSION_STATE_AWAITING_READY
+    step_no_before = session.current_step_no or 0
     refused = False
     with capture() as cap:
         user_message = Message.objects.create(session=session, sender=sender, text=text)
         outcome = consume_chip(user_message, from_suggested_response)
         if outcome is None and not from_suggested_response:
             outcome = handle_typed_while_awaiting(user_message)
-            if outcome is not None and awaiting and not is_ready_affirmation(text):
-                refused = True
+            # A retreat stays on this step. A confirm moves on or completes.
+            # A judged yes is accepted even though the words are not in the list.
+            if outcome is not None and awaiting:
+                advanced = session.state == Constants.SESSION_STATE_COMPLETED or (
+                    (session.current_step_no or 0) > step_no_before
+                )
+                if not advanced:
+                    refused = True
         if outcome is None:
             outcome = confirm_readiness_reply(user_message)
 

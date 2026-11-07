@@ -11,6 +11,12 @@ from ..utils.Serializers import (
 
 
 class KnowledgeFieldCreateSerializer(CreateModelSerializer):
+    sync_to = serializers.ChoiceField(
+        choices=Constants.KNOWLEDGE_SYNC_TARGETS,
+        required=False,
+        default=Constants.KNOWLEDGE_SYNC_NONE,
+    )
+
     class Meta:
         model = KnowledgeField
         fields = [
@@ -20,6 +26,7 @@ class KnowledgeFieldCreateSerializer(CreateModelSerializer):
             "value_type",
             "sensitive",
             "active",
+            "sync_to",
         ]
 
     def validate_key(self, value):
@@ -32,6 +39,11 @@ class KnowledgeFieldCreateSerializer(CreateModelSerializer):
 
 
 class KnowledgeFieldEditSerializer(EditModelSerializer):
+    sync_to = serializers.ChoiceField(
+        choices=Constants.KNOWLEDGE_SYNC_TARGETS,
+        required=False,
+    )
+
     class Meta:
         model = KnowledgeField
         fields = [
@@ -40,6 +52,7 @@ class KnowledgeFieldEditSerializer(EditModelSerializer):
             "value_type",
             "sensitive",
             "active",
+            "sync_to",
         ]
 
 
@@ -54,9 +67,16 @@ class KnowledgeFieldListSerializer(ListModelSerializer):
             "value_type",
             "sensitive",
             "active",
+            "sync_to",
             "created_at",
             "updated_at",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not data.get("sync_to"):
+            data["sync_to"] = Constants.KNOWLEDGE_SYNC_NONE
+        return data
 
 
 class KnowledgeFieldDetailSerializer(KnowledgeFieldListSerializer):
@@ -66,7 +86,22 @@ class KnowledgeFieldDetailSerializer(KnowledgeFieldListSerializer):
 class KnowledgeFieldBriefSerializer(ListModelSerializer):
     class Meta:
         model = KnowledgeField
-        fields = ["id", "key", "label", "category", "value_type", "sensitive", "active"]
+        fields = [
+            "id",
+            "key",
+            "label",
+            "category",
+            "value_type",
+            "sensitive",
+            "active",
+            "sync_to",
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not data.get("sync_to"):
+            data["sync_to"] = Constants.KNOWLEDGE_SYNC_NONE
+        return data
 
 
 def _normalize_order_by_flow(order_by_flow):
@@ -169,12 +204,82 @@ def response_control_validation(attrs, instance=None):
     return attrs
 
 
+def _image_asset_exists(asset_id: str) -> bool:
+    from ..asset.models import Asset
+
+    return Asset.objects.filter(id=asset_id, image__isnull=False).exists()
+
+
+def _clean_chip_replies(chip_replies, suggested) -> dict:
+    """Reject keys that are not an exact suggested_responses entry.
+
+    Orphaned keys left behind by an edit of suggested_responses are dropped
+    by the edit serializer when chip_replies itself is not in the payload.
+    A payload that includes chip_replies is rejected instead of trimmed.
+    """
+    if chip_replies in (None, {}):
+        return {}
+    if not isinstance(chip_replies, dict):
+        raise serializers.ValidationError(
+            {"chip_replies": "Must be an object keyed by chip text."}
+        )
+
+    allowed = list(suggested or [])
+    cleaned = {}
+    for key, raw in chip_replies.items():
+        if not isinstance(key, str) or key not in allowed:
+            raise serializers.ValidationError(
+                {
+                    "chip_replies": (
+                        f"'{key}' must match an entry in suggested_responses exactly."
+                    )
+                }
+            )
+        if not isinstance(raw, dict):
+            raise serializers.ValidationError(
+                {"chip_replies": f"'{key}' must be an object with reply and media."}
+            )
+        unknown = set(raw) - {"reply", "media"}
+        if unknown:
+            raise serializers.ValidationError(
+                {"chip_replies": f"'{key}' has unknown field(s): {', '.join(sorted(unknown))}."}
+            )
+        reply = raw.get("reply", "")
+        if not isinstance(reply, str):
+            raise serializers.ValidationError(
+                {"chip_replies": f"Reply for '{key}' must be a string."}
+            )
+        if len(reply) > Constants.CHIP_REPLY_MAX_LENGTH:
+            raise serializers.ValidationError(
+                {
+                    "chip_replies": (
+                        f"Reply for '{key}' must be "
+                        f"{Constants.CHIP_REPLY_MAX_LENGTH} characters or fewer."
+                    )
+                }
+            )
+        media = raw.get("media", None)
+        if media in ("", None):
+            media = None
+        elif not isinstance(media, str) or not _image_asset_exists(media):
+            raise serializers.ValidationError(
+                {
+                    "chip_replies": (
+                        f"Media for '{key}' must be an existing image asset."
+                    )
+                }
+            )
+        cleaned[key] = {"reply": reply, "media": media}
+    return cleaned
+
+
 class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
     suggested_responses = serializers.ListField(
         child=serializers.CharField(),
         required=False,
         allow_null=True,
     )
+    chip_replies = serializers.JSONField(required=False)
     flows = serializers.ListField(
         child=serializers.ChoiceField(choices=Constants.KNOWLEDGE_FLOWS),
         required=False,
@@ -200,6 +305,7 @@ class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
             "trigger",
             "trigger_config",
             "suggested_responses",
+            "chip_replies",
             "extraction_prompt",
             "flows",
             "order_by_flow",
@@ -234,6 +340,10 @@ class KnowledgeQuestionCreateSerializer(CreateModelSerializer):
             attrs["order_by_flow"] = _normalize_order_by_flow(attrs.get("order_by_flow"))
 
         attrs = response_control_validation(attrs)
+        attrs["chip_replies"] = _clean_chip_replies(
+            attrs.get("chip_replies") or {},
+            attrs.get("suggested_responses") or [],
+        )
 
         last = KnowledgeQuestion.objects.order_by("-order").first()
         if "order" not in attrs or attrs.get("order") is None:
@@ -248,6 +358,7 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
         required=False,
         allow_null=True,
     )
+    chip_replies = serializers.JSONField(required=False)
     flows = serializers.ListField(
         child=serializers.ChoiceField(choices=Constants.KNOWLEDGE_FLOWS),
         required=False,
@@ -273,6 +384,7 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
             "trigger",
             "trigger_config",
             "suggested_responses",
+            "chip_replies",
             "extraction_prompt",
             "flows",
             "order_by_flow",
@@ -309,6 +421,19 @@ class KnowledgeQuestionEditSerializer(EditModelSerializer):
             attrs["order_by_flow"] = _normalize_order_by_flow(attrs.get("order_by_flow"))
 
         attrs = response_control_validation(attrs, instance=self.instance)
+        suggested = attrs.get("suggested_responses", self.instance.suggested_responses) or []
+        if "chip_replies" in attrs:
+            attrs["chip_replies"] = _clean_chip_replies(
+                attrs.get("chip_replies") or {}, suggested
+            )
+        elif "suggested_responses" in attrs:
+            # Drop replies for chips that are no longer offered.
+            existing = self.instance.chip_replies
+            if not isinstance(existing, dict):
+                existing = {}
+            attrs["chip_replies"] = {
+                key: value for key, value in existing.items() if key in suggested
+            }
 
         return attrs
 
@@ -326,6 +451,7 @@ class KnowledgeQuestionListSerializer(ListModelSerializer):
             "trigger",
             "trigger_config",
             "suggested_responses",
+            "chip_replies",
             "extraction_prompt",
             "flows",
             "order_by_flow",
@@ -340,6 +466,12 @@ class KnowledgeQuestionListSerializer(ListModelSerializer):
             "updated_at",
             "entry_count",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not isinstance(data.get("chip_replies"), dict):
+            data["chip_replies"] = {}
+        return data
 
     @staticmethod
     def optimise(queryset):

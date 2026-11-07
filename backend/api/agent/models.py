@@ -254,14 +254,18 @@ class Agent(SmartModel):
             retrieval=retrieval,
             retrieval_skipped=skipped,
         )
-        from ..message.turn_prompt import save_pending_turn_prompt
+        from ..message.turn_prompt import record_step_decision, save_pending_turn_prompt
 
         save_pending_turn_prompt(session, agent_message)
 
         if session.exercise_id:
             from ..utils.SessionStateMachine import on_model_turn
+            from ..utils.SuggestedResponses import apply_midstep_yes_no_chips
 
             on_model_turn(session, agent_message, response)
+            apply_midstep_yes_no_chips(agent_message)
+
+        record_step_decision(agent_message)
 
         if followup.decline_after_agent:
             from ..knowledge.followup import decline_onboarding_followup

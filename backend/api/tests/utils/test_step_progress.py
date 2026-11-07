@@ -13,6 +13,14 @@ class AdvanceGateTests(SimpleTestCase):
         self.assertTrue(is_advance_gate_text("Are you ready to move on?"))
         self.assertTrue(is_advance_gate_text("Shall we move on to the next step?"))
         self.assertTrue(is_advance_gate_text("Are you ready to see your summary?"))
+        self.assertTrue(is_advance_gate_text("Are you ready to conclude?"))
+        self.assertTrue(is_advance_gate_text("Are you ready to wrap up?"))
+        self.assertTrue(is_advance_gate_text("Are you ready to end?"))
+        self.assertTrue(is_advance_gate_text("Are you ready for the next step?"))
+        self.assertTrue(
+            is_advance_gate_text("Are you ready to conclude our exercise for today?")
+        )
+        self.assertFalse(is_advance_gate_text("Are you ready for next step?"))
         self.assertTrue(
             is_advance_gate_text(
                 "How do you think all or nothing thinking might have affected your thought? "

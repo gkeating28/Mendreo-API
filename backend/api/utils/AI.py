@@ -52,7 +52,9 @@ class AI:
         """
 
         def _run(provider) -> dict:
-            pydantic_model, model_settings = build_pydantic_model(provider, model)
+            pydantic_model, model_settings = build_pydantic_model(
+                provider, model, restore_part_spacing=True
+            )
             agent_kwargs = {"output_type": schema}
             merged = dict(model_settings or {})
             merged["temperature"] = temperature
@@ -61,9 +63,11 @@ class AI:
             agent: Agent = Agent(pydantic_model, **agent_kwargs)
             result = agent.run_sync(user_prompt=prompt)
             output = result.output
+            from .provider_text import repair_wrapped_words
+
             if isinstance(output, BaseModel):
-                return output.model_dump()
-            return dict(output)
+                return repair_wrapped_words(output.model_dump())
+            return repair_wrapped_words(dict(output))
 
         data, provider = run_with_failover(_run, model_name=model)
         from .prompt_debug import note_provider

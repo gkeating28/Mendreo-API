@@ -102,13 +102,24 @@ def generate_random_number(length):
     return int(''.join([str(random.randint(1, 9)) for _ in range(length)]))
 
 
+def _deliverable(address) -> bool:
+    # .invalid is reserved (RFC 2606) and is the invite-code placeholder domain.
+    return not str(address).strip().lower().endswith(".invalid")
+
+
 def _recipients(to) -> list:
     if isinstance(to, str):
-        return [to]
-    return list(to)
+        raw = [to]
+    else:
+        raw = list(to)
+    return [address for address in raw if _deliverable(address)]
 
 
 def _send_email(mail: dict):
+    recipients = _recipients(mail["to"])
+    if not recipients:
+        return
+
     # Set at send time so an empty key fails here, the same way an empty
     # SendGrid key failed inside SendGrid.send, and not at import.
     resend.api_key = Api.RESEND_API_KEY or ""
@@ -116,7 +127,7 @@ def _send_email(mail: dict):
     try:
         resend.Emails.send({
             "from": mail["from"],
-            "to": _recipients(mail["to"]),
+            "to": recipients,
             "subject": mail["subject"],
             "html": mail["html"],
         })

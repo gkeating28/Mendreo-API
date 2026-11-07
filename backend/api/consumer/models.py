@@ -20,6 +20,24 @@ class Consumer(SmartModel):
 
     onboarded = models.BooleanField(default=False)
 
+    # How the account was created. Nullable with a database default so the
+    # current main branch, which does not know this column, can still insert
+    # consumers on the shared dev database.
+    signup_source = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        default="register",
+        db_default="register",
+    )
+
+    # Set when the welcome flow is submitted complete. Null means "not submitted".
+    # No active welcome questions (or all skipped as already known) counts as
+    # complete without writing this timestamp.
+    welcome_completed_at = models.DateTimeField(
+        null=True, blank=True, default=None, db_default=None
+    )
+
     surveyed = models.BooleanField(default=False)
 
     # Last completed Initial / Return / Refresh onboarding flow (V2 Slice D).

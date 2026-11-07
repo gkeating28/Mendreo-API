@@ -27,6 +27,7 @@ from ..package.serializers import (
 
 from ..utils.Views import SmartAPIView
 from ..utils.Permissions import IsConsumerPermission
+from ..utils.deployment import allows_dev_controls
 
 from ..utils import Constants, Api, QueryParams, Subscription as SubscriptionUtils
 
@@ -171,11 +172,19 @@ class OnboardingComplete(SmartAPIView):
 
 
 class OnboardingRestart(SmartAPIView):
-    """Testing shortcut: clear onboarding so the initial flow can be re-run."""
+    """Testing shortcut: clear onboarding so the initial flow can be re-run.
+
+    Open only for local and worker targets (see allows_dev_controls). Every
+    other DEPLOYMENT_TARGET, including an unexpected value, is a 404. The
+    chat debug setting does not open this endpoint.
+    """
 
     permission_classes = [IsConsumerPermission]
 
     def post(self, request):
+        if not allows_dev_controls():
+            return self.not_found()
+
         consumer = self.get_consumer_from_request()
         return Response(restart_onboarding(consumer), status=status.HTTP_200_OK)
 

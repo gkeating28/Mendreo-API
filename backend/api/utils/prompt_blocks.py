@@ -463,6 +463,10 @@ def _fallback_body(key: str) -> str:
         return Constants.DEFAULT_OBSERVATIONS_INSTRUCTION
     if key == Constants.PROMPT_KEY_OBSERVATIONS_TONE_GUIDE:
         return Constants.DEFAULT_OBSERVATIONS_TONE_GUIDE
+    if key == Constants.PROMPT_KEY_INSIGHTS_INSTRUCTION:
+        return Constants.DEFAULT_INSIGHTS_INSTRUCTION
+    if key == Constants.PROMPT_KEY_INSIGHTS_TONE_GUIDE:
+        return Constants.DEFAULT_INSIGHTS_TONE_GUIDE
     if key == Constants.PROMPT_KEY_RESOURCES:
         import json
         return json.dumps(Constants.DEFAULT_RESOURCES)
@@ -477,6 +481,22 @@ def _active_prompt_rows() -> dict:
     for row in rows:
         chosen.setdefault(row.key, row)
     return chosen
+
+
+def ensure_initial_prompt_version(key: str) -> None:
+    """Create active version 1 from the fallback body when the key has no rows."""
+    from ..prompt.models import PromptVersion
+
+    if PromptVersion.objects.filter(key=key).exists():
+        return
+    PromptVersion.objects.get_or_create(
+        key=key,
+        version=1,
+        defaults={
+            "body": _fallback_body(key),
+            "active": True,
+        },
+    )
 
 
 def ensure_prompt_versions() -> dict:

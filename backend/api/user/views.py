@@ -281,6 +281,9 @@ class RequestVerifyEmail(SmartAPIView):
 
         check_if_user_active(user)
 
+        if user.email_verified or str(user.email).lower().endswith(".invalid"):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
         if not can_send_verification_code(user):
             return Response(
                 {"error": "Please wait 5 minutes between requests for a new code"},
@@ -424,6 +427,12 @@ def get_detailed(user):
 def check_if_user_active(user):
     if user.deleted_at is not None or user.status != Constants.USER_STATUS_ACTIVE:
         raise PermissionDenied("Your account is no longer active")
+
+    from ..invite.access import invite_access_detail
+
+    detail = invite_access_detail(user)
+    if detail:
+        raise PermissionDenied(detail)
 
 
 def can_send_verification_code(user):

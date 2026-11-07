@@ -86,7 +86,25 @@ class List(SmartPaginationAPIView):
         if not self.has_permission(request, "POST"):
             return self.get_permission_denied_response(request, "POST")
 
-        session = Session.create_general(self.get_consumer_from_request())
+        consumer = self.get_consumer_from_request()
+        run_id = ""
+        if isinstance(request.data, dict):
+            run_id = str(request.data.get("runId") or "").strip()
+        source_run = None
+        if run_id:
+            from ..run.services import completed_runs_queryset
+
+            source_run = completed_runs_queryset(consumer).filter(id=run_id).first()
+            if source_run is None:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        session = Session.create_general(consumer, assign_opener=source_run is None)
+        if source_run is not None:
+            session.source_run = source_run
+            session.save(update_fields=["source_run", "updated_at"])
         session = SessionDetailSerializer.optimise(
             Session.objects.filter(id=session.id)
         ).first()
@@ -216,8 +234,36 @@ class Ready(SmartAPIView):
             outcome = confirm_ready(session, confirm)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        user_text = Constants.CHIP_READY_YES if confirm else Constants.CHIP_NOT_YET
-        return _transition_response(session, outcome, user_text)
+        if not confirm:
+            return _chat_reply_response(outcome)
+        return _transition_response(session, outcome, Constants.CHIP_READY_YES)
+
+    def has_permission(self, request, method):
+        return method == "POST"
+
+
+class DismissResume(SmartAPIView):
+    """POST /sessions/<id>/dismiss-resume. Hide the resume card only.
+
+    The run stays in progress. updated_at is left alone so library order,
+    which sorts on that column, does not change.
+    """
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        consumer = self.get_consumer_from_request()
+        session = get_object_or_404(Session, id=id, consumer=consumer)
+        if session.exercise_id is None or session.completed or session.abandoned:
+            return Response(
+                {"detail": "Resume can only be dismissed for an exercise in progress."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        Session.objects.filter(pk=session.pk).update(resume_dismissed_at=timezone.now())
+        session = SessionDetailSerializer.optimise(
+            Session.objects.filter(id=session.id)
+        ).first()
+        return Response(SessionDetailSerializer(session).data, status=status.HTTP_200_OK)
 
     def has_permission(self, request, method):
         return method == "POST"
@@ -314,6 +360,17 @@ def _complete_check_in(session, summary):
     messages = [greeting] if greeting is not None else []
     payload["messages"] = _message_payloads(messages)
     return Response(payload, status=status.HTTP_200_OK)
+
+
+def _chat_reply_response(outcome):
+    """Same body as POST /messages when the chat model still has to answer."""
+    from ..message.serializers import MessageDetailSerializer
+
+    data = dict(MessageDetailSerializer(outcome.message).data)
+    data["session_state"] = outcome.session_state
+    if outcome.ai_pending:
+        data["ai_pending"] = True
+    return Response(data, status=status.HTTP_201_CREATED)
 
 
 def _transition_response(session, outcome, user_text):

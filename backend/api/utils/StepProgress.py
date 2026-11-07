@@ -16,6 +16,10 @@ _GATE = re.compile(
     r"|ready to move on"
     r"|ready to (?:see|review|look at) (?:your |the )?summary"
     r"|ready to finish"
+    r"|ready to conclude"
+    r"|ready to wrap up"
+    r"|ready to end"
+    r"|ready for the next step"
     r")",
     re.IGNORECASE,
 )
