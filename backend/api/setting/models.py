@@ -67,6 +67,7 @@ class Setting(SmartModel):
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_chat_openers()
         Setting.get_or_create_risk_keywords()
+        Setting.get_or_create_high_risk_copy()
         Setting.get_or_create_trust_and_safety_email()
         Setting.get_or_create_ai_retrieval_enabled()
         Setting.get_or_create_ai_retrieval_exercise_enabled()
@@ -429,6 +430,18 @@ class Setting(SmartModel):
         if not isinstance(parsed, dict):
             return dict(Constants.DEFAULT_RISK_KEYWORDS)
         return parsed
+
+    @staticmethod
+    def get_or_create_high_risk_copy():
+        from ..utils.high_risk_copy import get_or_create_high_risk_copy
+
+        return get_or_create_high_risk_copy()
+
+    @staticmethod
+    def get_high_risk_copy() -> dict:
+        from ..utils.high_risk_copy import get_high_risk_copy
+
+        return get_high_risk_copy()
 
     @staticmethod
     def get_or_create_trust_and_safety_email():

@@ -175,7 +175,7 @@ class Session(SmartModel):
                 completed=False,
                 abandoned=False,
                 authoring_test=False,
-            )
+            ).exclude(close_reason=Constants.CLOSE_REASON_HIGH_RISK)
             if force_new:
                 paused.update(abandoned=True)
             else:
@@ -190,6 +190,8 @@ class Session(SmartModel):
                 created_at__gte=start,
                 created_at__lt=end,
                 authoring_test=False,
+            ).exclude(
+                close_reason=Constants.CLOSE_REASON_HIGH_RISK
             ).order_by("-created_at").first()
 
             if session and not session.completed:

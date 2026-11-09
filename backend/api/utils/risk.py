@@ -3,8 +3,39 @@
 from __future__ import annotations
 
 import json
+import re
+
+from django.utils import timezone
 
 from . import Constants
+
+# A phrase is ignored when one of these sits within this many words before it.
+# "dont" / "didnt" / "wouldnt" are the same words without an apostrophe.
+_NEGATION_WINDOW_WORDS = 4
+_NEGATIONS = (
+    "do not",
+    "no longer",
+    "don't",
+    "dont",
+    "didn't",
+    "didnt",
+    "wouldn't",
+    "wouldnt",
+    "never",
+    "not",
+)
+_NEGATION_RES = tuple(
+    re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)") for phrase in _NEGATIONS
+)
+_APOSTROPHES = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201b": "'",
+        "\u02bc": "'",
+        "\u2032": "'",
+    }
+)
 
 _RANK = {
     Constants.LIVE_RISK_LEVEL_NONE: 0,
@@ -16,9 +47,24 @@ _RANK = {
 
 def normalize_risk_level(value) -> str:
     text = (value or "").strip().lower()
+    # The close-rating schema still says "critical". On a live turn that is high.
+    if text == Constants.RISK_LEVEL_CRITICAL:
+        return Constants.LIVE_RISK_LEVEL_HIGH
     if text in _RANK:
         return text
     return Constants.LIVE_RISK_LEVEL_NONE
+
+
+def _normalise_risk_text(text: str) -> str:
+    cleaned = (text or "").translate(_APOSTROPHES).casefold()
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _negated_before(haystack: str, start: int) -> bool:
+    window = " ".join(haystack[:start].split()[-_NEGATION_WINDOW_WORDS:])
+    if not window:
+        return False
+    return any(pattern.search(window) for pattern in _NEGATION_RES)
 
 
 def max_risk_level(left: str, right: str) -> str:
@@ -28,10 +74,16 @@ def max_risk_level(left: str, right: str) -> str:
 
 
 def risk_prescreen(text: str) -> str:
-    """Highest level whose keyword appears in the user's text."""
+    """Highest level whose phrase appears as whole words in the user's text.
+
+    Curly apostrophes and extra spaces are normalised. A match is ignored when
+    a negation sits within about four words before the phrase, so "I don't
+    want to die" does not match "want to die". "I want to diet" does not match
+    either: the phrase has to end on a word boundary.
+    """
     from ..setting.models import Setting
 
-    haystack = (text or "").casefold()
+    haystack = _normalise_risk_text(text)
     if not haystack:
         return Constants.LIVE_RISK_LEVEL_NONE
 
@@ -43,10 +95,37 @@ def risk_prescreen(text: str) -> str:
         Constants.LIVE_RISK_LEVEL_HIGH,
     ):
         for phrase in keywords.get(level) or []:
-            needle = str(phrase or "").strip().casefold()
-            if needle and needle in haystack:
-                matched = max_risk_level(matched, level)
+            needle = _normalise_risk_text(str(phrase or ""))
+            if not needle:
+                continue
+            pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
+            for found in pattern.finditer(haystack):
+                if not _negated_before(haystack, found.start()):
+                    matched = max_risk_level(matched, level)
+                    break
     return matched
+
+
+def _close_for_high_risk(session) -> None:
+    """Stamp the close and the support-modal flag. Does not rate the session."""
+    if getattr(session, "authoring_test", False):
+        return
+
+    updates = []
+    if session.close_reason != Constants.CLOSE_REASON_HIGH_RISK:
+        session.close_reason = Constants.CLOSE_REASON_HIGH_RISK
+        updates.append("close_reason")
+    if not session.closed_at:
+        session.closed_at = timezone.now()
+        updates.append("closed_at")
+    if updates:
+        updates.append("updated_at")
+        session.save(update_fields=updates)
+
+    consumer = getattr(session, "consumer", None)
+    if consumer is not None and not consumer.crisis_notice_pending:
+        consumer.crisis_notice_pending = True
+        consumer.save(update_fields=["crisis_notice_pending", "updated_at"])
 
 
 def apply_turn_risk(session, user_text: str, model_level) -> dict | None:
@@ -62,10 +141,12 @@ def apply_turn_risk(session, user_text: str, model_level) -> dict | None:
     if level in (Constants.LIVE_RISK_LEVEL_MODERATE, Constants.LIVE_RISK_LEVEL_HIGH):
         resources = resources_payload(session)
 
+    session._turn_risk_level = level
     if level == Constants.LIVE_RISK_LEVEL_HIGH and not getattr(session, "authoring_test", False):
         from ..tasks import notify_trust_and_safety
 
         notify_trust_and_safety.delay_on_commit(session.id)
+        _close_for_high_risk(session)
 
     return resources
 

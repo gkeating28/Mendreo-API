@@ -46,6 +46,14 @@ class Dependencies:
     matched_exercise: Optional[Exercise] = None
 
 
+# Shared by GeneralResponse and ExerciseStateResponse (the subclass inherits it).
+OWN_RISK_LEVEL_DESCRIPTION = (
+    "The user's own risk in this message. One of none, low, moderate, high. "
+    "Talk about another person, the past, fiction, news, or something they read "
+    "is none, unless they also express their own risk."
+)
+
+
 class GeneralResponse(BaseModel):
     text: str = Field(
       description=(
@@ -58,7 +66,7 @@ class GeneralResponse(BaseModel):
     )
     risk_level: str = Field(
         default="none",
-        description="One of none, low, moderate, high. none when there is no safety concern.",
+        description=OWN_RISK_LEVEL_DESCRIPTION,
     )
     question_kind: str = Field(
         default="none",
@@ -95,7 +103,12 @@ class GeneralResponse(BaseModel):
 
 
 class ExerciseStateResponse(GeneralResponse):
-    """Exercise schema used when the state machine flag is on."""
+    """Exercise schema used when the state machine flag is on.
+
+    risk_level is the inherited GeneralResponse field: the user's own risk
+    in this message. Talk about someone else, the past, fiction, news, or
+    something they read stays none unless they also express their own risk.
+    """
 
     step_goal_met: bool = Field(
         default=False,

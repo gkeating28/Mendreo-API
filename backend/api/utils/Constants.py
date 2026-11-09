@@ -151,6 +151,10 @@ LIVE_RISK_LEVELS = [
     LIVE_RISK_LEVEL_HIGH,
 ]
 
+# Stamped without the rating pass. Resume and POST /messages treat it as closed.
+CLOSE_REASON_HIGH_RISK = "high_risk"
+HIGH_RISK_CLOSED_CODE = "high_risk_closed"
+
 SESSION_STATE_GENERAL = "general"
 SESSION_STATE_CHECK_IN = "check_in"
 SESSION_STATE_STEP_ACTIVE = "step_active"
@@ -323,6 +327,7 @@ THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
 SETTING_KEY_CHAT_OPENERS = "chat_openers"
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
+SETTING_KEY_HIGH_RISK_COPY = "high_risk_copy"
 SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"
 SETTING_KEY_AI_RETRIEVAL_ENABLED = "ai_retrieval_enabled"
 SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED = "ai_retrieval_exercise_enabled"
@@ -391,10 +396,36 @@ DEFAULT_CHAT_OPENERS = [
     "Hi {name}, what's one thing on your mind today?",
     "Hi {name}, take a moment. How are you arriving today?",
 ]
+# High is only unambiguous first-person phrases. Topic words stay on low,
+# which does not attach a card, close the chat, or flag the person.
+# Moderate is first-person but not a statement of wanting to die.
+# "hurting myself" is left on low with "hurt myself": the same words describe
+# an injury ("I was hurting myself playing football").
 DEFAULT_RISK_KEYWORDS = {
-    "high": ["suicide", "kill myself", "end my life", "want to die"],
-    "moderate": ["self-harm", "self harm", "hurt myself"],
-    "low": [],
+    "high": [
+        "kill myself",
+        "killing myself",
+        "end my life",
+        "ending my life",
+        "take my own life",
+        "taking my own life",
+        "want to die",
+        "wanna die",
+        "wish I was dead",
+    ],
+    "moderate": [
+        "harm myself",
+        "harming myself",
+        "cut myself",
+        "cutting myself",
+    ],
+    "low": [
+        "suicide",
+        "suicidal",
+        "self-harm",
+        "self harm",
+        "hurt myself",
+    ],
 }
 DEFAULT_RESOURCES = {
     "title": "Support is available",

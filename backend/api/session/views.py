@@ -17,7 +17,7 @@ from .serializers import SessionDetailSerializer, SessionListSerializer
 
 from ..exercise_summary.models import Exercise, ExerciseSummary
 
-from ..utils import DateUtils, QueryParams
+from ..utils import Constants, DateUtils, QueryParams
 from ..utils.Permissions import (
     IsConsumerPermission,
     IsAdminPermission,
@@ -63,7 +63,7 @@ class List(SmartPaginationAPIView):
             # Library resume dialog: active exercise runs only, most recently updated first.
             queryset = queryset.filter(exercise__isnull=False, abandoned=False).exclude(
                 completed=True
-            )
+            ).exclude(close_reason=Constants.CLOSE_REASON_HIGH_RISK)
             self.paginator.ordering = ["-updated_at", "-id"]
             queryset = queryset.order_by("-updated_at", "-id")
 
@@ -130,7 +130,7 @@ class Today(SmartAPIView):
             consumer=consumer,
             exercise__isnull=True,
             authoring_test=False,
-        )
+        ).exclude(close_reason=Constants.CLOSE_REASON_HIGH_RISK)
         queryset = SessionDetailSerializer.optimise(queryset)
         session = queryset.first()
 

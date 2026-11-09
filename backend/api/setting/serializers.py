@@ -117,6 +117,7 @@ class SettingCreateSerializer(serializers.Serializer):
     onboarding_copy_return = serializers.JSONField(required=False)
     onboarding_copy_refresh = serializers.JSONField(required=False)
     risk_keywords = serializers.JSONField(required=False)
+    high_risk_copy = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
     chat_debug_enabled = serializers.BooleanField(required=False)
@@ -223,6 +224,11 @@ class SettingCreateSerializer(serializers.Serializer):
 
     def validate_onboarding_copy_refresh(self, value):
         return self._validate_onboarding_copy(value)
+
+    def validate_high_risk_copy(self, value):
+        from ..utils.high_risk_copy import validate_high_risk_copy
+
+        return validate_high_risk_copy(value)
 
     def _insights_number(self, attrs, name, getter):
         incoming = getattr(self, "initial_data", {}) or {}
@@ -345,6 +351,11 @@ class SettingCreateSerializer(serializers.Serializer):
             keywords = Setting.get_or_create_risk_keywords()
             keywords.value = json.dumps(validated_data["risk_keywords"])
             keywords.save()
+
+        if "high_risk_copy" in validated_data:
+            copy = Setting.get_or_create_high_risk_copy()
+            copy.value = json.dumps(validated_data["high_risk_copy"])
+            copy.save()
 
         if "trust_and_safety_email" in validated_data:
             address = Setting.get_or_create_trust_and_safety_email()
@@ -471,6 +482,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
             "risk_keywords": Setting.get_risk_keywords(),
+            "high_risk_copy": Setting.get_high_risk_copy(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
             "chat_debug_enabled": Setting.get_chat_debug_enabled(),
