@@ -1255,12 +1255,157 @@ class CustomLlmTests(TestCase):
                 .order_by("created_at")
                 .values_list("text", flat=True)
             ),
-            ["Good to hear.", "Tell me about the weekend."],
+            ["Tell me about the weekend."],
         )
+        replaced = Message.all_objects.get(session=self.session, text="Good to hear.")
+        self.assertIsNotNone(replaced.deleted_at)
         self.session.refresh_from_db()
         self.assertEqual(self.session.consumer_messages_no, consumer_before + 1)
         self.assertEqual(self.session.agent_messages_no, agent_before + 2)
         self.assertEqual(self.session.messages_no, messages_before + 3)
+
+    def _history_texts(self, history):
+        texts = []
+        for item in history:
+            for part in getattr(item, "parts", []) or []:
+                content = getattr(part, "content", None)
+                if isinstance(content, str):
+                    texts.append(content)
+        return texts
+
+    def test_continuation_drops_the_unspoken_reply_and_keeps_earlier_turns(self):
+        from ...utils.history import build_history
+
+        user_participant = Participant.objects.filter(
+            session=self.session, consumer=self.consumer
+        ).first()
+        agent_participant = Participant.objects.filter(
+            session=self.session, agent=self.consumer.agent
+        ).first()
+        conversation = f"grant:{self.grant.id}"
+        Message.objects.create(
+            session=self.session,
+            sender=user_participant,
+            text="How was your morning?",
+            voice_conversation_id=conversation,
+            voice_turn_index=0,
+        )
+        Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text="Quiet, until the school run.",
+            voice_conversation_id=conversation,
+            voice_turn_index=1,
+        )
+        short = "I still make the time."
+        longer = "I still make the time. I think it's important."
+        Message.objects.create(
+            session=self.session,
+            sender=user_participant,
+            text=short,
+            voice_conversation_id=conversation,
+            voice_turn_index=2,
+        )
+        Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text="That is worth keeping.",
+            voice_conversation_id=conversation,
+            voice_turn_index=3,
+        )
+        captured = {}
+
+        def record_history(session, consumer_message):
+            captured["text"] = consumer_message.text
+            captured["history"] = build_history(
+                session, exclude_message_id=consumer_message.id
+            )
+            return (
+                GeneralResponse(
+                    text="What makes it important?",
+                    reasoning="r",
+                    suggested_responses=[],
+                ),
+                {},
+                None,
+                None,
+            )
+
+        with mock.patch("api.utils.Agent.get_response", side_effect=record_history):
+            response = self._post_completions(self._payload(user_text=longer))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+
+        self.assertEqual(captured["text"], longer)
+        history_texts = self._history_texts(captured["history"])
+        self.assertIn("Quiet, until the school run.", history_texts)
+        self.assertNotIn("That is worth keeping.", history_texts)
+        self.assertIn("What makes it important?", _sse_contents(body))
+        self.assertEqual(
+            list(
+                Message.objects.filter(
+                    session=self.session, sender__agent=self.consumer.agent
+                ).values_list("text", flat=True)
+            ),
+            ["Quiet, until the school run.", "What makes it important?"],
+        )
+        replaced = Message.all_objects.get(
+            session=self.session, text="That is worth keeping."
+        )
+        self.assertIsNotNone(replaced.deleted_at)
+
+    def test_continuation_still_drops_its_reply_when_a_newer_user_row_lands(self):
+        user_participant = Participant.objects.filter(
+            session=self.session, consumer=self.consumer
+        ).first()
+        agent_participant = Participant.objects.filter(
+            session=self.session, agent=self.consumer.agent
+        ).first()
+        conversation = f"grant:{self.grant.id}"
+        short = "I'm doing good"
+        longer = "I'm doing good, I had a good weekend"
+        self._open_voice_user_message(short)
+        Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text="Good to hear.",
+            voice_conversation_id=conversation,
+            voice_turn_index=1,
+        )
+
+        def land_a_newer_user_row(session, consumer_message):
+            Message.objects.create(
+                session=session,
+                sender=user_participant,
+                text="What should I do about work tomorrow?",
+                voice_conversation_id=conversation,
+                voice_turn_index=2,
+            )
+            return (
+                GeneralResponse(text="Should be dropped", reasoning="r", suggested_responses=[]),
+                {},
+                None,
+                None,
+            )
+
+        with mock.patch("api.utils.Agent.get_response", side_effect=land_a_newer_user_row):
+            response = self._post_completions(self._payload(user_text=longer))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+
+        self.assertEqual(_sse_contents(body), [" "])
+        self.assertFalse(
+            Message.objects.filter(
+                session=self.session,
+                sender__agent=self.consumer.agent,
+                text="Should be dropped",
+            ).exists()
+        )
+        self.assertFalse(
+            Message.objects.filter(session=self.session, text="Good to hear.").exists()
+        )
+        dropped = Message.all_objects.get(session=self.session, text="Should be dropped")
+        self.assertIsNotNone(dropped.deleted_at)
 
     def test_continuation_before_reply_updates_the_user_message(self):
         short = "I'm doing good"
@@ -1918,3 +2063,39 @@ class VoiceWebhookTests(TestCase):
         self.assertEqual(saved.text, full)
         self.assertEqual(Message.objects.filter(session=self.session, text=full).count(), 1)
         self.assertEqual(Message.objects.filter(session=self.session, sender=user).count(), 1)
+
+    def test_reconcile_does_not_reinsert_a_soft_deleted_reply(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        _user, agent = self._voice_participants()
+        full_reply = "That is worth keeping. What makes it important?"
+        removed = Message.objects.create(
+            session=self.session,
+            sender=agent,
+            text=full_reply,
+            voice_conversation_id="conv_live",
+            voice_turn_index=1,
+        )
+        removed.delete()
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[
+                {"role": "agent", "message": "That is worth keeping."},
+                {"role": "agent", "message": full_reply},
+                {"role": "agent", "message": "Tell me more about the rest of it."},
+            ],
+        )
+        removed.refresh_from_db()
+        self.assertIsNotNone(removed.deleted_at)
+        self.assertEqual(result["created"], 1)
+        self.assertFalse(
+            Message.objects.filter(session=self.session, text="That is worth keeping.").exists()
+        )
+        self.assertFalse(
+            Message.objects.filter(session=self.session, text=full_reply).exists()
+        )
+        stored = Message.objects.get(
+            session=self.session, text="Tell me more about the rest of it."
+        )
+        self.assertEqual(stored.voice_turn_index, 2)
+        self.assertEqual(Message.all_objects.filter(session=self.session, sender=agent).count(), 2)

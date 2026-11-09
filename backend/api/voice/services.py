@@ -353,8 +353,10 @@ def voice_conversation_key(grant: VoiceGrant) -> str:
 
 
 def next_voice_turn_index(session, conversation_key: str) -> int:
+    # Include soft-deleted rows. A continuation drops the unspoken reply but
+    # that row still holds its turn index under the unique constraint.
     current = (
-        Message.objects.filter(
+        Message.all_objects.filter(
             session=session,
             voice_conversation_id=conversation_key,
             voice_turn_index__isnull=False,
@@ -428,7 +430,9 @@ def _count_followup_agent_reply(user_message: Message, agent_message: Message) -
         session.save(update_fields=update_fields)
 
 
-def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message | None:
+def _generate_agent_reply(
+    grant: VoiceGrant, user_message: Message, *, replacing_reply: bool = False
+) -> Message | None:
     """Gemini for an existing user row. Does not insert another user message.
 
     Returns None when this call's text was rewritten, or a newer user voice
@@ -473,7 +477,9 @@ def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message |
             .exclude(pk=agent_message.pk)
             .exists()
         )
-        if already_replied:
+        if already_replied or replacing_reply:
+            # The user row was already counted with the reply this continuation
+            # just removed. Count only the replacement, not the user again.
             _count_followup_agent_reply(locked, agent_message)
         else:
             apply_agent_response(locked, agent_message)
@@ -635,11 +641,40 @@ def _same_turn_retry(user_text: str, last_user: Message) -> bool:
     return _voice_texts_similar(last_user.text or "", user_text)
 
 
+def _drop_replaced_turn_replies(grant: VoiceGrant, user_message: Message) -> bool:
+    """Soft-delete Toni replies that answered the previous text of this user row.
+
+    Only rows created after this user row, and before a later user row, belong
+    to the utterance being continued. Earlier turns are left in place. The
+    delete matches the superseded-turn path: ``deleted_at`` is set, and the
+    default manager then hides the row from Gemini's history.
+    """
+    newer_user = _newer_voice_user_message(grant, user_message)
+    replies = Message.objects.filter(
+        session=grant.session,
+        sender__agent=grant.consumer.agent,
+        created_at__gte=user_message.created_at,
+    )
+    if newer_user is not None:
+        replies = replies.filter(created_at__lt=newer_user.created_at)
+    replies = list(replies)
+    for reply in replies:
+        reply.delete()
+    return bool(replies)
+
+
 def _continue_spoken_turn(grant: VoiceGrant, last_user: Message, user_text: str):
-    """Rewrite the open user row and answer the full utterance once."""
+    """Rewrite the open user row and answer the full utterance once.
+
+    Replies to the shorter text are removed first, so the new Gemini call
+    sees the combined sentence and not the unspoken bubble.
+    """
+    removed = _drop_replaced_turn_replies(grant, last_user)
     last_user.text = user_text
     last_user.save(update_fields=["text", "updated_at"])
-    agent_message = _generate_agent_reply(grant, last_user)
+    agent_message = _generate_agent_reply(
+        grant, last_user, replacing_reply=removed
+    )
     if agent_message is None:
         return "silent", ""
     return "speak", (agent_message.text or "").strip()
@@ -911,6 +946,32 @@ def _grant_from_webhook_payload(conversation_id: str, payload: dict) -> VoiceGra
     )
 
 
+def _agent_line_repeats_deleted_reply(session, conversation_id, grant_id, text) -> bool:
+    """True when this agent line is a removed Toni reply, or the start of one.
+
+    ElevenLabs can return the part that was spoken before the continuation
+    replaced the turn. That line must not be inserted again.
+    """
+    spoken = _normalize_voice_text(text)
+    if not spoken:
+        return False
+    deleted = Message.all_objects.filter(
+        session=session,
+        deleted_at__isnull=False,
+        sender__agent__isnull=False,
+    ).filter(
+        Q(voice_conversation_id=conversation_id)
+        | Q(voice_conversation_id=f"grant:{grant_id}")
+    )
+    for row in deleted:
+        saved = _normalize_voice_text(row.text or "")
+        if not saved:
+            continue
+        if spoken == saved or saved.startswith(spoken):
+            return True
+    return False
+
+
 def _saved_text_is_prefix(saved: str, transcript: str) -> bool:
     """True when the saved line, ignoring case and punctuation, starts the transcript."""
     short = _normalize_voice_text(saved)
@@ -1081,6 +1142,11 @@ def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=
             matched.voice_turn_index = index
             matched.save(update_fields=update_fields)
             stamped += 1
+            continue
+
+        if role == "agent" and _agent_line_repeats_deleted_reply(
+            session, conversation_id, grant.id, text
+        ):
             continue
 
         sender = (
