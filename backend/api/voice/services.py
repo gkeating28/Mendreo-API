@@ -911,6 +911,66 @@ def _grant_from_webhook_payload(conversation_id: str, payload: dict) -> VoiceGra
     )
 
 
+def _saved_text_is_prefix(saved: str, transcript: str) -> bool:
+    """True when the saved line, ignoring case and punctuation, starts the transcript."""
+    short = _normalize_voice_text(saved)
+    full = _normalize_voice_text(transcript)
+    if not short or not full:
+        return False
+    return full.startswith(short)
+
+
+def _conversation_user_rows(session, consumer, conversation_id: str, grant_id):
+    """User voice rows for this call, including ones still tagged with the grant."""
+    return (
+        Message.objects.filter(session=session, sender__consumer=consumer)
+        .filter(
+            Q(voice_conversation_id=conversation_id)
+            | Q(voice_conversation_id=f"grant:{grant_id}")
+        )
+        .order_by("created_at")
+    )
+
+
+def _extend_saved_user_text(message: Message, transcript: str) -> bool:
+    """Write a longer transcript onto this user row when the saved line starts it.
+
+    A saved line that is already as long as the transcript is left alone, so
+    reconcile can never shorten a row.
+    """
+    saved = message.text or ""
+    if len(transcript) <= len(saved):
+        return False
+    if not _saved_text_is_prefix(saved, transcript):
+        return False
+    message.text = transcript
+    message.save(update_fields=["text", "updated_at"])
+    return True
+
+
+def _extend_user_row_by_prefix(session, consumer, conversation_id, grant_id, transcript, *, skip_pk=None):
+    """Repair the closest shorter user row. Returns that row, or None."""
+    best = None
+    best_len = -1
+    for row in _conversation_user_rows(session, consumer, conversation_id, grant_id):
+        if skip_pk is not None and row.pk == skip_pk:
+            continue
+        saved = row.text or ""
+        if len(transcript) <= len(saved):
+            continue
+        if not _saved_text_is_prefix(saved, transcript):
+            continue
+        norm_len = len(_normalize_voice_text(saved))
+        if norm_len > best_len:
+            best = row
+            best_len = norm_len
+    if best is None:
+        return None
+    best.text = transcript
+    best.save(update_fields=["text", "updated_at"])
+    return best
+
+
 def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=None) -> dict:
     if not conversation_id:
         return {"status": "ignored", "reason": "missing_conversation_id", "created": 0, "stamped": 0}
@@ -957,6 +1017,37 @@ def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=
         if existing:
             if role == "agent":
                 _clear_saved_filler(existing)
+                continue
+            # The slot can belong to this user row, or to a different row when
+            # our turn index has drifted from ElevenLabs'. A longer transcript
+            # that starts with the saved user line repairs that row. A shorter
+            # transcript never overwrites it, and Toni's row is left as it is.
+            if _is_user_sender(existing):
+                if _extend_saved_user_text(existing, text):
+                    stamped += 1
+                    continue
+                if len(text) <= len(existing.text or ""):
+                    continue
+                if _extend_user_row_by_prefix(
+                    session,
+                    consumer,
+                    conversation_id,
+                    grant.id,
+                    text,
+                    skip_pk=existing.pk,
+                ):
+                    stamped += 1
+                continue
+            if _extend_user_row_by_prefix(
+                session, consumer, conversation_id, grant.id, text
+            ):
+                stamped += 1
+            continue
+
+        if role == "user" and _extend_user_row_by_prefix(
+            session, consumer, conversation_id, grant.id, text
+        ):
+            stamped += 1
             continue
 
         text_choices = [text]

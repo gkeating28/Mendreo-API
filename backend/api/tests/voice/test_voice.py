@@ -1778,3 +1778,143 @@ class VoiceWebhookTests(TestCase):
                 text__contains="Let me think about that",
             ).exists()
         )
+
+    def _voice_participants(self):
+        user = Participant.objects.filter(session=self.session, consumer=self.consumer).first()
+        agent = Participant.objects.filter(session=self.session, agent=self.consumer.agent).first()
+        return user, agent
+
+    def test_reconcile_extends_a_saved_user_row(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        user, _agent = self._voice_participants()
+        short = "I STILL MAKE THE TIME.  I THINK IT'S IMPORTANT."
+        full = (
+            "I still make the time. I think it's important. "
+            "But another thing I must say is that these things..."
+        )
+        saved = Message.objects.create(
+            session=self.session,
+            sender=user,
+            text=short,
+            voice_conversation_id="conv_live",
+            voice_turn_index=0,
+        )
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[{"role": "user", "message": full}],
+        )
+        saved.refresh_from_db()
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["stamped"], 1)
+        self.assertEqual(saved.text, full)
+        self.assertEqual(saved.voice_turn_index, 0)
+        self.assertEqual(Message.objects.filter(session=self.session, sender=user).count(), 1)
+
+    def test_reconcile_does_not_shorten_a_saved_user_row(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        user, _agent = self._voice_participants()
+        full = (
+            "I still make the time. I think it's important. "
+            "But another thing I must say is that these things..."
+        )
+        short = "I still make the time. I think it's important."
+        saved = Message.objects.create(
+            session=self.session,
+            sender=user,
+            text=full,
+            voice_conversation_id="conv_live",
+            voice_turn_index=0,
+        )
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[{"role": "user", "message": short}],
+        )
+        saved.refresh_from_db()
+        self.assertEqual(saved.text, full)
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["stamped"], 0)
+        self.assertEqual(Message.objects.filter(session=self.session).count(), 1)
+
+    def test_reconcile_inserts_a_user_line_with_no_match(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        user, _agent = self._voice_participants()
+        line = "This line was never saved live."
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[{"role": "user", "message": line}],
+        )
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["stamped"], 0)
+        stored = Message.objects.get(session=self.session, sender=user)
+        self.assertEqual(stored.text, line)
+        self.assertEqual(stored.voice_turn_index, 0)
+
+    def test_reconcile_extends_by_prefix_when_the_index_is_taken(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        user, agent = self._voice_participants()
+        short = "I still make the time. I think it's important."
+        full = short + " But another thing I must say is that these things..."
+        occupant = Message.objects.create(
+            session=self.session,
+            sender=agent,
+            text="Glad you're here.",
+            voice_conversation_id="conv_live",
+            voice_turn_index=0,
+        )
+        saved = Message.objects.create(
+            session=self.session,
+            sender=user,
+            text=short,
+            voice_conversation_id=f"grant:{self.grant.id}",
+            voice_turn_index=1,
+        )
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[
+                {"role": "user", "message": full},
+                {"role": "agent", "message": "Glad you're here."},
+            ],
+        )
+        saved.refresh_from_db()
+        occupant.refresh_from_db()
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(saved.text, full)
+        self.assertEqual(saved.voice_turn_index, 1)
+        self.assertEqual(occupant.text, "Glad you're here.")
+        self.assertEqual(occupant.voice_turn_index, 0)
+        self.assertEqual(Message.objects.filter(session=self.session, sender=user).count(), 1)
+        self.assertEqual(Message.objects.filter(session=self.session, sender=agent).count(), 1)
+
+    def test_reconcile_user_extension_is_idempotent(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        user, _agent = self._voice_participants()
+        short = "I still make the time. I think it's important."
+        full = short + " But another thing I must say is that these things..."
+        saved = Message.objects.create(
+            session=self.session,
+            sender=user,
+            text=short,
+            voice_conversation_id="conv_live",
+            voice_turn_index=0,
+        )
+        transcript = [{"role": "user", "message": full}]
+        first = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=transcript,
+        )
+        second = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=transcript,
+        )
+        saved.refresh_from_db()
+        self.assertEqual(first["created"], 0)
+        self.assertEqual(second["created"], 0)
+        self.assertEqual(second["stamped"], 0)
+        self.assertEqual(saved.text, full)
+        self.assertEqual(Message.objects.filter(session=self.session, text=full).count(), 1)
+        self.assertEqual(Message.objects.filter(session=self.session, sender=user).count(), 1)
