@@ -230,14 +230,40 @@ def process_agent_response(user_message_id):
     from .utils.MessageFlow import apply_agent_response
 
     logger.info("Start > process_agent_response %s", user_message_id)
+    task_started = timezone.now()
     user_message = Message.objects.select_related("session").filter(id=user_message_id).first()
     if not user_message:
         logger.warning("process_agent_response: message %s not found", user_message_id)
         return
 
-    agent_message = Agent.get_response(user_message=user_message, session=user_message.session)
-    apply_agent_response(user_message, agent_message)
-    logger.info("End > process_agent_response %s -> %s", user_message_id, agent_message.id)
+    try:
+        agent_message = Agent.get_response(user_message=user_message, session=user_message.session)
+        apply_agent_response(user_message, agent_message)
+        logger.info("End > process_agent_response %s -> %s", user_message_id, agent_message.id)
+    finally:
+        from .utils.chat_latency import timing_fields
+
+        fields = timing_fields(user_message.session)
+        try:
+            pickup_ms = round((task_started - user_message.created_at).total_seconds() * 1000)
+        except TypeError:
+            pickup_ms = 0
+        # Latency log. Session id and message id only. Remove with chat_latency.py.
+        logger.info(
+            "process_agent_response timing session=%s message=%s pickup_ms=%s "
+            "prompt_ms=%s retrieval_ms=%s history_ms=%s run_sync_ms=%s retries=%s "
+            "insert_ms=%s on_model_turn_ms=%s",
+            user_message.session_id,
+            user_message.id,
+            pickup_ms,
+            fields["prompt_ms"],
+            fields["retrieval_ms"],
+            fields["history_ms"],
+            fields["run_sync_ms"],
+            fields["retries"],
+            fields["insert_ms"],
+            fields["on_model_turn_ms"],
+        )
 
 
 @shared_task(

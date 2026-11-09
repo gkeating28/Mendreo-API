@@ -608,11 +608,30 @@ def _classify_followup_answer(session, user_message, pending) -> FollowupReply:
     return FollowupReply()
 
 
+def _onboarding_followups_classified(consumer) -> bool:
+    """True once the queued classifier has finished. Does not run it."""
+    if getattr(consumer, "onboarding_followup_classified_at", None):
+        return True
+    from ..consumer.models import Consumer
+
+    classified_at = (
+        Consumer.objects.filter(pk=consumer.pk)
+        .values_list("onboarding_followup_classified_at", flat=True)
+        .first()
+    )
+    if not classified_at:
+        return False
+    consumer.onboarding_followup_classified_at = classified_at
+    return True
+
+
 def handle_onboarding_followup_reply(session, user_message) -> FollowupReply:
     """
-    First user message claims the one-shot window. Thin openers get a canned
-    permission ask; real topics skip it. The opener is never classified as the
-    follow-up answer unless they already granted permission.
+    First user message claims the one-shot window once classification has
+    finished. If it has not, this turn answers normally and leaves the latch
+    open. Thin openers then get a canned permission ask; real topics skip it.
+    The opener is never classified as the follow-up answer unless they already
+    granted permission.
     """
     if getattr(session, "exercise_id", None):
         return FollowupReply()
@@ -629,7 +648,11 @@ def handle_onboarding_followup_reply(session, user_message) -> FollowupReply:
     consent = getattr(consumer, "onboarding_followup_consent", None)
 
     if not getattr(consumer, "onboarding_followup_consumed_at", None):
-        ensure_onboarding_followups_classified(consumer)
+        # Classification is queued at the end of onboarding. Running it here
+        # waits on Gemini before the first reply. A skip must not stamp
+        # classified_at or claim the window; a later turn still picks it up.
+        if not _onboarding_followups_classified(consumer):
+            return FollowupReply()
         pending = KnowledgeEntry.pending_followups_for(consumer)
         return _handle_first_user_message(session, consumer, user_text, pending)
 

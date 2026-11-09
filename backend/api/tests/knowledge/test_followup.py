@@ -248,7 +248,7 @@ class OnboardingVaguenessTests(TestCase):
         self.assertFalse(entry.needs_followup)
 
     @override_settings(AI_ASYNC_MESSAGES=False)
-    def test_first_chat_classifies_if_task_has_not_finished(self):
+    def test_first_chat_does_not_wait_for_classification(self):
         self._post(
             "/onboarding/answers",
             {
@@ -257,31 +257,112 @@ class OnboardingVaguenessTests(TestCase):
                 "answers": [
                     {
                         "knowledge_question_id": self.q_worry.id,
-                        "value": "life",
+                        "value": "things have been difficult lately",
                     }
                 ],
             },
             self.token,
         )
         today = self._get("/sessions/today", access_token=self.token)
-        with mock.patch(
-            "api.utils.AI.AI.ask",
-            return_value={"is_vague": True, "reasoning": "one-word"},
-        ):
+        with mock.patch("api.utils.AI.AI.ask") as ask:
             with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+                get_agent_response.return_value = (
+                    GeneralResponse(
+                        text="What is on your mind?",
+                        reasoning="check-in",
+                        suggested_responses=[],
+                    ),
+                    {},
+                    None,
+                    None,
+                )
                 response = self._post(
                     "/messages",
                     {"text": "im ok", "session": today.json["id"]},
                     access_token=self.token,
                 )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.json)
-        get_agent_response.assert_not_called()
-        self.assertEqual(
-            response.json["suggested_responses"],
+        ask.assert_not_called()
+        get_agent_response.assert_called_once()
+        self.assertEqual(response.json["text"], "What is on your mind?")
+        self.assertNotEqual(
+            response.json.get("suggested_responses") or [],
             list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
         )
         entry = KnowledgeEntry.current_for(self.consumer, self.worry)
+        self.assertEqual(entry.review_status, Constants.KNOWLEDGE_REVIEW_ACCEPTED)
+        self.assertFalse(entry.needs_followup)
+        self.consumer.refresh_from_db()
+        self.assertIsNone(self.consumer.onboarding_followup_classified_at)
+        self.assertIsNone(self.consumer.onboarding_followup_consumed_at)
+        self.assertIsNone(self.consumer.onboarding_followup_consent)
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_later_turn_picks_up_followup_after_classification(self):
+        self._post(
+            "/onboarding/answers",
+            {
+                "variant": "initial",
+                "complete": True,
+                "answers": [
+                    {
+                        "knowledge_question_id": self.q_worry.id,
+                        "value": "things have been difficult lately",
+                    }
+                ],
+            },
+            self.token,
+        )
+        today = self._get("/sessions/today", access_token=self.token)
+        session_id = today.json["id"]
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = (
+                GeneralResponse(
+                    text="What is on your mind?",
+                    reasoning="check-in",
+                    suggested_responses=[],
+                ),
+                {},
+                None,
+                None,
+            )
+            first = self._post(
+                "/messages",
+                {"text": "im ok", "session": session_id},
+                access_token=self.token,
+            )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.json)
+        self.consumer.refresh_from_db()
+        self.assertIsNone(self.consumer.onboarding_followup_classified_at)
+        self.assertIsNone(self.consumer.onboarding_followup_consumed_at)
+
+        with mock.patch(
+            "api.utils.AI.AI.ask",
+            return_value={"is_vague": True, "reasoning": "one-word"},
+        ):
+            ensure_onboarding_followups_classified(self.consumer)
+        entry = KnowledgeEntry.current_for(self.consumer, self.worry)
         self.assertTrue(entry.needs_followup)
+
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            second = self._post(
+                "/messages",
+                {"text": "Hello", "session": session_id},
+                access_token=self.token,
+            )
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED, second.json)
+        get_agent_response.assert_not_called()
+        self.assertEqual(
+            second.json["suggested_responses"],
+            list(Constants.KNOWLEDGE_FOLLOWUP_PERMISSION_CHIPS),
+        )
+        self.consumer.refresh_from_db()
+        self.assertIsNotNone(self.consumer.onboarding_followup_classified_at)
+        self.assertIsNotNone(self.consumer.onboarding_followup_consumed_at)
+        self.assertEqual(self.consumer.onboarding_followup_session_id, session_id)
+        entry.refresh_from_db()
+        self.assertTrue(entry.needs_followup)
+        self.assertEqual(entry.followup_attempts, 0)
 
     def test_celery_task_classifies_consumer(self):
         self._post(

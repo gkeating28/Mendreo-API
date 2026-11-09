@@ -11,7 +11,7 @@ from ...question.models import Question
 from ...session.models import Session, SessionMetric
 from ...setting.models import Setting
 from ...utils import Constants
-from ...utils.Agent import GeneralResponse
+from ...utils.Agent import ExerciseResponse, ExerciseStateResponse, GeneralResponse
 from ...utils.history import build_history
 from ...utils.risk import apply_turn_risk
 from ...summary.models import Summary
@@ -394,3 +394,13 @@ class Wp3Tests(TestCase):
         self.assertEqual(entry.source, Constants.KNOWLEDGE_ENTRY_SOURCE_ONBOARDING)
         self.assertEqual(entry.confidence, Constants.THIN_ANSWER_CONFIDENCE)
         self.assertEqual(entry.review_status, Constants.KNOWLEDGE_REVIEW_PENDING)
+
+    def test_chat_reasoning_is_one_short_sentence(self):
+        description = "Required. At most one short sentence on why you chose this response."
+        self.assertEqual(GeneralResponse.model_fields["reasoning"].description, description)
+        self.assertTrue(GeneralResponse.model_fields["reasoning"].is_required())
+        for model in (GeneralResponse, ExerciseResponse, ExerciseStateResponse):
+            schema = model.model_json_schema()
+            self.assertIn("reasoning", schema["required"])
+            self.assertEqual(schema["properties"]["reasoning"]["description"], description)
+        self.assertNotIn("clear references", Constants.PROMPT_PROGRAMMING_INSTRUCTIONS)

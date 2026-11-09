@@ -238,22 +238,30 @@ class Agent(SmartModel):
             del session._pending_retrieval
         if hasattr(session, "_retrieval_skipped"):
             del session._retrieval_skipped
-        agent_message = Message.objects.create(
-            usage=usage,
-            asset=asset,
-            session=session,
-            exercise=exercise,
-            text=text,
-            sender=participant,
-            reasoning=response.reasoning,
-            suggested_responses=suggested_responses,
-            suggested_responses_kind=suggested_responses_kind,
-            question_kind=question_kind,
-            probe_count=probe_count,
-            resources=resources,
-            retrieval=retrieval,
-            retrieval_skipped=skipped,
-        )
+        import time
+
+        from ..utils.chat_latency import add_ms
+
+        insert_started = time.perf_counter()
+        try:
+            agent_message = Message.objects.create(
+                usage=usage,
+                asset=asset,
+                session=session,
+                exercise=exercise,
+                text=text,
+                sender=participant,
+                reasoning=response.reasoning,
+                suggested_responses=suggested_responses,
+                suggested_responses_kind=suggested_responses_kind,
+                question_kind=question_kind,
+                probe_count=probe_count,
+                resources=resources,
+                retrieval=retrieval,
+                retrieval_skipped=skipped,
+            )
+        finally:
+            add_ms(session, "insert_ms", insert_started)
         from ..message.turn_prompt import record_step_decision, save_pending_turn_prompt
 
         save_pending_turn_prompt(session, agent_message)
@@ -262,7 +270,11 @@ class Agent(SmartModel):
             from ..utils.SessionStateMachine import on_model_turn
             from ..utils.SuggestedResponses import apply_midstep_yes_no_chips
 
-            on_model_turn(session, agent_message, response)
+            turn_started = time.perf_counter()
+            try:
+                on_model_turn(session, agent_message, response)
+            finally:
+                add_ms(session, "on_model_turn_ms", turn_started)
             apply_midstep_yes_no_chips(agent_message)
 
         record_step_decision(agent_message)

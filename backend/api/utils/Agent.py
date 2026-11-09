@@ -80,7 +80,7 @@ class GeneralResponse(BaseModel):
         )
     )
     reasoning: str = Field(
-      description="""Required. Why you chose this response include clear references""",
+        description="Required. At most one short sentence on why you chose this response.",
     )
     asset_id: Optional[str] = Field(default=None, description="Optional. An asset id")
 
@@ -470,12 +470,17 @@ def _note_reply_decisions(session, *, before, after, on_step_retried, on_step_he
 
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
     """Entry point: get the agent's response to a user's message."""
+    from .chat_latency import add_ms, add_run_sync
     from .prompt_debug import capture_on, remember_reply, remember_turn
 
     consumer = consumer_message.sender.consumer
     assert consumer, "Message sender must be a consumer"
 
-    prompt = _prepare_prompt(session=session)
+    prompt_started = time.perf_counter()
+    try:
+        prompt = _prepare_prompt(session=session)
+    finally:
+        add_ms(session, "prompt_ms", prompt_started)
 
     if session.exercise:
         schema = ExerciseStateResponse
@@ -516,16 +521,21 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         from ..grounding.retrieval import augment_user_prompt
         from ..message.turn_prompt import stash_turn_prompt
 
-        user_prompt = augment_user_prompt(
-            session,
-            consumer_message,
-            user_prompt_with_hint(session, consumer_message),
-        )
+        hinted = user_prompt_with_hint(session, consumer_message)
+        retrieval_started = time.perf_counter()
+        try:
+            user_prompt = augment_user_prompt(session, consumer_message, hinted)
+        finally:
+            add_ms(session, "retrieval_ms", retrieval_started)
         if steer[0]:
             user_prompt = f"{user_prompt}\n\n<TURN_HINT>\n{steer[0]}\n</TURN_HINT>"
-        history = build_history(
-            session, exclude_message_id=getattr(consumer_message, "id", None)
-        )
+        history_started = time.perf_counter()
+        try:
+            history = build_history(
+                session, exclude_message_id=getattr(consumer_message, "id", None)
+            )
+        finally:
+            add_ms(session, "history_ms", history_started)
         stash_turn_prompt(
             session,
             model_name=getattr(provider, "_resolved_model_name", "")
@@ -534,12 +544,16 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             user_prompt=user_prompt,
             history=history,
         )
-        result = agent.run_sync(
-            user_prompt=user_prompt,
-            deps=dependencies,
-            message_history=history,
-            usage_limits=UsageLimits(tool_calls_limit=2)
-        )
+        sync_started = time.perf_counter()
+        try:
+            result = agent.run_sync(
+                user_prompt=user_prompt,
+                deps=dependencies,
+                message_history=history,
+                usage_limits=UsageLimits(tool_calls_limit=2)
+            )
+        finally:
+            add_run_sync(session, sync_started)
         if capture_on():
             from ..grounding.retrieval import session_retrieval_enabled
 

@@ -1,5 +1,8 @@
 from __future__ import unicode_literals
 
+import logging
+import time
+
 from django.conf import settings
 from django.db import transaction
 from rest_framework.response import Response
@@ -13,6 +16,16 @@ from ..utils.Permissions import (
     IsConsumerPermission, IsAdminPermission,
 )
 from ..utils.Views import SmartAPIView, SmartPaginationAPIView
+
+logger = logging.getLogger(__name__)
+
+
+def _ms(started: float) -> int:
+    return round((time.perf_counter() - started) * 1000)
+
+
+def _ms_or_skip(value):
+    return "-" if value is None else value
 
 
 class ListCreate(SmartPaginationAPIView):
@@ -82,10 +95,16 @@ class ListCreate(SmartPaginationAPIView):
             self.request.data._mutable = False
 
         with transaction.atomic():
+            started = time.perf_counter()
             create_serializer = create_serializer_class(data=data)
             create_serializer.is_valid(raise_exception=True)
+            serializer_ms = _ms(started)
+            started = time.perf_counter()
             instance = create_serializer.save()
+            insert_ms = _ms(started)
 
+        session_id = instance.session_id
+        message_id = instance.id
         from_suggested_response = _from_suggested_response(request.data)
 
         from ..utils.SessionStateMachine import (
@@ -95,26 +114,55 @@ class ListCreate(SmartPaginationAPIView):
             handle_typed_while_awaiting,
         )
 
+        started = time.perf_counter()
         outcome = consume_chip(instance, from_suggested_response)
+        consume_chip_ms = _ms(started)
+        typed_ms = readiness_ms = summary_ms = enqueue_ms = None
         if outcome is None and not from_suggested_response:
+            started = time.perf_counter()
             outcome = handle_typed_while_awaiting(instance)
+            typed_ms = _ms(started)
         if outcome is None:
+            started = time.perf_counter()
             outcome = confirm_readiness_reply(instance)
+            readiness_ms = _ms(started)
         if outcome is None and not from_suggested_response:
+            started = time.perf_counter()
             outcome = confirm_summary_if_done(instance)
+            summary_ms = _ms(started)
         if outcome is not None:
             instance = outcome.message
             request._session_state = outcome.session_state
             if outcome.ai_pending:
                 request._ai_pending = True
         else:
+            started = time.perf_counter()
             instance, pending = dispatch_chat_reply(instance)
+            enqueue_ms = _ms(started)
             if pending:
                 request._ai_pending = True
 
         detail_serializer_class = self.get_detail_serializer(request, instance)
         data = detail_serializer_class(instance).data
+        started = time.perf_counter()
         data = self.override_response_data(request, data, instance)
+        override_ms = _ms(started)
+        # Latency log. Session id and message id only. Remove with chat_latency.py.
+        logger.info(
+            "POST /messages timing session=%s message=%s serializer_ms=%s insert_ms=%s "
+            "consume_chip_ms=%s typed_while_awaiting_ms=%s confirm_readiness_ms=%s "
+            "confirm_summary_ms=%s enqueue_ms=%s override_response_data_ms=%s",
+            session_id,
+            message_id,
+            serializer_ms,
+            insert_ms,
+            _ms_or_skip(consume_chip_ms),
+            _ms_or_skip(typed_ms),
+            _ms_or_skip(readiness_ms),
+            _ms_or_skip(summary_ms),
+            _ms_or_skip(enqueue_ms),
+            override_ms,
+        )
 
         return self.post_response(request, instance, data)
 
