@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
 import time
 from datetime import timedelta
 from difflib import SequenceMatcher
 from typing import Iterable
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F, Q
 from django.db.utils import IntegrityError
 from django.utils import timezone
@@ -53,14 +55,21 @@ VOICE_RETRY_SIMILARITY = 0.85
 # ("have a chat" -> "chat") and still rejects a different sentence.
 VOICE_CONTINUATION_WORD_KEEP = 0.6
 # A corrected transcript can arrive while the first Gemini call is still running.
-# Poll for its saved reply, and send a content token before cascade timeout (~8s).
+# Poll for its saved reply. ElevenLabs cuts the turn when the first content
+# chunk is still empty at about 8 seconds (cascade timeout). Gemini is usually
+# faster, so the spoken filler waits FILLER_DELAY_S and is skipped when the
+# reply is already ready. If the call is still running, that filler is the
+# first chunk — well under the limit — and it repeats while we wait, timed
+# from the moment it was first sent.
 VOICE_RETRY_POLL_SECONDS = 0.2
 VOICE_RETRY_WAIT_SECONDS = 25
 VOICE_RETRY_KEEPALIVE_SECONDS = 6
+# Default when FILLER_DELAY_S is unset. The env var overrides this.
+FILLER_DELAY_S = 3.0
 # Official Custom LLM buffer words (docs: "Let me think about that... ").
 # "... " alone is not enough for ElevenLabs to treat TTFT as satisfied, and a
-# tiny first chunk is often held in Railway/Gunicorn buffers until Gemini
-# finishes — which is after cascade_timeout_seconds (default 8s).
+# tiny first chunk is often held in Railway/Gunicorn buffers. Sent only after
+# FILLER_DELAY_S, with flush padding, so a slow Gemini still beats the 8s cut.
 ELEVENLABS_KEEPALIVE = "Let me think about that... "
 SSE_FLUSH_PAD_CHARS = 8192
 UNDERSTANDING_FALLBACK = (
@@ -122,11 +131,51 @@ def usable_voice_user_text(text: str) -> str:
     return cleaned
 
 
+def filler_delay_seconds() -> float:
+    """How long to wait for Gemini before the first spoken filler."""
+    raw = (os.environ.get("FILLER_DELAY_S") or "").strip()
+    if not raw:
+        return FILLER_DELAY_S
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return FILLER_DELAY_S
+
+
 def spoken_llm_keepalive() -> str:
     filler = (settings.ELEVENLABS_LLM_FILLER or "").strip()
     if filler:
         return filler if filler.endswith(" ") else f"{filler} "
     return ELEVENLABS_KEEPALIVE
+
+
+def filler_prefixes() -> list[str]:
+    """Spoken filler forms, longest first, so a leading copy can be removed."""
+    phrases = [spoken_llm_keepalive(), ELEVENLABS_KEEPALIVE]
+    expanded = []
+    for phrase in phrases:
+        if phrase and phrase not in expanded:
+            expanded.append(phrase)
+        stripped = phrase.strip()
+        if stripped and stripped not in expanded:
+            expanded.append(stripped)
+    expanded.sort(key=len, reverse=True)
+    return expanded
+
+
+def strip_leading_filler(text: str) -> str:
+    """Drop one or more leading filler phrases. The reply itself stays."""
+    cleaned = text or ""
+    prefixes = filler_prefixes()
+    changed = True
+    while cleaned and changed:
+        changed = False
+        for prefix in prefixes:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+                changed = True
+                break
+    return cleaned
 
 
 def _message_content_text(content) -> str:
@@ -332,7 +381,17 @@ def create_user_voice_message(*, grant: VoiceGrant, text: str) -> Message:
     )
 
 
+def _clear_saved_filler(message: Message) -> None:
+    """The spoken filler is a stream chunk, never part of the stored Toni line."""
+    cleaned = strip_leading_filler(message.text or "")
+    if cleaned == (message.text or ""):
+        return
+    message.text = cleaned
+    message.save(update_fields=["text", "updated_at"])
+
+
 def stamp_agent_voice_fields(agent_message: Message, grant: VoiceGrant) -> Message:
+    _clear_saved_filler(agent_message)
     conversation_key = voice_conversation_key(grant)
     if agent_message.voice_conversation_id and agent_message.voice_turn_index is not None:
         return agent_message
@@ -681,21 +740,63 @@ def try_voice_offer_reply(grant: VoiceGrant, user_text: str) -> Message | None:
     return result if result is not None else user_message
 
 
-def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
-    """Filler + flush, then the spoken reply. No background work.
+def _iter_filler_while_preparing(worker: threading.Thread, chunk):
+    """Yield nothing until FILLER_DELAY_S, then filler while the call is still out.
 
+    Repeats use the same keepalive gap as a retry wait, measured from the
+    first filler rather than from the start of the request. Flush padding
+    follows each filler so a proxy cannot hold that first chunk.
+    """
+    filler_sent_at = None
+    next_keepalive = None
+    delay_deadline = time.monotonic() + filler_delay_seconds()
+    while worker.is_alive():
+        now = time.monotonic()
+        if filler_sent_at is None:
+            if now < delay_deadline:
+                worker.join(
+                    timeout=max(0.0, min(VOICE_RETRY_POLL_SECONDS, delay_deadline - now))
+                )
+                continue
+            yield chunk(spoken_llm_keepalive())
+            yield chunk(None, padding=True)
+            filler_sent_at = time.monotonic()
+            next_keepalive = filler_sent_at + VOICE_RETRY_KEEPALIVE_SECONDS
+            continue
+        if now >= next_keepalive:
+            yield chunk(spoken_llm_keepalive())
+            yield chunk(None, padding=True)
+            next_keepalive = time.monotonic() + VOICE_RETRY_KEEPALIVE_SECONDS
+            continue
+        yield chunk(None, padding=True)
+        worker.join(
+            timeout=min(
+                VOICE_RETRY_POLL_SECONDS,
+                max(0.0, next_keepalive - time.monotonic()),
+            )
+        )
+
+
+def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
+    """Start the reply, then filler only if it is still running after the delay.
+
+    A fast reply is streamed with no filler. A slow one gets the filler at
+    FILLER_DELAY_S so ElevenLabs still receives a first chunk well under the
+    8 second cascade timeout, and that filler repeats until the reply arrives.
     A near-identical retry that arrives while Gemini is still running keeps
-    this stream alive (padding, and the filler again before the cascade
-    window) until the first call saves Toni's reply. A longer continuation
-    answers the full text instead, and the first call drops its reply if the
-    user row changed. A daemon thread + cache lock caused earlier regressions,
-    so the wait stays on this request.
+    this stream alive until the first call saves Toni's reply. A longer
+    continuation answers the full text instead, and the first call drops its
+    reply if the user row changed. A daemon thread plus a cache lock caused
+    earlier regressions, so this request starts the work and joins it before
+    returning.
     """
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
     model = "mendreo-toni"
 
-    def _chunk(content: str | None, finish_reason=None) -> bytes:
+    def _chunk(content: str | None, finish_reason=None, padding=False) -> bytes:
+        if padding:
+            return sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
         return sse_chunk(
             content,
             finish_reason=finish_reason,
@@ -704,37 +805,55 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
             model=model,
         )
 
+    box: dict = {}
+
+    def _prepare():
+        try:
+            box["result"] = _prepare_spoken_turn(grant, user_text)
+        except Exception as exc:
+            box["error"] = exc
+        finally:
+            connection.close()
+
+    worker = threading.Thread(target=_prepare, name="voice-toni-reply")
+    worker.start()
     try:
-        yield _chunk(spoken_llm_keepalive())
-        yield sse_flush_padding(chunk_id=chunk_id, created=created, model=model)
-        kind, payload = _prepare_spoken_turn(grant, user_text)
-        if kind == "wait":
-            spoken = yield from _speak_after_retry_wait(
-                grant,
-                payload,
-                chunk_id=chunk_id,
-                created=created,
-                model=model,
+        try:
+            yield from _iter_filler_while_preparing(worker, _chunk)
+            worker.join()
+            if box.get("error") is not None:
+                raise box["error"]
+            kind, payload = box["result"]
+            if kind == "wait":
+                spoken = yield from _speak_after_retry_wait(
+                    grant,
+                    payload,
+                    chunk_id=chunk_id,
+                    created=created,
+                    model=model,
+                )
+            elif kind == "silent":
+                spoken = ""
+            else:
+                spoken = payload or UNDERSTANDING_FALLBACK
+            spoken = strip_leading_filler(spoken) if spoken else spoken
+            if spoken:
+                yield _chunk(spoken)
+            else:
+                yield _chunk(" ")
+            yield _chunk(None, finish_reason="stop")
+            yield b"data: [DONE]\n\n"
+        except Exception:
+            logger.exception(
+                "Custom LLM Gemini path failed grant=%s session=%s",
+                grant.id,
+                grant.session_id,
             )
-        elif kind == "silent":
-            spoken = ""
-        else:
-            spoken = payload or UNDERSTANDING_FALLBACK
-        if spoken:
-            yield _chunk(spoken)
-        else:
-            yield _chunk(" ")
-        yield _chunk(None, finish_reason="stop")
-        yield b"data: [DONE]\n\n"
-    except Exception:
-        logger.exception(
-            "Custom LLM Gemini path failed grant=%s session=%s",
-            grant.id,
-            grant.session_id,
-        )
-        yield _chunk(UNDERSTANDING_FALLBACK)
-        yield _chunk(None, finish_reason="stop")
-        yield b"data: [DONE]\n\n"
+            yield _chunk(UNDERSTANDING_FALLBACK)
+            yield _chunk(None, finish_reason="stop")
+            yield b"data: [DONE]\n\n"
+    finally:
+        worker.join()
 
 
 def _turn_role(turn: dict) -> str:
@@ -816,9 +935,14 @@ def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=
     for index, turn in enumerate(turns):
         if not isinstance(turn, dict):
             continue
-        text = _turn_text(turn)
+        raw_text = _turn_text(turn)
         role = _turn_role(turn)
-        if not text or role not in ("user", "agent"):
+        if not raw_text or role not in ("user", "agent"):
+            continue
+        # ElevenLabs stores the spoken stream. A slow turn's transcript is the
+        # filler plus Toni's reply, which must not be saved or used as the match key.
+        text = strip_leading_filler(raw_text) if role == "agent" else raw_text
+        if not text:
             continue
 
         existing = (
@@ -831,10 +955,15 @@ def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=
             .first()
         )
         if existing:
+            if role == "agent":
+                _clear_saved_filler(existing)
             continue
 
+        text_choices = [text]
+        if role == "agent" and raw_text != text:
+            text_choices.append(raw_text)
         untagged = (
-            Message.objects.filter(session=session, text=text)
+            Message.objects.filter(session=session, text__in=text_choices)
             .filter(
                 Q(voice_turn_index__isnull=True)
                 | Q(voice_conversation_id=f"grant:{grant.id}")
@@ -851,9 +980,15 @@ def reconcile_post_call_transcript(*, conversation_id: str, transcript, payload=
                 matched = message
                 break
         if matched:
+            update_fields = ["voice_conversation_id", "voice_turn_index", "updated_at"]
+            if role == "agent":
+                cleaned = strip_leading_filler(matched.text or "")
+                if cleaned != (matched.text or ""):
+                    matched.text = cleaned
+                    update_fields.append("text")
             matched.voice_conversation_id = conversation_id
             matched.voice_turn_index = index
-            matched.save(update_fields=["voice_conversation_id", "voice_turn_index", "updated_at"])
+            matched.save(update_fields=update_fields)
             stamped += 1
             continue
 

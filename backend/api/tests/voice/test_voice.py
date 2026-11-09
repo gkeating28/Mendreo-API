@@ -829,8 +829,8 @@ class CustomLlmTests(TestCase):
 
         contents = _sse_contents(body)
         self.assertTrue(body.strip().endswith("data: [DONE]"))
-        self.assertEqual(contents[0].strip(), "Let me think about that...")
-        self.assertIn("Voice reply from Toni", contents)
+        self.assertEqual(contents[0], "Voice reply from Toni")
+        self.assertNotIn("Let me think about that", body)
         self.assertNotIn("Nope", body)
         self.assertNotIn("should not be spoken", body)
 
@@ -849,26 +849,9 @@ class CustomLlmTests(TestCase):
             sender__agent=self.consumer.agent,
         ).get()
         self.assertEqual(agent_message.text, "Voice reply from Toni")
+        self.assertNotIn("Let me think about that", agent_message.text)
 
-    @override_settings(ELEVENLABS_LLM_FILLER="")
-    def test_empty_filler_still_keeps_the_sse_stream_alive(self):
-        mocked = GeneralResponse(
-            text="Voice reply from Toni",
-            reasoning="should not be spoken",
-            suggested_responses=[],
-        )
-        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
-            get_agent_response.return_value = mocked, {}, None, None
-            response = self._post_completions(self._payload())
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            body = _sse_body(response)
-
-        contents = _sse_contents(body)
-        self.assertEqual(contents[0], "Let me think about that... ")
-        self.assertIn("Voice reply from Toni", contents)
-        self.assertIn("flush_padding", body)
-
-    def test_filler_and_flush_precede_gemini(self):
+    def test_fast_reply_streams_with_no_filler(self):
         mocked = GeneralResponse(
             text="Voice reply from Toni",
             reasoning="r",
@@ -884,20 +867,78 @@ class CustomLlmTests(TestCase):
             response = self._post_completions(self._payload())
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             iterator = iter(response.streaming_content)
-
             first = next(iterator)
-            self.assertIn(b"Let me think about that... ", first)
-            self.assertEqual(called, [])
-
-            second = next(iterator)
-            self.assertGreater(len(second), 8000)
-            self.assertIn(b"flush_padding", second)
-            self.assertEqual(called, [])
-
             rest = b"".join(iterator)
 
+        self.assertIn(b"Voice reply from Toni", first)
+        self.assertNotIn(b"Let me think about that", first + rest)
         self.assertEqual(called, [1])
+        agent_message = Message.objects.get(
+            session=self.session,
+            sender__agent=self.consumer.agent,
+        )
+        self.assertEqual(agent_message.text, "Voice reply from Toni")
+
+    @override_settings(ELEVENLABS_LLM_FILLER="")
+    def test_slow_reply_streams_filler_then_the_reply(self):
+        mocked = GeneralResponse(
+            text="Voice reply from Toni",
+            reasoning="r",
+            suggested_responses=[],
+        )
+        called = []
+
+        def slow(*args, **kwargs):
+            called.append(1)
+            time.sleep(0.45)
+            return mocked, {}, None, None
+
+        with mock.patch("api.voice.services.filler_delay_seconds", return_value=0.15):
+            with mock.patch("api.utils.Agent.get_response", side_effect=slow):
+                response = self._post_completions(self._payload())
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                iterator = iter(response.streaming_content)
+                first = next(iterator)
+                self.assertIn(b"Let me think about that... ", first)
+                self.assertEqual(called, [1])
+                second = next(iterator)
+                self.assertGreater(len(second), 8000)
+                self.assertIn(b"flush_padding", second)
+                rest = b"".join(iterator)
+
         self.assertIn(b"Voice reply from Toni", rest)
+        body = first + second + rest
+        self.assertEqual(body.count(b"Let me think about that..."), 1)
+        contents = _sse_contents(body.decode("utf-8"))
+        self.assertEqual(contents[0], "Let me think about that... ")
+        self.assertIn("Voice reply from Toni", contents)
+        self.assertLess(contents.index("Let me think about that... "), contents.index("Voice reply from Toni"))
+        agent_message = Message.objects.get(
+            session=self.session,
+            sender__agent=self.consumer.agent,
+        )
+        self.assertEqual(agent_message.text, "Voice reply from Toni")
+        self.assertNotIn("Let me think about that", agent_message.text)
+
+    def test_saved_toni_row_drops_a_leading_filler(self):
+        mocked = GeneralResponse(
+            text="Let me think about that... Voice reply from Toni",
+            reasoning="r",
+            suggested_responses=[],
+        )
+        with mock.patch("api.utils.Agent.get_response") as get_agent_response:
+            get_agent_response.return_value = mocked, {}, None, None
+            response = self._post_completions(self._payload())
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = _sse_body(response)
+
+        self.assertNotIn("Let me think about that", body)
+        self.assertIn("Voice reply from Toni", _sse_contents(body))
+        agent_message = Message.objects.get(
+            session=self.session,
+            sender__agent=self.consumer.agent,
+        )
+        self.assertEqual(agent_message.text, "Voice reply from Toni")
 
     def test_conversation_id_mismatch_is_rejected(self):
         mocked = GeneralResponse(text="ok", reasoning="r", suggested_responses=[])
@@ -1127,13 +1168,13 @@ class CustomLlmTests(TestCase):
             get_agent_response.return_value = mocked, {}, None, None
             with mock.patch("api.voice.services.time.sleep", side_effect=sleep_and_save):
                 response = self._post_completions(self._payload(user_text=corrected))
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            body = _sse_body(response)
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                body = _sse_body(response)
             get_agent_response.assert_not_called()
 
         self.assertIn("Glad you're here.", _sse_contents(body))
         self.assertNotIn("should not speak", body)
-        self.assertGreaterEqual(body.count("flush_padding"), 2)
+        self.assertGreaterEqual(body.count("flush_padding"), 1)
         self.assertTrue(saved["done"])
         self.assertEqual(
             Message.objects.filter(session=self.session, sender__consumer=self.consumer).count(),
@@ -1299,7 +1340,7 @@ class CustomLlmTests(TestCase):
         )
         self.assertEqual(user_message.text, longer)
 
-    def test_superseded_stream_ends_with_a_space_and_one_filler(self):
+    def test_superseded_stream_ends_with_a_space_and_no_filler(self):
         longer = "I'm doing good, I had a good weekend"
 
         def grow_while_in_flight(session, consumer_message):
@@ -1316,8 +1357,8 @@ class CustomLlmTests(TestCase):
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             body = _sse_body(response)
 
-        self.assertEqual(_sse_contents(body), ["Let me think about that... ", " "])
-        self.assertEqual(body.count("Let me think about that..."), 1)
+        self.assertEqual(_sse_contents(body), [" "])
+        self.assertEqual(body.count("Let me think about that..."), 0)
         self.assertNotIn("Good to hear.", body)
         space_at = body.find('"content": " "')
         stop_at = body.find('"finish_reason": "stop"')
@@ -1687,4 +1728,53 @@ class VoiceWebhookTests(TestCase):
         self.assertEqual(
             Message.objects.filter(session=self.session, text="Hello from voice").count(),
             1,
+        )
+
+    def test_reconcile_strips_a_leading_filler(self):
+        from ...voice.services import reconcile_post_call_transcript
+
+        agent_participant = Participant.objects.filter(
+            session=self.session, agent=self.consumer.agent
+        ).first()
+        consumer_participant = Participant.objects.filter(
+            session=self.session, consumer=self.consumer
+        ).first()
+        Message.objects.create(
+            session=self.session,
+            sender=consumer_participant,
+            text="Hello from voice",
+            voice_conversation_id=f"grant:{self.grant.id}",
+        )
+        saved = Message.objects.create(
+            session=self.session,
+            sender=agent_participant,
+            text="Glad you're here.",
+            voice_conversation_id=f"grant:{self.grant.id}",
+        )
+
+        result = reconcile_post_call_transcript(
+            conversation_id="conv_live",
+            transcript=[
+                {"role": "user", "message": "Hello from voice"},
+                {"role": "agent", "message": "Let me think about that... Glad you're here."},
+                {"role": "user", "message": "Another turn"},
+                {"role": "agent", "message": "Let me think about that... Tell me more."},
+            ],
+        )
+        self.assertEqual(result["stamped"], 2)
+        self.assertEqual(result["created"], 2)
+        saved.refresh_from_db()
+        self.assertEqual(saved.text, "Glad you're here.")
+        self.assertEqual(saved.voice_turn_index, 1)
+        stored = Message.objects.get(
+            session=self.session,
+            sender__agent=self.consumer.agent,
+            voice_turn_index=3,
+        )
+        self.assertEqual(stored.text, "Tell me more.")
+        self.assertFalse(
+            Message.objects.filter(
+                session=self.session,
+                text__contains="Let me think about that",
+            ).exists()
         )
