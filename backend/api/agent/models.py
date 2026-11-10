@@ -250,6 +250,13 @@ class Agent(SmartModel):
             del session._pending_retrieval
         if hasattr(session, "_retrieval_skipped"):
             del session._retrieval_skipped
+        risk_check = getattr(session, "_risk_check", None)
+        if isinstance(risk_check, dict) and risk_check.get("about"):
+            usage = dict(usage or {})
+            usage["risk_check"] = {
+                "about": risk_check["about"],
+                "reason": risk_check.get("reason") or "",
+            }
         agent_message = Message.objects.create(
             usage=usage,
             asset=asset,

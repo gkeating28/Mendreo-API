@@ -179,6 +179,7 @@ def build_pydantic_model(
     model_name: str | None = None,
     *,
     restore_part_spacing: bool = False,
+    timeout_ms: int | None = None,
 ):
     """Return a pydantic-ai model instance for chat / structured generation.
 
@@ -189,9 +190,10 @@ def build_pydantic_model(
     api_key = provider.get_api_key()
 
     if provider.provider == Constants.AI_PROVIDER_GOOGLE:
+        http_timeout = settings.GEMINI_HTTP_TIMEOUT_MS if timeout_ms is None else timeout_ms
         genai_client = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=settings.GEMINI_HTTP_TIMEOUT_MS),
+            http_options=types.HttpOptions(timeout=http_timeout),
         )
         thinking_config = _google_thinking_config(resolved)
         model_cls = _SpacingGoogleModel if restore_part_spacing else GoogleModel

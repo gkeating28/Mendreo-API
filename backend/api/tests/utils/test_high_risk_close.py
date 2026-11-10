@@ -1,5 +1,6 @@
 """High-risk close: own-risk phrases only, fixed reply, flag, and resume skip."""
 
+import contextlib
 import json
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse, GeneralResponse
 from ...utils.high_risk_copy import DEFAULT_HIGH_RISK_COPY, high_risk_chat_message
 from ...utils.Mail import send_trust_and_safety_alert
-from ...utils.risk import normalize_risk_level, risk_prescreen
+from ...utils.risk import apply_turn_risk, normalize_risk_level, risk_prescreen
 from ...voice.models import VoiceGrant
 from ..TestCase import TestCase
 from ..utils.manager import Auth, General
@@ -121,7 +122,15 @@ class RiskPrescreenTests(TestCase):
 
 
 class HighRiskTurnTests(TestCase):
-    def _turn(self, text, model_level="none", model_text="Tell me a bit more.", exercise=None):
+    def _turn(
+        self,
+        text,
+        model_level="none",
+        model_text="Tell me a bit more.",
+        exercise=None,
+        about="self_now",
+        live_risk_level=None,
+    ):
         consumer = Auth.create_consumer()
         session = Session.objects.create(
             consumer=consumer,
@@ -134,6 +143,7 @@ class HighRiskTurnTests(TestCase):
                 if exercise
                 else Constants.SESSION_STATE_GENERAL
             ),
+            live_risk_level=live_risk_level or Constants.LIVE_RISK_LEVEL_NONE,
         )
         user_sender, _agent_sender = Participant.create_participants(session)
         user_message = Message.objects.create(
@@ -147,20 +157,38 @@ class HighRiskTurnTests(TestCase):
             suggested_responses=["Tell me more"],
             risk_level=model_level,
         )
-        with (
-            patch("api.utils.session_close.close_session") as close,
-            patch("api.tasks.notify_trust_and_safety.delay_on_commit") as queued,
+        patches = [
+            patch("api.utils.session_close.close_session"),
+            patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
             patch(
                 "api.utils.Agent.get_response",
                 return_value=(mocked, {}, None, None),
             ),
-        ):
+        ]
+        if about is not False:
+            patches.append(
+                patch(
+                    "api.utils.risk_check.check_whose_risk",
+                    return_value={"about": about, "reason": "Checked in test."},
+                )
+            )
+        with contextlib.ExitStack() as stack:
+            close, queued, _model, *_rest = [stack.enter_context(item) for item in patches]
             agent_message = Agent.get_response(session=session, user_message=user_message)
         session.refresh_from_db()
         consumer.refresh_from_db()
         return consumer, session, agent_message, close, queued
 
-    def _assert_closed(self, consumer, session, agent_message, close, queued, model_text):
+    def _assert_closed(
+        self,
+        consumer,
+        session,
+        agent_message,
+        close,
+        queued,
+        model_text,
+        expected_about="self_now",
+    ):
         self.assertEqual(agent_message.text, high_risk_chat_message())
         self.assertNotEqual(agent_message.text, model_text)
         self.assertEqual(agent_message.suggested_responses, [])
@@ -172,6 +200,10 @@ class HighRiskTurnTests(TestCase):
         self.assertTrue(consumer.crisis_notice_pending)
         close.assert_not_called()
         queued.assert_called_once_with(session.id)
+        stored = agent_message.usage["risk_check"]
+        self.assertEqual(stored["about"], expected_about)
+        self.assertTrue(stored["reason"])
+        self.assertNotIn(model_text, stored["reason"])
 
     def test_first_person_phrases_close_and_replace_the_reply(self):
         model_text = "That sounds very heavy."
@@ -288,6 +320,10 @@ class HighRiskEndpointTests(TestCase):
             patch(
                 "api.utils.Agent.get_response",
                 return_value=(mocked, {}, None, None),
+            ),
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
             ),
         ):
             Agent.get_response(session=session, user_message=user_message)
@@ -479,10 +515,15 @@ class HighRiskVoiceTests(TestCase):
             patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
             patch("api.utils.session_close.close_session") as close,
             patch("api.utils.Agent.get_response", return_value=(mocked, {}, None, None)) as model,
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
+            ) as check,
         ):
             first = post("I want to die")
             self.assertEqual(first.status_code, status.HTTP_200_OK)
             spoken = " ".join(_sse_contents(first))
+            check.assert_called()
             self.assertIn(high_risk_chat_message(), spoken)
             self.assertNotIn("model text that must not be spoken", spoken)
             self.assertEqual(model.call_count, 1)
@@ -500,4 +541,339 @@ class HighRiskVoiceTests(TestCase):
         saved = Message.objects.filter(session=session, sender__agent=consumer.agent).get()
         self.assertEqual(saved.text, high_risk_chat_message())
         self.assertIsNotNone(saved.resources)
+        self.assertEqual(saved.usage["risk_check"]["about"], "self_now")
         self.assertEqual(grant.session_id, session.id)
+
+    def test_figure_of_speech_does_not_close_the_voice_chat(self):
+        consumer = Auth.create_consumer()
+        session = General.create_session(consumer=consumer)
+        _grant, raw_token = VoiceGrant.issue(consumer=consumer, session=session)
+        model_text = "Forgetting keys is annoying, and you are safe."
+        mocked = GeneralResponse(
+            text=model_text,
+            reasoning="test",
+            suggested_responses=["More"],
+            risk_level="none",
+        )
+        client = APIClient()
+
+        with (
+            patch("api.tasks.notify_trust_and_safety.delay_on_commit") as queued,
+            patch("api.utils.session_close.close_session") as close,
+            patch("api.utils.Agent.get_response", return_value=(mocked, {}, None, None)),
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "figure_of_speech", "reason": "An idiom."},
+            ) as check,
+        ):
+            response = client.post(
+                CHAT_COMPLETIONS_PATH,
+                data=json.dumps(
+                    {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "I could kill myself for forgetting my keys",
+                            }
+                        ],
+                        "model": "gpt-4o",
+                        "stream": True,
+                        "elevenlabs_extra_body": {"grant": raw_token},
+                    }
+                ),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {LLM_SECRET}",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            spoken = " ".join(_sse_contents(response))
+            check.assert_called()
+            self.assertIn(model_text, spoken)
+            self.assertNotIn(high_risk_chat_message(), spoken)
+            close.assert_not_called()
+            queued.assert_not_called()
+        session.refresh_from_db()
+        consumer.refresh_from_db()
+        self.assertIsNone(session.closed_at)
+        self.assertIsNone(session.close_reason)
+        self.assertEqual(session.live_risk_level, Constants.LIVE_RISK_LEVEL_NONE)
+        self.assertFalse(consumer.crisis_notice_pending)
+        saved = Message.objects.filter(session=session, sender__agent=consumer.agent).get()
+        self.assertEqual(saved.text, model_text)
+        self.assertIsNone(saved.resources)
+        self.assertEqual(saved.usage["risk_check"]["about"], "figure_of_speech")
+
+
+class RiskCheckDecisionTests(HighRiskTurnTests):
+    def _assert_cleared(
+        self,
+        consumer,
+        session,
+        agent_message,
+        close,
+        queued,
+        model_text,
+        about,
+        live_level=Constants.LIVE_RISK_LEVEL_NONE,
+    ):
+        self.assertEqual(agent_message.text, model_text)
+        self.assertIsNone(agent_message.resources)
+        self.assertIsNone(session.closed_at)
+        self.assertIsNone(session.close_reason)
+        self.assertFalse(consumer.crisis_notice_pending)
+        self.assertEqual(session.live_risk_level, live_level)
+        close.assert_not_called()
+        queued.assert_not_called()
+        self.assertEqual(agent_message.usage["risk_check"]["about"], about)
+        self.assertTrue(agent_message.usage["risk_check"]["reason"])
+
+    def test_other_person_does_not_close_flag_email_or_raise_live_level(self):
+        model_text = "That sounds frightening for them."
+        consumer, session, agent_message, close, queued = self._turn(
+            "I want to die",
+            model_text=model_text,
+            about="other_person",
+            live_risk_level=Constants.LIVE_RISK_LEVEL_LOW,
+        )
+        self._assert_cleared(
+            consumer,
+            session,
+            agent_message,
+            close,
+            queued,
+            model_text,
+            "other_person",
+            live_level=Constants.LIVE_RISK_LEVEL_LOW,
+        )
+
+    def test_figure_of_speech_does_not_close_flag_email_or_raise_live_level(self):
+        model_text = "That sounds like a frustrating morning."
+        consumer, session, agent_message, close, queued = self._turn(
+            "I could kill myself for forgetting my keys",
+            model_text=model_text,
+            about="figure_of_speech",
+        )
+        self._assert_cleared(
+            consumer, session, agent_message, close, queued, model_text, "figure_of_speech"
+        )
+
+    def test_topic_only_does_not_close_flag_email_or_raise_live_level(self):
+        model_text = "What did the article say?"
+        consumer, session, agent_message, close, queued = self._turn(
+            "I want to die",
+            model_text=model_text,
+            about="topic_only",
+        )
+        self._assert_cleared(
+            consumer, session, agent_message, close, queued, model_text, "topic_only"
+        )
+
+    def test_self_past_keeps_the_card_only(self):
+        model_text = "That was a hard year."
+        consumer, session, agent_message, close, queued = self._turn(
+            "I tried to end my life last year",
+            model_text=model_text,
+            about="self_past",
+        )
+        self.assertEqual(agent_message.text, model_text)
+        self.assertIsNotNone(agent_message.resources)
+        self.assertIsNone(session.closed_at)
+        self.assertIsNone(session.close_reason)
+        self.assertFalse(consumer.crisis_notice_pending)
+        self.assertEqual(session.live_risk_level, Constants.LIVE_RISK_LEVEL_MODERATE)
+        close.assert_not_called()
+        queued.assert_not_called()
+        self.assertEqual(agent_message.usage["risk_check"]["about"], "self_past")
+
+    def test_unclear_closes_and_emails(self):
+        model_text = "I am here with you."
+        consumer, session, agent_message, close, queued = self._turn(
+            "I want to die",
+            model_text=model_text,
+            about="unclear",
+        )
+        self._assert_closed(
+            consumer,
+            session,
+            agent_message,
+            close,
+            queued,
+            model_text,
+            expected_about="unclear",
+        )
+
+    def test_check_error_stays_high_and_does_not_log_the_message(self):
+        model_text = "Tell me a bit more."
+        phrase = "I want to die tonight"
+        with (
+            patch("api.utils.AI.AI.ask", side_effect=RuntimeError(phrase)),
+            self.assertLogs("api.utils.risk_check", level="WARNING") as logs,
+        ):
+            consumer, session, agent_message, close, queued = self._turn(
+                phrase,
+                model_text=model_text,
+                about=False,
+            )
+        self._assert_closed(consumer, session, agent_message, close, queued, model_text)
+        logged = "\n".join(logs.output)
+        self.assertIn(str(session.id), logged)
+        self.assertNotIn(phrase, logged)
+        self.assertEqual(
+            agent_message.usage["risk_check"]["reason"],
+            "The check could not be completed.",
+        )
+
+    def test_invalid_verdict_stays_high(self):
+        model_text = "Tell me a bit more."
+        with self.assertLogs("api.utils.risk", level="WARNING") as logs:
+            consumer, session, agent_message, close, queued = self._turn(
+                "I want to die",
+                model_text=model_text,
+                about="not-a-real-verdict",
+            )
+        self._assert_closed(consumer, session, agent_message, close, queued, model_text)
+        logged = "\n".join(logs.output)
+        self.assertIn(str(session.id), logged)
+        self.assertNotIn("I want to die", logged)
+
+    def test_model_only_high_still_runs_the_check(self):
+        model_text = "I am here with you."
+        seen = {}
+
+        def fake(session, user_text):
+            seen["text"] = user_text
+            seen["session_id"] = session.id
+            return {"about": "other_person", "reason": "No keyword, still checked."}
+
+        with patch("api.utils.risk_check.check_whose_risk", side_effect=fake):
+            consumer, session, agent_message, close, queued = self._turn(
+                "I slept badly last night",
+                model_level="high",
+                model_text=model_text,
+                about=False,
+            )
+        self.assertEqual(seen["text"], "I slept badly last night")
+        self.assertEqual(seen["session_id"], session.id)
+        self.assertEqual(risk_prescreen("I slept badly last night"), Constants.LIVE_RISK_LEVEL_NONE)
+        self._assert_cleared(
+            consumer, session, agent_message, close, queued, model_text, "other_person"
+        )
+
+    def test_moderate_does_not_call_the_check(self):
+        with patch("api.utils.risk_check.check_whose_risk") as check:
+            _consumer, session, agent_message, _close, queued = self._turn(
+                "I might harm myself",
+                about=False,
+            )
+        check.assert_not_called()
+        self.assertIsNotNone(agent_message.resources)
+        self.assertIsNone(session.closed_at)
+        queued.assert_not_called()
+        self.assertNotIn("risk_check", agent_message.usage or {})
+
+    def test_authoring_run_skips_the_check(self):
+        consumer = Auth.create_consumer()
+        session = Session.objects.create(consumer=consumer, authoring_test=True)
+        with (
+            patch("api.utils.risk_check.check_whose_risk") as check,
+            patch("api.tasks.notify_trust_and_safety.delay_on_commit") as queued,
+            patch("api.utils.AI.AI.ask") as ask,
+        ):
+            apply_turn_risk(session, "I want to die", "low")
+        check.assert_not_called()
+        ask.assert_not_called()
+        queued.assert_not_called()
+        session.refresh_from_db()
+        consumer.refresh_from_db()
+        self.assertIsNone(session.closed_at)
+        self.assertIsNone(session.close_reason)
+        self.assertEqual(session.live_risk_level, Constants.LIVE_RISK_LEVEL_HIGH)
+        self.assertFalse(consumer.crisis_notice_pending)
+
+    def test_exercise_other_person_does_not_close_or_advance(self):
+        exercise = General.create_exercise()
+        model_text = "We can talk about your friend."
+        with patch("api.utils.SessionStateMachine.on_model_turn") as moved:
+            consumer, session, agent_message, close, queued = self._turn(
+                "I want to die",
+                model_text=model_text,
+                exercise=exercise,
+                about="other_person",
+            )
+        moved.assert_called_once()
+        self._assert_cleared(
+            consumer, session, agent_message, close, queued, model_text, "other_person"
+        )
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.completed)
+
+    def test_check_sends_the_latest_message_and_six_before_it(self):
+        consumer = Auth.create_consumer()
+        session = Session.objects.create(consumer=consumer)
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        user_sender, agent_sender = Participant.create_participants(session)
+        start = timezone.now()
+        for index in range(8):
+            message = Message.objects.create(
+                session=session,
+                sender=user_sender if index % 2 == 0 else agent_sender,
+                text=f"turn-{index}",
+            )
+            message.created_at = start + timedelta(seconds=index)
+            message.save(update_fields=["created_at"])
+        latest = "I think about it too"
+        current = Message.objects.create(session=session, sender=user_sender, text=latest)
+        current.created_at = start + timedelta(seconds=9)
+        current.save(update_fields=["created_at"])
+        captured = {}
+
+        def ask(prompt, schema, temperature=0.3, timeout_ms=None, model=None):
+            captured["prompt"] = prompt
+            captured["temperature"] = temperature
+            captured["timeout_ms"] = timeout_ms
+            return {"about": "self_now", "reason": "Their own present thoughts."}
+
+        with patch("api.utils.AI.AI.ask", side_effect=ask):
+            from ...utils.risk_check import check_whose_risk
+
+            verdict = check_whose_risk(session, latest)
+
+        self.assertEqual(verdict["about"], "self_now")
+        self.assertEqual(captured["temperature"], 0.1)
+        self.assertEqual(captured["timeout_ms"], 15_000)
+        prompt = captured["prompt"]
+        self.assertIn("Latest user message:\nI think about it too", prompt)
+        self.assertNotIn("turn-0", prompt)
+        self.assertNotIn("turn-1", prompt)
+        for index in range(2, 8):
+            self.assertIn(f"turn-{index}", prompt)
+        self.assertEqual(prompt.count(latest), 1)
+
+    def test_timeout_stays_high_without_logging_the_message(self):
+        import time
+
+        phrase = "I'm going to kill myself tonight"
+
+        def slow(prompt, schema, temperature=0.3, timeout_ms=None, model=None):
+            time.sleep(0.3)
+            return {"about": "other_person", "reason": "late"}
+
+        with (
+            patch("api.utils.risk_check.RISK_CHECK_TIMEOUT_SECONDS", 0.05),
+            patch("api.utils.AI.AI.ask", side_effect=slow),
+            self.assertLogs("api.utils.risk_check", level="WARNING") as logs,
+        ):
+            consumer, session, agent_message, close, queued = self._turn(
+                phrase,
+                about=False,
+            )
+            self._assert_closed(
+                consumer, session, agent_message, close, queued, "Tell me a bit more."
+            )
+            logged = "\n".join(logs.output)
+            self.assertIn("timeout", logged)
+            self.assertIn(str(session.id), logged)
+            self.assertNotIn(phrase, logged)
+            time.sleep(0.4)

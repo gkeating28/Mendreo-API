@@ -303,7 +303,13 @@ class Wp3Tests(TestCase):
         consumer = Auth.create_consumer()
         session = Session.objects.create(consumer=consumer)
 
-        with patch("api.tasks.notify_trust_and_safety.delay_on_commit") as queued:
+        with (
+            patch("api.tasks.notify_trust_and_safety.delay_on_commit") as queued,
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
+            ),
+        ):
             moderate = apply_turn_risk(session, "I might harm myself", "none")
             self.assertIsNone(queued.call_args)
             resources = apply_turn_risk(session, "I want to die", "low")

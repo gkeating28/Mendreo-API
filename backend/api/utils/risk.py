@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from django.utils import timezone
 
 from . import Constants
+from .risk_check import (
+    ABOUT_FIGURE_OF_SPEECH,
+    ABOUT_OTHER_PERSON,
+    ABOUT_SELF_NOW,
+    ABOUT_SELF_PAST,
+    ABOUT_TOPIC_ONLY,
+    ABOUT_UNCLEAR,
+    RISK_CHECK_ABOUTS,
+)
+
+logger = logging.getLogger(__name__)
+
+# A high turn is reclassified from the context check before any close or ratchet.
+_CHECK_STAYS_HIGH = frozenset({ABOUT_SELF_NOW, ABOUT_UNCLEAR})
+_CHECK_TO_MODERATE = frozenset({ABOUT_SELF_PAST})
+_CHECK_TO_NONE = frozenset({
+    ABOUT_OTHER_PERSON,
+    ABOUT_FIGURE_OF_SPEECH,
+    ABOUT_TOPIC_ONLY,
+})
 
 # A phrase is ignored when one of these sits within this many words before it.
 # "dont" / "didnt" / "wouldnt" are the same words without an apostrophe.
@@ -128,9 +149,65 @@ def _close_for_high_risk(session) -> None:
         consumer.save(update_fields=["crisis_notice_pending", "updated_at"])
 
 
+def level_after_risk_check(about: str) -> str:
+    """Map a context-check verdict onto the level used for this turn.
+
+    self_now and unclear stay high. self_past becomes the support card only.
+    Someone else, a figure of speech, or the topic alone become none, so this
+    turn does not raise the stored live level.
+    """
+    if about in _CHECK_STAYS_HIGH:
+        return Constants.LIVE_RISK_LEVEL_HIGH
+    if about in _CHECK_TO_MODERATE:
+        return Constants.LIVE_RISK_LEVEL_MODERATE
+    if about in _CHECK_TO_NONE:
+        return Constants.LIVE_RISK_LEVEL_NONE
+    return Constants.LIVE_RISK_LEVEL_HIGH
+
+
+def _verdict_for_high_turn(session, user_text: str) -> dict:
+    """Run the context check. Any failure stays self_now."""
+    from .risk_check import check_whose_risk
+
+    session_id = getattr(session, "id", None)
+    try:
+        verdict = check_whose_risk(session, user_text)
+    except Exception as exc:  # noqa: BLE001 - a broken check must not leave a high turn open
+        logger.warning(
+            "risk check failed session=%s error=%s",
+            session_id,
+            type(exc).__name__,
+        )
+        verdict = None
+    if not isinstance(verdict, dict):
+        return {
+            "about": ABOUT_SELF_NOW,
+            "reason": "The check could not be completed.",
+        }
+    about = str(verdict.get("about") or "").strip()
+    reason = str(verdict.get("reason") or "").strip()[:240]
+    if about not in RISK_CHECK_ABOUTS:
+        logger.warning("risk check invalid session=%s", session_id)
+        about = ABOUT_SELF_NOW
+        reason = reason or "The check could not be completed."
+    return {"about": about, "reason": reason or "No reason given."}
+
+
 def apply_turn_risk(session, user_text: str, model_level) -> dict | None:
-    """Raise the session's live level and return a resources card when needed."""
+    """Raise the session's live level and return a resources card when needed.
+
+    A turn that would be high is checked first, unless this is an authoring
+    preview. Moderate turns are unchanged and do not call the check.
+    """
     level = max_risk_level(risk_prescreen(user_text), normalize_risk_level(model_level))
+    if (
+        level == Constants.LIVE_RISK_LEVEL_HIGH
+        and not getattr(session, "authoring_test", False)
+    ):
+        verdict = _verdict_for_high_turn(session, user_text)
+        session._risk_check = verdict
+        level = level_after_risk_check(verdict["about"])
+
     current = normalize_risk_level(session.live_risk_level)
     updated = max_risk_level(current, level)
     if updated != current:

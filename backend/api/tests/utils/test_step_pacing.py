@@ -2152,6 +2152,10 @@ class GoalGateTests(BaseTest):
             patch("api.utils.extraction.judge_ready_reply", return_value="other") as judge,
             patch("api.utils.Agent.get_response", return_value=self._chat_reply()),
             patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
+            ),
         ):
             response = self._post(
                 "/messages",
