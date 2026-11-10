@@ -59,10 +59,36 @@ class TourTests(TestCase):
             )
         nav_main = _by_id(response.json, "nav-main")
         nav_bar = _by_id(response.json, "nav-bar")
-        themes = _by_id(response.json, "progress-themes")
+        insights = _by_id(response.json, "progress-insights")
+        ids = [step["id"] for step in response.json["steps"]]
         self.assertEqual(nav_main["platforms"], ["web"])
         self.assertEqual(nav_bar["platforms"], ["mobile"])
-        self.assertEqual(themes["platforms"], ["web"])
+        self.assertEqual(insights["platforms"], ["web"])
+        self.assertEqual(insights["title"], "Your insights")
+        self.assertLess(ids.index("progress-feelings"), ids.index("progress-insights"))
+        self.assertLess(ids.index("progress-insights"), ids.index("progress-practice"))
+        self.assertNotIn("progress-themes", ids)
+
+    def test_stored_progress_themes_id_is_ignored(self):
+        Setting.objects.update_or_create(
+            key=Constants.SETTING_KEY_APP_TOUR,
+            defaults={
+                "value": json.dumps({
+                    "progress-themes": {
+                        "title": "Themes and measures",
+                        "body": "Themes are the threads running through your check-ins.",
+                    },
+                    "hero": {"title": "Saved hero"},
+                })
+            },
+        )
+        cache.clear()
+        response = self._get("/tour", access_token=self.consumer_token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        ids = [step["id"] for step in response.json["steps"]]
+        self.assertNotIn("progress-themes", ids)
+        self.assertEqual(_by_id(response.json, "progress-insights")["title"], "Your insights")
+        self.assertEqual(_by_id(response.json, "hero")["title"], "Saved hero")
 
     def test_blank_fields_fall_back_to_the_default(self):
         saved = self._put(

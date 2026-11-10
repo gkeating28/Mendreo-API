@@ -75,18 +75,18 @@ DEFAULT_TOUR_STEPS = [
         ("web", "mobile"),
     ),
     _step(
+        "progress-insights",
+        "Your insights",
+        "Insights pull out the themes running through your check-ins and the "
+        "measures recorded in this range.",
+        ("web",),
+    ),
+    _step(
         "progress-practice",
         "Practice log",
         "This shows the exercise sessions you've completed, so you can see how "
         "often you've been practising.",
         ("web", "mobile"),
-    ),
-    _step(
-        "progress-themes",
-        "Themes and measures",
-        "Themes are the threads running through your check-ins. Measures are the "
-        "readings recorded in this range.",
-        ("web",),
     ),
 ]
 
