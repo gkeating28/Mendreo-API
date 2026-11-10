@@ -60,7 +60,19 @@ class TourTests(TestCase):
         nav_main = _by_id(response.json, "nav-main")
         nav_bar = _by_id(response.json, "nav-bar")
         insights = _by_id(response.json, "progress-insights")
+        account_menu = _by_id(response.json, "account-menu")
+        hero = _by_id(response.json, "hero")
         ids = [step["id"] for step in response.json["steps"]]
+        self.assertEqual(ids[0], "account-menu")
+        self.assertEqual(account_menu["platforms"], ["web"])
+        self.assertEqual(account_menu["title"], "Your account menu")
+        self.assertEqual(
+            account_menu["body"],
+            "Welcome to Mendreo. Click your initials up here to manage your profile, "
+            "open your settings and manage your membership.",
+        )
+        self.assertEqual(hero["platforms"], ["mobile"])
+        self.assertEqual(hero["title"], "Start where the day is")
         self.assertEqual(nav_main["platforms"], ["web"])
         self.assertEqual(nav_bar["platforms"], ["mobile"])
         self.assertEqual(insights["platforms"], ["web"])

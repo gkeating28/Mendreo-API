@@ -15,11 +15,18 @@ def _step(step_id: str, title: str, body: str, platforms: tuple[str, ...]) -> di
 
 DEFAULT_TOUR_STEPS = [
     _step(
+        "account-menu",
+        "Your account menu",
+        "Welcome to Mendreo. Click your initials up here to manage your profile, "
+        "open your settings and manage your membership.",
+        ("web",),
+    ),
+    _step(
         "hero",
         "Start where the day is",
         "Welcome to Mendreo. This is your home card. It reads the day back to you, "
         "and it's a good place to land before you decide what to do.",
-        ("web", "mobile"),
+        ("mobile",),
     ),
     _step(
         "home-tiles",
