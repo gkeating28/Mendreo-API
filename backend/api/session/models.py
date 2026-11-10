@@ -253,23 +253,26 @@ class Session(SmartModel):
     @staticmethod
     def create_general(consumer, *, assign_opener=True):
         """Always create a fresh general chat. Does not reuse today's session."""
+        from django.db import transaction
+
         from ..participant.models import Participant
 
-        session = Session.objects.create(
-            consumer=consumer,
-            risk_level=None,
-            exercise=None,
-            completed=None,
-        )
-        from ..grounding.retrieval import stamp_retrieval_enabled
+        with transaction.atomic():
+            session = Session.objects.create(
+                consumer=consumer,
+                risk_level=None,
+                exercise=None,
+                completed=None,
+            )
+            from ..grounding.retrieval import stamp_retrieval_enabled
 
-        stamp_retrieval_enabled(session)
-        Participant.create_participants(session=session)
-        from ..knowledge.followup import maybe_start_onboarding_followup
-        maybe_start_onboarding_followup(session)
-        if assign_opener:
-            _assign_chat_opener(session, consumer)
-        return session
+            stamp_retrieval_enabled(session)
+            Participant.create_participants(session=session)
+            from ..knowledge.followup import maybe_start_onboarding_followup
+            maybe_start_onboarding_followup(session)
+            if assign_opener:
+                _assign_chat_opener(session, consumer)
+            return session
 
     @staticmethod
     def get_with_messages(date, consumer, exercise):
@@ -369,6 +372,10 @@ class SessionMetric(SmartModel):
         ]
 
 
+# Stored on the assistant row so a later reader can tell this greeting from a model reply.
+FIRST_CHAT_OPENER_REASONING = "first_chat_opener"
+
+
 def _assign_chat_opener(session, consumer) -> None:
     """Store one rendered opener. An empty list leaves the field null."""
     import random
@@ -384,8 +391,9 @@ def _assign_chat_opener(session, consumer) -> None:
         .exists()
     )
     if first_opener and not earlier_general:
-        session.opener = _render_chat_opener(first_opener, first_name)
-        session.save(update_fields=["opener", "updated_at"])
+        rendered = _render_chat_opener(first_opener, first_name)
+        session.opener = rendered
+        _persist_first_chat_opener(session, rendered)
         return
 
     templates = []
@@ -416,6 +424,38 @@ def _assign_chat_opener(session, consumer) -> None:
                 choices = remaining
     session.opener = random.choice(choices)
     session.save(update_fields=["opener", "updated_at"])
+
+
+def _persist_first_chat_opener(session, text: str) -> None:
+    """Save Toni's first line as a real assistant message. No model call.
+
+    ``reasoning`` is the marker. Counters count an agent turn only.
+    """
+    from ..participant.models import Participant
+
+    agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+    if agent is None or not (text or "").strip():
+        session.save(update_fields=["opener", "updated_at"])
+        return
+
+    message = Message.objects.create(
+        session=session,
+        sender=agent,
+        text=text,
+        reasoning=FIRST_CHAT_OPENER_REASONING,
+    )
+    session.last_message = message
+    session.messages_no = 1
+    session.agent_messages_no = 1
+    session.save(
+        update_fields=[
+            "opener",
+            "last_message",
+            "messages_no",
+            "agent_messages_no",
+            "updated_at",
+        ]
+    )
 
 
 def _render_chat_opener(template: str, first_name: str) -> str:

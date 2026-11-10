@@ -54,14 +54,16 @@ def close_session(session, reason: str):
     if getattr(session, "authoring_test", False):
         return session
 
-    try:
-        _rate(session)
-    except Exception:
-        logger.exception("Session rating failed for %s", session.id)
-    try:
-        _extract_pending_question(session)
-    except Exception:
-        logger.exception("Knowledge extraction failed for %s", session.id)
+    # A greeting the user never answered is not a conversation to summarise.
+    if _user_spoke(session):
+        try:
+            _rate(session)
+        except Exception:
+            logger.exception("Session rating failed for %s", session.id)
+        try:
+            _extract_pending_question(session)
+        except Exception:
+            logger.exception("Knowledge extraction failed for %s", session.id)
     if session.completed or reason == "completed":
         try:
             _update_exercise_summary(session)
@@ -76,6 +78,36 @@ def close_session(session, reason: str):
                 type(exc).__name__,
             )
     return session
+
+
+def _unanswered_first_opener(session) -> bool:
+    if _user_spoke(session):
+        return False
+    from ..message.models import Message
+    from ..session.models import FIRST_CHAT_OPENER_REASONING
+
+    return Message.objects.filter(
+        session=session,
+        reasoning=FIRST_CHAT_OPENER_REASONING,
+    ).exists()
+
+
+def _user_spoke(session) -> bool:
+    """True when the user has a message, or this is not a saved session row.
+
+    Close tests pass plain objects. Those keep the old rate-and-extract path.
+    """
+    from django.db.models import Model
+
+    if not isinstance(session, Model):
+        return True
+    from ..message.models import Message
+
+    return (
+        Message.objects.filter(session=session, sender__consumer_id__isnull=False)
+        .exclude(text="")
+        .exists()
+    )
 
 
 def close_idle_sessions() -> int:
@@ -95,6 +127,9 @@ def close_idle_sessions() -> int:
         last_message__created_at__lt=cutoff,
     )
     for session in queryset.iterator():
+        # The saved first-chat greeting is not a conversation until the user replies.
+        if _unanswered_first_opener(session):
+            continue
         close_session(session, "inactivity")
         closed += 1
     return closed

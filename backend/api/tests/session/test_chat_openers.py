@@ -229,8 +229,7 @@ class ChatOpenerTests(TestCase):
         self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.json)
         self.assertEqual(
             first.json["opener"],
-            "Hi Ada, what's on your mind today? Is there anything you'd like to "
-            "talk about, or anything that's been worrying you?",
+            Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada"),
         )
 
     def test_the_second_general_chat_uses_the_random_list(self):
@@ -245,8 +244,7 @@ class ChatOpenerTests(TestCase):
         first = Session.create_general(self.consumer)
         self.assertEqual(
             first.opener,
-            "Hi Ada, what's on your mind today? Is there anything you'd like to "
-            "talk about, or anything that's been worrying you?",
+            Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada"),
         )
         second = Session.create_general(self.consumer)
         self.assertIn(second.opener, rendered)
@@ -257,6 +255,9 @@ class ChatOpenerTests(TestCase):
         self._first_opener("   ")
         created = Session.create_general(self.consumer)
         self.assertEqual(created.opener, "Hi Ada, random one.")
+        self.assertFalse(Message.objects.filter(session=created).exists())
+        self.assertEqual(created.messages_no, 0)
+        self.assertEqual(created.consumer_messages_no, 0)
 
         saved = self._post(
             "/settings",
@@ -285,3 +286,66 @@ class ChatOpenerTests(TestCase):
         )
         self.assertEqual(too_long.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("first_chat_opener", too_long.json)
+
+    def test_the_first_general_chat_saves_tonis_line_as_a_message(self):
+        from datetime import timedelta
+
+        from pydantic_ai.messages import ModelResponse
+
+        from ...participant.models import Participant
+        from ...session.models import FIRST_CHAT_OPENER_REASONING
+        from ...utils.history import build_history
+        from ...utils.session_close import close_idle_sessions, close_session
+
+        self._name("Ada")
+        self._openers(["Hi {name}, random one.", "Hi {name}, random two."])
+        rendered = Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada")
+
+        first = Session.create_general(self.consumer)
+        self.assertEqual(first.opener, rendered)
+        message = Message.objects.get(session=first)
+        self.assertEqual(message.text, rendered)
+        self.assertEqual(message.reasoning, FIRST_CHAT_OPENER_REASONING)
+        self.assertIsNotNone(message.sender.agent_id)
+        self.assertIsNone(message.sender.consumer_id)
+        self.assertIsNone(message.usage)
+        self.assertEqual(first.messages_no, 1)
+        self.assertEqual(first.agent_messages_no, 1)
+        self.assertEqual(first.consumer_messages_no, 0)
+        self.assertEqual(first.last_message_id, message.id)
+
+        with patch("api.utils.Agent.AI.ask") as ask:
+            close_session(first, "inactivity")
+        ask.assert_not_called()
+        first.refresh_from_db()
+        self.assertIsNone(first.subject)
+        self.assertEqual(first.consumer_messages_no, 0)
+
+        user = Participant.objects.get(session=first, consumer=self.consumer)
+        reply = Message.objects.create(session=first, sender=user, text="The walk home.")
+        history = build_history(first, exclude_message_id=reply.id)
+        assistant = [item for item in history if isinstance(item, ModelResponse)]
+        self.assertEqual([item.parts[0].content for item in assistant], [rendered])
+        self.assertNotIn("The walk home.", str(history))
+
+        second = Session.create_general(self.consumer)
+        self.assertIn(second.opener, ["Hi Ada, random one.", "Hi Ada, random two."])
+        self.assertFalse(
+            Message.objects.filter(
+                session=second,
+                reasoning=FIRST_CHAT_OPENER_REASONING,
+            ).exists()
+        )
+        self.assertEqual(second.messages_no, 0)
+        self.assertEqual(second.consumer_messages_no, 0)
+
+        other = Auth.create_consumer()
+        other.user.first_name = "Bea"
+        other.user.save(update_fields=["first_name", "full_name", "updated_at"])
+        unanswered = Session.create_general(other)
+        opener = Message.objects.get(session=unanswered)
+        old = timezone.now() - timedelta(days=2)
+        Message.objects.filter(id=opener.id).update(created_at=old)
+        self.assertEqual(close_idle_sessions(), 0)
+        unanswered.refresh_from_db()
+        self.assertIsNone(unanswered.closed_at)

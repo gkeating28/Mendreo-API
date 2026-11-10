@@ -329,8 +329,7 @@ SETTING_KEY_CHAT_OPENERS = "chat_openers"
 SETTING_KEY_FIRST_CHAT_OPENER = "first_chat_opener"
 FIRST_CHAT_OPENER_MAX_LENGTH = 240
 DEFAULT_FIRST_CHAT_OPENER = (
-    "Hi {name}, what's on your mind today? Is there anything you'd like to talk about, "
-    "or anything that's been worrying you?"
+    "Hi {name}, I'm glad you're here. What's one thing that's on your mind right now?"
 )
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
 SETTING_KEY_HIGH_RISK_COPY = "high_risk_copy"
