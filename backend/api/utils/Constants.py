@@ -326,6 +326,12 @@ SETTING_KEY_FINISH_PHRASES = "finish_phrases"
 THIN_ANSWER_CONFIDENCE = 0.3
 SETTING_KEY_GENERIC_ANSWERS_DEFAULT = "generic_answers_default"
 SETTING_KEY_CHAT_OPENERS = "chat_openers"
+SETTING_KEY_FIRST_CHAT_OPENER = "first_chat_opener"
+FIRST_CHAT_OPENER_MAX_LENGTH = 240
+DEFAULT_FIRST_CHAT_OPENER = (
+    "Hi {name}, what's on your mind today? Is there anything you'd like to talk about, "
+    "or anything that's been worrying you?"
+)
 SETTING_KEY_RISK_KEYWORDS = "risk_keywords"
 SETTING_KEY_HIGH_RISK_COPY = "high_risk_copy"
 SETTING_KEY_TRUST_AND_SAFETY_EMAIL = "trust_and_safety_email"

@@ -72,6 +72,8 @@ class ListCreate(SmartAPIView):
                 data[setting.key] = Setting.get_generic_answers_default()
             elif setting.key == Constants.SETTING_KEY_CHAT_OPENERS:
                 data[setting.key] = Setting.get_chat_openers()
+            elif setting.key == Constants.SETTING_KEY_FIRST_CHAT_OPENER:
+                data[setting.key] = Setting.get_first_chat_opener()
             elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
                 data[setting.key] = Setting.get_risk_keywords()
             elif setting.key == Constants.SETTING_KEY_HIGH_RISK_COPY:
@@ -134,6 +136,7 @@ class ListCreate(SmartAPIView):
             "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
+            "first_chat_opener": Setting.get_first_chat_opener(),
             "risk_keywords": Setting.get_risk_keywords(),
             "high_risk_copy": Setting.get_high_risk_copy(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),

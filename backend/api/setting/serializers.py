@@ -112,6 +112,11 @@ class SettingCreateSerializer(serializers.Serializer):
         allow_empty=True,
         max_length=20,
     )
+    first_chat_opener = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=Constants.FIRST_CHAT_OPENER_MAX_LENGTH,
+    )
     onboarding_copy_welcome = serializers.JSONField(required=False)
     onboarding_copy_initial = serializers.JSONField(required=False)
     onboarding_copy_return = serializers.JSONField(required=False)
@@ -207,6 +212,9 @@ class SettingCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Openers must be unique.")
             seen.add(text)
         return value
+
+    def validate_first_chat_opener(self, value):
+        return (value or "").strip()
 
     def _validate_onboarding_copy(self, value):
         from ..onboarding.copy import validate_copy_payload
@@ -347,6 +355,11 @@ class SettingCreateSerializer(serializers.Serializer):
             openers.value = json.dumps(validated_data["chat_openers"])
             openers.save()
 
+        if "first_chat_opener" in incoming:
+            first_opener = Setting.get_or_create_first_chat_opener()
+            first_opener.value = validated_data.get("first_chat_opener") or ""
+            first_opener.save()
+
         if "risk_keywords" in validated_data:
             keywords = Setting.get_or_create_risk_keywords()
             keywords.value = json.dumps(validated_data["risk_keywords"])
@@ -481,6 +494,7 @@ class SettingCreateSerializer(serializers.Serializer):
             "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
+            "first_chat_opener": Setting.get_first_chat_opener(),
             "risk_keywords": Setting.get_risk_keywords(),
             "high_risk_copy": Setting.get_high_risk_copy(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),

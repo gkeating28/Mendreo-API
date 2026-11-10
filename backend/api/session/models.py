@@ -375,6 +375,19 @@ def _assign_chat_opener(session, consumer) -> None:
 
     from ..setting.models import Setting
 
+    user = getattr(consumer, "user", None)
+    first_name = (getattr(user, "first_name", None) or "").strip()
+    first_opener = Setting.get_first_chat_opener()
+    earlier_general = (
+        Session.objects.filter(consumer=consumer, exercise__isnull=True)
+        .exclude(pk=session.pk)
+        .exists()
+    )
+    if first_opener and not earlier_general:
+        session.opener = _render_chat_opener(first_opener, first_name)
+        session.save(update_fields=["opener", "updated_at"])
+        return
+
     templates = []
     for item in Setting.get_chat_openers():
         if not isinstance(item, str):
@@ -385,8 +398,6 @@ def _assign_chat_opener(session, consumer) -> None:
     if not templates:
         return
 
-    user = getattr(consumer, "user", None)
-    first_name = (getattr(user, "first_name", None) or "").strip()
     rendered = [_render_chat_opener(template, first_name) for template in templates]
     choices = rendered
     if len(templates) > 1:

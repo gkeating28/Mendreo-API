@@ -66,6 +66,7 @@ class Setting(SmartModel):
         Setting.get_or_create_finish_phrases()
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_chat_openers()
+        Setting.get_or_create_first_chat_opener()
         Setting.get_or_create_risk_keywords()
         Setting.get_or_create_high_risk_copy()
         Setting.get_or_create_trust_and_safety_email()
@@ -409,6 +410,23 @@ class Setting(SmartModel):
             Setting.get_or_create_chat_openers,
         )
         return _json_list(raw, Constants.DEFAULT_CHAT_OPENERS)
+
+    @staticmethod
+    def get_or_create_first_chat_opener():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_FIRST_CHAT_OPENER,
+            defaults={"value": Constants.DEFAULT_FIRST_CHAT_OPENER},
+        )
+        return setting
+
+    @staticmethod
+    def get_first_chat_opener() -> str:
+        """Stored first-chat line. Blank means the random opener list is used."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_FIRST_CHAT_OPENER,
+            Setting.get_or_create_first_chat_opener,
+        )
+        return (raw or "").strip()
 
     @staticmethod
     def get_or_create_risk_keywords():
