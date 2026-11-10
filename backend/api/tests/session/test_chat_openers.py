@@ -349,3 +349,94 @@ class ChatOpenerTests(TestCase):
         self.assertEqual(close_idle_sessions(), 0)
         unanswered.refresh_from_db()
         self.assertIsNone(unanswered.closed_at)
+
+    def test_an_empty_general_shell_does_not_block_the_first_message(self):
+        self._name("Ada")
+        Session.objects.create(consumer=self.consumer, exercise=None)
+        created = Session.create_general(self.consumer)
+        rendered = Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada")
+        self.assertEqual(created.opener, rendered)
+        self.assertEqual(Message.objects.get(session=created).text, rendered)
+        self.assertEqual(created.consumer_messages_no, 0)
+
+    def test_defer_first_message_stores_the_opener_and_no_row(self):
+        self._name("Ada")
+        rendered = Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada")
+        created = self._post(
+            "/sessions",
+            {"general": True, "defer_first_message": True},
+            access_token=self.token,
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.json)
+        self.assertEqual(created.json["opener"], rendered)
+        session = Session.objects.get(id=created.json["id"])
+        self.assertFalse(Message.objects.filter(session=session).exists())
+        self.assertEqual(session.messages_no, 0)
+        self.assertEqual(session.consumer_messages_no, 0)
+
+        absent = self._post("/sessions", {"general": True}, access_token=self.token)
+        self.assertEqual(absent.status_code, status.HTTP_201_CREATED, absent.json)
+        self.assertTrue(
+            Message.objects.filter(
+                session_id=absent.json["id"],
+                reasoning="first_chat_opener",
+            ).exists()
+        )
+
+    def test_first_message_endpoint_is_idempotent_and_private(self):
+        from ...session.models import FIRST_CHAT_OPENER_REASONING
+
+        self._name("Ada")
+        rendered = Constants.DEFAULT_FIRST_CHAT_OPENER.replace("{name}", "Ada")
+        created = Session.create_general(self.consumer, defer_first_message=True)
+        self.assertFalse(Message.objects.filter(session=created).exists())
+
+        first = self._post(
+            f"/sessions/{created.id}/first-message",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED, first.json)
+        self.assertEqual(first.json["text"], rendered)
+        self.assertEqual(first.json["reasoning"], FIRST_CHAT_OPENER_REASONING)
+        self.assertIsNone(first.json["sender"]["consumer"])
+        self.assertIsNotNone(first.json["sender"]["agent"])
+        created.refresh_from_db()
+        self.assertEqual(created.messages_no, 1)
+        self.assertEqual(created.agent_messages_no, 1)
+        self.assertEqual(created.consumer_messages_no, 0)
+
+        again = self._post(
+            f"/sessions/{created.id}/first-message",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(again.status_code, status.HTTP_200_OK, again.json)
+        self.assertEqual(again.json["id"], first.json["id"])
+        self.assertEqual(
+            Message.objects.filter(session=created, reasoning=FIRST_CHAT_OPENER_REASONING).count(),
+            1,
+        )
+
+        other = Auth.create_consumer()
+        hidden = self._post(
+            f"/sessions/{created.id}/first-message",
+            {},
+            access_token=Auth.get_access_token(other.user),
+        )
+        self.assertEqual(hidden.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_a_blank_first_opener_endpoint_creates_nothing(self):
+        self._first_opener("")
+        self._name("Ada")
+        self._openers(["Hi {name}, random one."])
+        created = Session.create_general(self.consumer, defer_first_message=True)
+        self.assertEqual(created.opener, "Hi Ada, random one.")
+        response = self._post(
+            f"/sessions/{created.id}/first-message",
+            {},
+            access_token=self.token,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json, {})
+        self.assertFalse(Message.objects.filter(session=created).exists())

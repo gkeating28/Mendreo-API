@@ -95,6 +95,13 @@ DEFAULT_TOUR_STEPS = [
         "often you've been practising.",
         ("web", "mobile"),
     ),
+    _step(
+        "chat-intro",
+        "Your first chat",
+        "We're in the chat now. This is where you and I talk. Why don't you "
+        "have a go and see how you get on?",
+        ("web",),
+    ),
 ]
 
 STEPS_BY_ID = {step["id"]: step for step in DEFAULT_TOUR_STEPS}

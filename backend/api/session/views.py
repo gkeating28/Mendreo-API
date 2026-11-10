@@ -101,7 +101,14 @@ class List(SmartPaginationAPIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-        session = Session.create_general(consumer, assign_opener=source_run is None)
+        defer_first_message = (
+            isinstance(request.data, dict) and request.data.get("defer_first_message") is True
+        )
+        session = Session.create_general(
+            consumer,
+            assign_opener=source_run is None,
+            defer_first_message=defer_first_message,
+        )
         if source_run is not None:
             session.source_run = source_run
             session.save(update_fields=["source_run", "updated_at"])
@@ -115,6 +122,37 @@ class List(SmartPaginationAPIView):
         if method == "POST":
             return self.is_consumer_request()
         return True
+
+
+class FirstMessage(SmartAPIView):
+    """POST /sessions/<id>/first-message. One saved Toni opener, no model call."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        from django.db import transaction
+
+        from ..message.serializers import MessageDetailSerializer
+        from .models import insert_deferred_first_message
+
+        consumer = self.get_consumer_from_request()
+        with transaction.atomic():
+            session = (
+                Session.objects.select_for_update()
+                .filter(id=id, consumer=consumer)
+                .first()
+            )
+            if session is None:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            message, created = insert_deferred_first_message(session)
+        if message is None:
+            return Response({}, status=status.HTTP_200_OK)
+        data = MessageDetailSerializer(message).data
+        code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(data, status=code)
+
+    def has_permission(self, request, method):
+        return method == "POST"
 
 
 class Today(SmartAPIView):

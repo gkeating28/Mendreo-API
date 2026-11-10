@@ -79,6 +79,16 @@ class TourTests(TestCase):
         self.assertEqual(insights["title"], "Your insights")
         self.assertLess(ids.index("progress-feelings"), ids.index("progress-insights"))
         self.assertLess(ids.index("progress-insights"), ids.index("progress-practice"))
+        self.assertLess(ids.index("progress-practice"), ids.index("chat-intro"))
+        self.assertEqual(ids[-1], "chat-intro")
+        chat_intro = _by_id(response.json, "chat-intro")
+        self.assertEqual(chat_intro["platforms"], ["web"])
+        self.assertEqual(chat_intro["title"], "Your first chat")
+        self.assertEqual(
+            chat_intro["body"],
+            "We're in the chat now. This is where you and I talk. Why don't you "
+            "have a go and see how you get on?",
+        )
         self.assertNotIn("progress-themes", ids)
 
     def test_stored_progress_themes_id_is_ignored(self):
