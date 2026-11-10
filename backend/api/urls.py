@@ -53,6 +53,7 @@ urlpatterns = [
     path('mood-entries', include('api.mood.urls')),
 
     path('voice', include('api.voice.urls')),
+    path('tour', include('api.tour.urls')),
 ]
 
 

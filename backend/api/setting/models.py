@@ -97,6 +97,7 @@ class Setting(SmartModel):
             Constants.KNOWLEDGE_FLOW_REFRESH,
         ):
             Setting.get_or_create_onboarding_copy(variant)
+        Setting.get_or_create_app_tour()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -992,6 +993,12 @@ class Setting(SmartModel):
         from ..onboarding.copy import get_onboarding_copy
 
         return get_onboarding_copy(variant)
+
+    @staticmethod
+    def get_or_create_app_tour():
+        from ..tour.services import get_or_create_app_tour
+
+        return get_or_create_app_tour()
 
     @staticmethod
     def _cached_value(key: str, loader):

@@ -847,6 +847,9 @@ ONBOARDING_COPY_SETTING_KEYS = {
     SETTING_KEY_ONBOARDING_COPY_REFRESH: KNOWLEDGE_FLOW_REFRESH,
 }
 
+# Editable tour copy and clip pointers. Step ids and platforms live in code.
+SETTING_KEY_APP_TOUR = "app_tour"
+
 KNOWLEDGE_RESTRICTED_PLACEHOLDER = "Restricted"
 
 # First-chat re-ask of vague initial free-text onboarding answers.
