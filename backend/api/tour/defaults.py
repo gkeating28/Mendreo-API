@@ -19,7 +19,7 @@ DEFAULT_TOUR_STEPS = [
         "Your account menu",
         "Welcome to Mendreo. Click your initials up here to manage your profile, "
         "open your settings and manage your membership.",
-        ("web",),
+        ("web", "mobile"),
     ),
     _step(
         "hero",
@@ -86,7 +86,7 @@ DEFAULT_TOUR_STEPS = [
         "Your insights",
         "Insights pull out the themes running through your check-ins and the "
         "measures recorded in this range.",
-        ("web",),
+        ("web", "mobile"),
     ),
     _step(
         "progress-practice",

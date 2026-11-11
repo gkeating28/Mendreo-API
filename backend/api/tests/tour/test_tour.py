@@ -64,7 +64,7 @@ class TourTests(TestCase):
         hero = _by_id(response.json, "hero")
         ids = [step["id"] for step in response.json["steps"]]
         self.assertEqual(ids[0], "account-menu")
-        self.assertEqual(account_menu["platforms"], ["web"])
+        self.assertEqual(account_menu["platforms"], ["web", "mobile"])
         self.assertEqual(account_menu["title"], "Your account menu")
         self.assertEqual(
             account_menu["body"],
@@ -75,7 +75,27 @@ class TourTests(TestCase):
         self.assertEqual(hero["title"], "Start where the day is")
         self.assertEqual(nav_main["platforms"], ["web"])
         self.assertEqual(nav_bar["platforms"], ["mobile"])
-        self.assertEqual(insights["platforms"], ["web"])
+        self.assertEqual(insights["platforms"], ["web", "mobile"])
+        mobile_ids = [
+            step["id"] for step in response.json["steps"] if "mobile" in step["platforms"]
+        ]
+        self.assertEqual(
+            mobile_ids,
+            [
+                "account-menu",
+                "hero",
+                "home-tiles",
+                "nav-bar",
+                "chat-practice",
+                "exercise-tabs",
+                "exercise-practice",
+                "progress-tabs",
+                "progress-feelings",
+                "progress-insights",
+                "progress-practice",
+                "chat-intro",
+            ],
+        )
         self.assertEqual(insights["title"], "Your insights")
         self.assertLess(ids.index("progress-feelings"), ids.index("progress-insights"))
         self.assertLess(ids.index("progress-insights"), ids.index("progress-practice"))
