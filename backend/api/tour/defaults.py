@@ -100,7 +100,7 @@ DEFAULT_TOUR_STEPS = [
         "Your first chat",
         "We're in the chat now. This is where you and I talk. Why don't you "
         "have a go and see how you get on?",
-        ("web",),
+        ("web", "mobile"),
     ),
 ]
 

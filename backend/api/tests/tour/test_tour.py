@@ -82,7 +82,7 @@ class TourTests(TestCase):
         self.assertLess(ids.index("progress-practice"), ids.index("chat-intro"))
         self.assertEqual(ids[-1], "chat-intro")
         chat_intro = _by_id(response.json, "chat-intro")
-        self.assertEqual(chat_intro["platforms"], ["web"])
+        self.assertEqual(chat_intro["platforms"], ["web", "mobile"])
         self.assertEqual(chat_intro["title"], "Your first chat")
         self.assertEqual(
             chat_intro["body"],
