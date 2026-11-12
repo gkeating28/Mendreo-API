@@ -2,14 +2,16 @@ from unittest import mock
 
 from django.test import override_settings
 from django.utils import timezone
+from pydantic_ai.exceptions import ModelRetry
 from rest_framework import status
 
+from ...exercise.models import Exercise
 from ...message.models import Message
 from ...participant.models import Participant
 from ...session.models import Session
 from ...tests.TestCase import TestCase
 from ...utils import Constants
-from ...utils.Agent import GeneralResponse, _register_tools
+from ...utils.Agent import Dependencies, GeneralResponse, _register_get_exercise, _register_tools
 from ..utils import Data
 from ..utils.manager import Auth, General
 
@@ -55,6 +57,22 @@ class ExerciseOfferTest(TestCase):
             data["from_suggested_response"] = from_suggested_response
         return self._post("/messages", data, access_token=self.access_token)
 
+    def _get_exercise_tool(self):
+        captured = {}
+
+        class _Recorder:
+            def tool(self, func=None, **kwargs):
+                def register(fn):
+                    captured[fn.__name__] = fn
+                    return fn
+
+                if func is None:
+                    return register
+                return register(func)
+
+        _register_get_exercise(_Recorder())
+        return captured["get_exercise"]
+
     def _tool_names(self, session):
         names = []
 
@@ -85,6 +103,51 @@ class ExerciseOfferTest(TestCase):
         chat.source_run = run
         chat.save(update_fields=["source_run", "updated_at"])
         return chat
+
+    def test_unknown_exercise_id_raises_model_retry(self):
+        draft = Exercise.objects.create(
+            title="Draft only",
+            subtitle="Draft",
+            description="Not published.",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_DRAFT,
+        )
+        snapshot = Exercise.objects.create(
+            title="Snapshot",
+            subtitle="Snapshot",
+            description="Hidden copy.",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+            authoring_snapshot=True,
+        )
+        deps = Dependencies(session=self.session, consumer=self.consumer, exercise=None)
+        ctx = mock.Mock()
+        ctx.deps = deps
+
+        with self.assertRaises(ModelRetry) as raised:
+            self._get_exercise_tool()(ctx, "exrcs_missing")
+
+        self.assertIsNone(deps.matched_exercise)
+        message = str(raised.exception)
+        self.assertIn(self.exercise.id, message)
+        self.assertIn(self.exercise.title, message)
+        self.assertNotIn(draft.id, message)
+        self.assertNotIn(snapshot.id, message)
+
+    def test_published_exercise_id_returns_ok(self):
+        deps = Dependencies(session=self.session, consumer=self.consumer, exercise=None)
+        ctx = mock.Mock()
+        ctx.deps = deps
+
+        result = self._get_exercise_tool()(ctx, self.exercise.id)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["exercise_id"], self.exercise.id)
+        self.assertEqual(deps.matched_exercise, self.exercise)
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_offer_message_includes_yes_no_chips(self):

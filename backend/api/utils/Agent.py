@@ -534,12 +534,44 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             user_prompt=user_prompt,
             history=history,
         )
-        result = agent.run_sync(
-            user_prompt=user_prompt,
-            deps=dependencies,
-            message_history=history,
-            usage_limits=UsageLimits(tool_calls_limit=2)
-        )
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        tool_calls_limit = 2 if session.exercise_id else 3
+        try:
+            result = agent.run_sync(
+                user_prompt=user_prompt,
+                deps=dependencies,
+                message_history=history,
+                usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit),
+            )
+        except UsageLimitExceeded as exc:
+            # A general-chat run that asks for another tool has no final
+            # reply. Do not replace that with the generic apology. Leave the
+            # exercise unset and continue through the normal return.
+            if session.exercise_id or "tool_calls_limit" not in str(exc):
+                raise
+            dependencies.matched_exercise = None
+            logger.warning(
+                "general-chat tool call limit hit for session=%s message=%s",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+
+            class _ToolLimitResult:
+                def __init__(self, output):
+                    self.output = output
+
+                def usage(self):
+                    return _EmptyUsage()
+
+            class _EmptyUsage:
+                pass
+
+            result = _ToolLimitResult(schema(
+                text="",
+                suggested_responses=[],
+                reasoning=str(exc),
+            ))
         if capture_on():
             from ..grounding.retrieval import session_retrieval_enabled
 
@@ -810,10 +842,22 @@ def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
                 }
             }
 
-        return {
-            "status": "not_found",
-            "message": "Sorry, I couldn't find an appropriate exercise"
-        }
+        from pydantic_ai.exceptions import ModelRetry
+
+        published = Exercise.objects.filter(
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+            authoring_snapshot=False,
+        ).values_list("id", "title")
+        pairs = [
+            f"{published_id} {title}".strip()
+            for published_id, title in published
+            if published_id
+        ]
+        listed = "; ".join(pairs) if pairs else "(none)"
+        raise ModelRetry(
+            "That exercise id is not a published exercise. "
+            f"Valid exercises: {listed}"
+        )
 
 
 def _register_get_asset(agent: Agent[Dependencies, BaseModel]) -> None:
