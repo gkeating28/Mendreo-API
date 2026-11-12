@@ -195,6 +195,10 @@ class PromptBlockTests(TestCase):
         )
         self.assertLess(general_a.index("</DATE>"), general_a.index("<GOALS_REMINDER>"))
         self.assertEqual(general_a.split("</GOALS_REMINDER>", 1)[1].strip(), "</DATA>")
+        self.assertIn(
+            "Once the person has told you what is troubling them, move towards offering one suitable exercise from <EXERCISES>: call get_exercise first, then offer it in your own words and ask if they would like to try it. Do not run the exercise's steps in the chat yourself.",
+            general_a,
+        )
         self.assertNotIn("<GOALS_REMINDER>", exercise_a)
         _assert_in_order(
             self,
