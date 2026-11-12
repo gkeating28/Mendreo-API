@@ -61,6 +61,8 @@ class Setting(SmartModel):
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
         Setting.get_or_create_thin_answer_hint_enabled()
+        Setting.get_or_create_exercise_nudge_enabled()
+        Setting.get_or_create_exercise_nudge_after_messages()
         Setting.get_or_create_require_exact_yes()
         Setting.get_or_create_ready_phrases()
         Setting.get_or_create_finish_phrases()
@@ -327,6 +329,41 @@ class Setting(SmartModel):
             Setting.get_or_create_thin_answer_hint_enabled,
         )
         return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_exercise_nudge_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key="exercise_nudge_enabled",
+            defaults={"value": "true"},
+        )
+        return setting
+
+    @staticmethod
+    def get_exercise_nudge_enabled() -> bool:
+        raw = Setting._cached_value(
+            "exercise_nudge_enabled",
+            Setting.get_or_create_exercise_nudge_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_exercise_nudge_after_messages():
+        setting, _ = Setting.objects.get_or_create(
+            key="exercise_nudge_after_messages",
+            defaults={"value": "3"},
+        )
+        return setting
+
+    @staticmethod
+    def get_exercise_nudge_after_messages() -> int:
+        raw = Setting._cached_value(
+            "exercise_nudge_after_messages",
+            Setting.get_or_create_exercise_nudge_after_messages,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 3
 
     @staticmethod
     def get_or_create_require_exact_yes():

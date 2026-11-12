@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from . import Constants
+
+logger = logging.getLogger(__name__)
 
 _TRAILING_ELLIPSIS = re.compile(r"(?:\s*(?:\.{3}|…))+\s*$")
 
@@ -56,6 +59,17 @@ ABOUT_THE_USER_HINT = (
     "things from it. Do not say you have no information. Then ask one simple question. "
     "Answer in the same voice and style as the rest of this chat."
 )
+EXERCISE_NUDGE_HINT = (
+    "If a suitable exercise fits what the person has shared, offer one now: "
+    "call get_exercise first, then offer it in your own words and ask if they "
+    "would like to try it. If nothing fits yet, carry on and end with a gentle "
+    "question. Use the same voice you have been using in this chat, including "
+    "any style the person has asked for."
+)
+_EXERCISE_NUDGE_LIMIT = 2
+_EXERCISE_NUDGE_GAP = 3
+_NUDGES_SENT_KEY = "exercise_nudges_sent"
+_NUDGE_LAST_AT_KEY = "exercise_nudge_last_at"
 
 
 def normalize_question_kind(value) -> str:
@@ -443,7 +457,12 @@ def _hinted_user_prompt(session, user_message) -> str:
                         winner = "thin_answer"
                         body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
                     else:
-                        body = text
+                        nudge = _exercise_nudge_hint(session, user_message)
+                        if nudge:
+                            winner = "exercise_nudge"
+                            body = f"{text}\n\n<TURN_HINT>\n{nudge}\n</TURN_HINT>"
+                        else:
+                            body = text
     _note_thin_answer(session, user_message, winner)
     return body
 
@@ -538,6 +557,106 @@ def _note_hint(session, user_message, prompted: str) -> None:
             "inputs": {"winner": winner, "sequence": sequence},
         },
     )
+
+
+def _exercise_nudge_hint(session, user_message) -> str | None:
+    """One general-chat nudge after N person messages, then one more, then stop."""
+    if getattr(session, "exercise_id", None):
+        return None
+    from ..setting.models import Setting
+
+    if not Setting.get_exercise_nudge_enabled():
+        return None
+    from .ExerciseOffer import OFFER_DECLINE_HINT_KEY, OFFER_DECLINE_TITLE_KEY
+
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if OFFER_DECLINE_HINT_KEY in meta or OFFER_DECLINE_TITLE_KEY in meta:
+        return None
+    if getattr(session, "_offer_decline_title", None):
+        return None
+    if _nudge_blocked_by_risk(session, getattr(user_message, "text", None) or ""):
+        return None
+    if _offer_already_recorded(session):
+        return None
+    try:
+        sent = int(meta.get(_NUDGES_SENT_KEY) or 0)
+    except (TypeError, ValueError):
+        sent = 0
+    if sent >= _EXERCISE_NUDGE_LIMIT:
+        return None
+    count = _person_message_count(session, user_message)
+    if sent == 0:
+        if count < Setting.get_exercise_nudge_after_messages():
+            return None
+    else:
+        try:
+            last_at = int(meta.get(_NUDGE_LAST_AT_KEY) or 0)
+        except (TypeError, ValueError):
+            last_at = 0
+        if count < last_at + _EXERCISE_NUDGE_GAP:
+            return None
+    sent += 1
+    meta[_NUDGES_SENT_KEY] = sent
+    meta[_NUDGE_LAST_AT_KEY] = count
+    session.cached_prompt_meta = meta
+    if getattr(session, "pk", None):
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    logger.info(
+        "general-chat exercise nudge session=%s message=%s count=%s",
+        getattr(session, "id", None),
+        getattr(user_message, "id", None),
+        sent,
+    )
+    return EXERCISE_NUDGE_HINT
+
+
+def _person_message_count(session, user_message) -> int:
+    """This person's saved messages in the session, including the one just sent."""
+    from ..message.models import Message
+
+    count = Message.objects.filter(
+        session=session,
+        sender__consumer__isnull=False,
+    ).count()
+    if not getattr(user_message, "pk", None):
+        return count + 1
+    if not Message.objects.filter(pk=user_message.pk).exists():
+        return count + 1
+    return count
+
+
+def _offer_already_recorded(session) -> bool:
+    """True when this session has offered, declined, or accepted an exercise.
+
+    Offer memory keeps the last five rows and does not drop them when the
+    six-turn prompt window passes. A message that still points at an exercise
+    counts too, including one that has aged out of that list.
+    """
+    for row in (getattr(session, "cached_prompt_meta", None) or {}).get("exercise_offers") or []:
+        if isinstance(row, dict) and row.get("outcome") in {"offered", "declined", "accepted"}:
+            return True
+    from ..message.models import Message
+
+    return Message.objects.filter(session=session, exercise__isnull=False).exists()
+
+
+def _nudge_blocked_by_risk(session, text: str) -> bool:
+    if getattr(session, "closed_at", None):
+        return True
+    live = (getattr(session, "live_risk_level", None) or "").strip().lower()
+    if live and live != Constants.LIVE_RISK_LEVEL_NONE:
+        return True
+    nightly = (getattr(session, "risk_level", None) or "").strip().lower()
+    if nightly in (
+        Constants.RISK_LEVEL_MODERATE,
+        Constants.RISK_LEVEL_HIGH,
+        Constants.RISK_LEVEL_CRITICAL,
+    ):
+        return True
+    from .risk import risk_prescreen
+
+    flagged = risk_prescreen(text)
+    return flagged in (Constants.LIVE_RISK_LEVEL_MODERATE, Constants.LIVE_RISK_LEVEL_HIGH)
 
 
 def _consume_goal_hint(session) -> str | None:
