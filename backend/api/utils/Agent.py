@@ -964,14 +964,21 @@ def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
 
         if exercise:
             ctx.deps.matched_exercise = exercise
-
+            title = (exercise.title or "").replace("\n", " ").strip() or "that exercise"
             return {
                 "status": "ok",
                 "exercise_id": exercise.id,
                 "exercise": {
                     "id": exercise.id,
-                    "context": exercise.description
-                }
+                    "title": title,
+                    "context": exercise.description,
+                },
+                "message": (
+                    f'The exercise is "{title}". '
+                    "In your reply, name it by its exact title, "
+                    "say in one or two sentences in your usual voice why it fits, "
+                    "and end by asking whether they want to try it."
+                ),
             }
 
         from pydantic_ai.exceptions import ModelRetry

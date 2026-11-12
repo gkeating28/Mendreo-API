@@ -166,6 +166,10 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["exercise_id"], self.exercise.id)
         self.assertEqual(deps.matched_exercise, self.exercise)
+        self.assertIn(self.exercise.title, result["message"])
+        self.assertIn("name it by its exact title", result["message"])
+        self.assertIn("usual voice", result["message"])
+        self.assertIn("whether they want to try it", result["message"])
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_offer_message_includes_yes_no_chips(self):
@@ -184,8 +188,11 @@ class ExerciseOfferTest(TestCase):
             response.json["suggested_responses"],
             Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES,
         )
-        self.assertIn("Would you like to start an exercise? Yes or no.", response.json["text"])
-        self.assertIn(self.exercise.title, response.json["text"])
+        self.assertIn("There's an exercise that fits.", response.json["text"])
+        self.assertIn(
+            f"Would you like to try {self.exercise.title}? Yes or no.",
+            response.json["text"],
+        )
         self.assertEqual(response.json["exercise"]["id"], self.exercise.id)
         self.assertIsNone(response.json["exercise_session"])
         self.session.refresh_from_db()
@@ -205,7 +212,11 @@ class ExerciseOfferTest(TestCase):
             response = self._post_message("I've been stuck in the same thought loop")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn("Would you like to start an exercise? Yes or no.", response.json["text"])
+        self.assertIn("There's an exercise that fits.", response.json["text"])
+        self.assertIn(
+            f"Would you like to try {self.exercise.title}? Yes or no.",
+            response.json["text"],
+        )
         self.assertEqual(
             response.json["suggested_responses"],
             Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES,
@@ -447,11 +458,25 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(
             text,
             (
+                "Let's try the Pirate Breathing Drill. "
+                f"Would you like to try {self.exercise.title}? Yes or no."
+            ),
+        )
+
+        empty = GeneralResponse(
+            text="   ",
+            reasoning="offer",
+            suggested_responses=["Tell me more"],
+        )
+        chips, text = format_agent_offer(empty, self.exercise, self.session)
+        self.assertEqual(chips, list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES))
+        self.assertEqual(
+            text,
+            (
                 f"There's an exercise that fits what you're describing: {self.exercise.title}. "
                 "Would you like to start an exercise? Yes or no."
             ),
         )
-        self.assertNotIn("Pirate Breathing Drill", text)
 
         finished = self._linked_chat()
         chips, text = format_agent_offer(wrong, self.exercise, finished)

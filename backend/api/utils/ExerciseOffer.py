@@ -148,15 +148,20 @@ def without_unauthorised_offer_sentences(reply: str | None, user_text: str | Non
 
 
 def with_offer_question(text: str | None, exercise) -> str:
+    title = (getattr(exercise, "title", None) or "").strip() or "that exercise"
     ask = (
-        f"There's an exercise that fits what you're describing: {exercise.title}. "
+        f"There's an exercise that fits what you're describing: {title}. "
         "Would you like to start an exercise? Yes or no."
     )
     body = (text or "").strip()
-    title = (getattr(exercise, "title", None) or "").strip()
-    if title and title in body:
+    if not body:
+        return ask
+    if title in body:
         return body
-    return ask
+    nudge = f"Would you like to try {title}? Yes or no."
+    if body[-1] not in ".?!":
+        body = f"{body}."
+    return f"{body} {nudge}"
 
 
 _OFFER_MEMORY_LIMIT = 5
