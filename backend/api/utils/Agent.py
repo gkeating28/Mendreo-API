@@ -1585,11 +1585,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     pending = assign_pending_question(session)
     if pending:
-        reminder = "<GOALS_REMINDER>"
-        if reminder in prompt:
-            prompt = prompt.replace(reminder, f"{pending}\n\n{reminder}", 1)
-        else:
-            prompt = f"{prompt}\n\n{pending}"
+        prompt = _insert_pending_question(prompt, pending)
 
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
@@ -1611,6 +1607,19 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     )
 
     return prompt
+
+
+def _insert_pending_question(prompt: str, pending: str) -> str:
+    """Place a pending question before the goals block, or the reminder, or the end.
+
+    The closed-list rule mentions the goals tag inside triage, so this matches
+    the block's own line and not that mention.
+    """
+    for tag in ("<GOALS>", "<GOALS_REMINDER>"):
+        match = re.search(rf"(?m)^[ \t]*{re.escape(tag)}[ \t]*$", prompt)
+        if match:
+            return prompt[: match.start()] + pending + "\n\n" + prompt[match.start() :]
+    return f"{prompt}\n\n{pending}"
 
 
 def _triage_with_closed_list(triage: str, session, offer_block: str) -> str:

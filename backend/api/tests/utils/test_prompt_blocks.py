@@ -183,23 +183,25 @@ class PromptBlockTests(TestCase):
                 "<THERAPEUTIC_INSTRUCTIONS>",
                 "<PROGRAMMING_INSTRUCTIONS>",
                 "<EXERCISES>",
-                "<GOALS>",
-                "</GOALS>",
                 "<TRIAGE>",
                 "<SESSION_CONTEXT>",
                 "<KNOWLEDGE>",
                 "<CLIENT_SUMMARY>",
                 "<DATE>",
+                "<GOALS>",
+                "</GOALS>",
                 "<GOALS_REMINDER>",
             ],
         )
-        self.assertLess(general_a.index("</DATE>"), general_a.index("<GOALS_REMINDER>"))
-        self.assertEqual(general_a.split("</GOALS_REMINDER>", 1)[1].strip(), "</DATA>")
+        after_goals = general_a.split("</GOALS>", 1)[1]
+        self.assertTrue(after_goals.lstrip().startswith("<GOALS_REMINDER>"))
+        self.assertEqual(after_goals.split("</GOALS_REMINDER>", 1)[1].strip(), "</DATA>")
         self.assertIn(
             "Once the person has told you what is troubling them, move towards offering one suitable exercise from <EXERCISES>: call get_exercise first, then offer it in your own words and ask if they would like to try it. Do not run the exercise's steps in the chat yourself.",
             general_a,
         )
         self.assertNotIn("<GOALS_REMINDER>", exercise_a)
+        self.assertNotIn("<GOALS>", exercise_a)
         _assert_in_order(
             self,
             exercise_a,
@@ -252,6 +254,36 @@ class PromptBlockTests(TestCase):
         run_a.save(update_fields=["cached_prompt"])
         allowed = _prepare_prompt(run_a)
         self.assertIn("sertraline", allowed)
+
+    def test_pending_question_stays_before_goals_and_closed_list_stays_in_triage(self):
+        from ...knowledge.models import KnowledgeQuestion
+
+        field = KnowledgeField.objects.create(
+            key="sleep_check",
+            label="Sleep",
+            category="Health",
+            active=True,
+        )
+        question = KnowledgeQuestion.objects.create(
+            prompt="How has sleep been?",
+            target_field=field,
+            active=True,
+        )
+        session = Session.objects.create(consumer=self.consumer)
+        session.pending_knowledge_question = question
+        session.save(update_fields=["pending_knowledge_question", "updated_at"])
+
+        prompt = _prepare_prompt(session)
+        triage_body = prompt.split("<TRIAGE>", 1)[1].split("</TRIAGE>", 1)[0]
+        self.assertNotIn("<PENDING_QUESTION>", triage_body)
+        self.assertTrue(triage_body.rstrip().endswith(TRIAGE_CLOSED_LIST_RULE))
+        goals_at = re.search(r"(?m)^[ \t]*<GOALS>[ \t]*$", prompt).start()
+        reminder_at = re.search(r"(?m)^[ \t]*<GOALS_REMINDER>[ \t]*$", prompt).start()
+        self.assertLess(prompt.index("</DATE>"), prompt.index("<PENDING_QUESTION>"))
+        self.assertLess(prompt.index("</PENDING_QUESTION>"), goals_at)
+        self.assertLess(goals_at, reminder_at)
+        self.assertNotIn("<PENDING_QUESTION>", prompt[prompt.index("</GOALS>") : reminder_at])
+        self.assertIn("How has sleep been?", prompt)
 
     def test_client_summary_includes_the_account_name(self):
         from ...utils.prompt_blocks import render_client_summary
