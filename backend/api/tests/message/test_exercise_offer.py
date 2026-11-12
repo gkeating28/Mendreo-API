@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest import mock
 
 from django.test import override_settings
@@ -24,8 +25,10 @@ from ...utils.Agent import (
 )
 from ...utils.ExerciseOffer import (
     _resolve_offer,
+    declined_offer_text,
     format_agent_offer,
     note_unresolved_typed_decline,
+    offer_decline_hint,
 )
 from ..utils import Data
 from ..utils.manager import Auth, General
@@ -342,15 +345,11 @@ class ExerciseOfferTest(TestCase):
     def test_no_chip_clears_pills_and_keeps_saved_offer(self):
         offer = self._create_offer()
 
-        with mock.patch("api.message.views.request_agent_response") as ai:
+        with self._scripted_posts(["We'll leave that there."]):
             response = self._post_message("No", from_suggested_response=True)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        ai.assert_not_called()
-        self.assertEqual(
-            response.json["text"],
-            f"Okay. I'll leave {self.exercise.title} here until you want it.",
-        )
+        self.assertEqual(response.json["text"], "We'll leave that there.")
         self.assertNotIn("Tap the card", response.json["text"])
         self.assertIsNotNone(response.json["sender"]["agent"])
 
@@ -380,11 +379,11 @@ class ExerciseOfferTest(TestCase):
         offer = self._create_offer()
         self._post_message("Yes", from_suggested_response=True)
 
-        with mock.patch("api.message.views.request_agent_response") as ai:
+        with self._scripted_posts(["We'll leave that there."]):
             response = self._post_message("No", from_suggested_response=True)
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        ai.assert_not_called()
+        self.assertEqual(response.json["text"], "We'll leave that there.")
         offer.refresh_from_db()
         self.assertEqual(offer.exercise_id, self.exercise.id)
         self.assertFalse(
@@ -521,6 +520,49 @@ class ExerciseOfferTest(TestCase):
         sender = Participant.objects.filter(session=chat, consumer=self.consumer).first()
         return Message.objects.create(session=chat, sender=sender, text=text)
 
+    @contextmanager
+    def _scripted_posts(self, texts, *, fail=False):
+        prompts = []
+        pending = list(texts)
+
+        class _Usage:
+            pass
+
+        class _Result:
+            def __init__(self, text):
+                self.output = GeneralResponse(
+                    text=text,
+                    suggested_responses=[],
+                    reasoning="test",
+                )
+
+            def usage(self):
+                return _Usage()
+
+        def run_sync(*args, **kwargs):
+            prompts.append(kwargs.get("user_prompt") or "")
+            if fail:
+                raise RuntimeError("model down")
+            text = pending.pop(0) if pending else ""
+            return _Result(text)
+
+        def tool(func=None, **kwargs):
+            def register(fn):
+                return fn
+
+            if func is None:
+                return register
+            return register(func)
+
+        fake = mock.Mock()
+        fake.tool.side_effect = tool
+        fake.run_sync.side_effect = run_sync
+        with (
+            mock.patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            mock.patch("api.utils.Agent.Agent", return_value=fake),
+        ):
+            yield prompts
+
     def _save_scripted(self, texts, user_text, *, session=None, match=False):
         """Run one turn with scripted model replies. Returns (saved message, user prompts)."""
         prompts = []
@@ -653,3 +695,69 @@ class ExerciseOfferTest(TestCase):
         )
         self.assertEqual(len(prompts), 1)
         self.assertEqual(saved.text, "You had a long day.")
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_tapped_no_calls_the_model_once_with_the_decline_hint(self):
+        offer = self._create_offer()
+        hint = offer_decline_hint(self.exercise.title)
+        with self._scripted_posts(["We'll leave that there."]) as prompts:
+            response = self._post_message("No", from_suggested_response=True)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(hint, prompts[0])
+        self.assertEqual(prompts[0].count("<TURN_HINT>"), 1)
+        self.assertTrue(prompts[0].rstrip().endswith("</TURN_HINT>"))
+        self.assertEqual(response.json["text"], "We'll leave that there.")
+        self.assertNotIn(
+            Constants.EXERCISE_OFFER_YES,
+            response.json["suggested_responses"] or [],
+        )
+        self.assertIsNone(response.json["exercise"])
+        self.session.refresh_from_db()
+        stored = self.session.cached_prompt_meta["exercise_offers"][-1]
+        self.assertEqual(stored["outcome"], "declined")
+        self.assertEqual(stored["exercise_id"], self.exercise.id)
+        self.assertEqual(stored["title"], self.exercise.title)
+        offer.refresh_from_db()
+        self.assertEqual(offer.suggested_responses, [])
+        user_message = Message.objects.get(session=self.session, text="No")
+        self.assertIsNotNone(user_message.sender.consumer_id)
+
+        with self._scripted_posts(["How did the rest of the day go?"]) as later:
+            follow = self._post_message("How was the rest of your day?")
+        self.assertEqual(len(later), 1)
+        self.assertNotIn("declined the offered exercise", later[0])
+        self.assertEqual(follow.json["text"], "How did the rest of the day go?")
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_tapped_no_model_failure_saves_the_canned_line(self):
+        self._create_offer()
+        with self._scripted_posts([], fail=True):
+            response = self._post_message("No", from_suggested_response=True)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json["text"], declined_offer_text(self.exercise.title))
+        self.assertNotIn(
+            Constants.EXERCISE_OFFER_YES,
+            response.json["suggested_responses"] or [],
+        )
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_tapped_no_blank_reply_saves_the_canned_line(self):
+        self._create_offer()
+        with self._scripted_posts([""]) as prompts:
+            response = self._post_message("No", from_suggested_response=True)
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json["text"], declined_offer_text(self.exercise.title))
+        self.assertNotEqual(response.json["text"], "I'm here with you. Tell me a bit more.")
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_typed_no_does_not_use_the_tapped_decline_hint(self):
+        self._create_offer()
+        with self._scripted_posts(["We can stay with this."]) as prompts:
+            response = self._post_message("no")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(prompts), 1)
+        self.assertNotIn("declined the offered exercise", prompts[0])
+        self.assertEqual(response.json["text"], "We can stay with this.")

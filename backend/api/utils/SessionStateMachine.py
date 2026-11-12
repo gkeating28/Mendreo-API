@@ -238,8 +238,10 @@ def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | N
     text = (user_message.text or "").strip()
 
     if kind == Constants.SUGGESTED_RESPONSES_KIND_OFFER:
-        from .ExerciseOffer import maybe_handle_offer_response
+        from .ExerciseOffer import maybe_handle_offer_response, prepare_tapped_decline
 
+        if text == Constants.EXERCISE_OFFER_NO and prepare_tapped_decline(user_message):
+            return None
         reply = maybe_handle_offer_response(user_message, True)
         if reply is None:
             return None

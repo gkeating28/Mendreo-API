@@ -46,6 +46,24 @@ _OFFER_RETRY_HINT = (
 )
 
 
+def _offer_decline_turn(session) -> bool:
+    from .ExerciseOffer import OFFER_DECLINE_TITLE_KEY
+
+    if getattr(session, "_offer_decline_title", None):
+        return True
+    meta = getattr(session, "cached_prompt_meta", None) or {}
+    return bool(meta.get(OFFER_DECLINE_TITLE_KEY))
+
+
+def _offer_decline_canned(session) -> str | None:
+    from .ExerciseOffer import declined_offer_text, take_offer_decline_title
+
+    title = take_offer_decline_title(session)
+    if not title:
+        return None
+    return declined_offer_text(title)
+
+
 @dataclass
 class Dependencies:
     session: Session
@@ -502,6 +520,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     timer_start = time.perf_counter()
     usage = {}
+    model_failed = False
 
     steer = [None]
     sent_for_result = {}
@@ -613,7 +632,13 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         result, _provider = run_with_failover(_run)
         response_data = result.output
         debug_result = result
-        if not session.exercise_id and not (getattr(response_data, "text", None) or "").strip():
+        if _offer_decline_turn(session):
+            dependencies.matched_exercise = None
+        if (
+            not session.exercise_id
+            and not _offer_decline_turn(session)
+            and not (getattr(response_data, "text", None) or "").strip()
+        ):
             logger.info(
                 "general-chat blank reply retry session=%s message=%s",
                 getattr(session, "id", None),
@@ -779,6 +804,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         timer_end = time.perf_counter()
 
     except Exception as e:
+        model_failed = True
         timer_end = time.perf_counter()
         session._pending_retrieval = None
         logger.exception(
@@ -805,6 +831,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     raw_reply = response_data.text
     response_data.text = normalise_reply(response_data.text)
+    if _offer_decline_turn(session):
+        dependencies.matched_exercise = None
+        canned = _offer_decline_canned(session)
+        if canned and (model_failed or not (response_data.text or "").strip()):
+            response_data.text = canned
+            response_data.suggested_responses = []
     _note_reply_decisions(
         session,
         before=raw_reply,

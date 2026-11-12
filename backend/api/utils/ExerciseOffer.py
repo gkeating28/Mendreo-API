@@ -223,9 +223,90 @@ def recent_exercise_offer_block(session) -> str:
     return "\n".join(lines)
 
 
+OFFER_DECLINE_HINT_KEY = "offer_decline_hint"
+OFFER_DECLINE_TITLE_KEY = "offer_decline_title"
+
+
+def declined_offer_text(title: str | None) -> str:
+    label = (title or "that exercise").replace("\n", " ").strip() or "that exercise"
+    return f"Okay. I'll leave {label} here until you want it."
+
+
+def offer_decline_hint(title: str | None) -> str:
+    label = (title or "that exercise").replace("\n", " ").strip() or "that exercise"
+    return (
+        f'The person declined the offered exercise "{label}". '
+        "Accept it in a sentence in your usual voice. "
+        "Do not re-offer it or any exercise this turn. "
+        "Carry on the conversation."
+    )
+
+
+def prepare_tapped_decline(user_message: Message) -> bool:
+    """Record a tapped No and store its one-shot hint. The model then replies.
+
+    False when this tap is not an open exercise offer. Voice still uses
+    ``_resolve_offer`` and is not changed here.
+    """
+    session = user_message.session
+    if getattr(session, "exercise_id", None):
+        return False
+    if (user_message.text or "").strip() != Constants.EXERCISE_OFFER_NO:
+        return False
+    offer = pending_offer_message(session)
+    if offer is not None and not is_yes_no_offer(offer.suggested_responses):
+        offer = None
+    if offer is None:
+        offer = unresolved_offer_message(session)
+    if offer is None or not offer.exercise_id:
+        return False
+    if offer.suggested_responses:
+        offer.suggested_responses = []
+        offer.save(update_fields=["suggested_responses", "updated_at"])
+    title = offer.exercise.title if offer.exercise_id else "that exercise"
+    # Stamp the count the old canned path stored, after this tap is included.
+    # The normal reply path increments the session once, so the field itself
+    # stays where it is.
+    previous_count = session.consumer_messages_no
+    try:
+        session.consumer_messages_no = int(previous_count or 0) + 1
+    except (TypeError, ValueError):
+        session.consumer_messages_no = 1
+    remember_exercise_offer(session, offer.exercise, "declined")
+    session.consumer_messages_no = previous_count
+    meta = dict(session.cached_prompt_meta or {})
+    meta[OFFER_DECLINE_HINT_KEY] = offer_decline_hint(title)
+    meta[OFFER_DECLINE_TITLE_KEY] = (title or "that exercise").replace("\n", " ").strip()
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return True
+
+
+def take_offer_decline_title(session) -> str | None:
+    """Drop the one-shot decline marker. The title is for the canned fallback."""
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    title = meta.pop(OFFER_DECLINE_TITLE_KEY, None)
+    had_hint = OFFER_DECLINE_HINT_KEY in meta
+    if had_hint:
+        meta.pop(OFFER_DECLINE_HINT_KEY, None)
+    pending = getattr(session, "_offer_decline_title", None)
+    if title is None and not had_hint and not pending:
+        return None
+    session.cached_prompt_meta = meta
+    session._offer_decline_title = None
+    if getattr(session, "pk", None):
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    label = title or pending
+    if not label:
+        return None
+    return str(label).replace("\n", " ").strip() or "that exercise"
+
+
 def note_unresolved_typed_decline(session, text: str) -> None:
     """Store a typed no before the next prompt is built."""
     if getattr(session, "exercise_id", None) or getattr(session, "source_run_id", None):
+        return
+    if (getattr(session, "cached_prompt_meta", None) or {}).get(OFFER_DECLINE_TITLE_KEY):
         return
     if spoken_offer_chip(text or "") != Constants.EXERCISE_OFFER_NO:
         return
@@ -424,7 +505,7 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
         agent_message = Message.objects.create(
             session=session,
             sender=agent_participant,
-            text=f"Okay. I'll leave {title} here until you want it.",
+            text=declined_offer_text(title),
             reasoning="Exercise offer declined",
             suggested_responses=[],
         )

@@ -382,11 +382,31 @@ def _consume_not_ready_hint(session) -> str | None:
     return hint
 
 
+def _consume_offer_decline_hint(session) -> str | None:
+    """One-shot hint for a tapped No. Wins over every other hint this turn."""
+    from .ExerciseOffer import OFFER_DECLINE_HINT_KEY, OFFER_DECLINE_TITLE_KEY
+
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if OFFER_DECLINE_HINT_KEY not in meta:
+        return None
+    hint = (meta.pop(OFFER_DECLINE_HINT_KEY) or "").strip()
+    title = meta.get(OFFER_DECLINE_TITLE_KEY)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if title:
+        session._offer_decline_title = title
+    return hint or None
+
+
 def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
     winner = None
+    decline = _consume_offer_decline_hint(session)
+    if decline:
+        _note_thin_answer(session, user_message, "offer_decline")
+        return f"{text}\n\n<TURN_HINT>\n{decline}\n</TURN_HINT>"
     not_ready = _consume_not_ready_hint(session)
     about = None if not_ready else about_the_user_hint(session, text)
     if not_ready:
