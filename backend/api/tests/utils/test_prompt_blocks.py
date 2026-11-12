@@ -10,7 +10,7 @@ from ...knowledge.services import write_knowledge_entry
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
-from ...utils.Agent import TRIAGE_CLOSED_LIST_RULE, _prepare_prompt
+from ...utils.Agent import TRIAGE_CLOSED_LIST_RULE, GeneralResponse, _prepare_prompt
 from ...utils.prompt_blocks import (
     invalidate_published_exercises_cache,
     render_exercise_catalogue,
@@ -190,8 +190,12 @@ class PromptBlockTests(TestCase):
                 "<KNOWLEDGE>",
                 "<CLIENT_SUMMARY>",
                 "<DATE>",
+                "<GOALS_REMINDER>",
             ],
         )
+        self.assertLess(general_a.index("</DATE>"), general_a.index("<GOALS_REMINDER>"))
+        self.assertEqual(general_a.split("</GOALS_REMINDER>", 1)[1].strip(), "</DATA>")
+        self.assertNotIn("<GOALS_REMINDER>", exercise_a)
         _assert_in_order(
             self,
             exercise_a,
@@ -233,6 +237,10 @@ class PromptBlockTests(TestCase):
         self.assertIsNotNone(first.prompt_version_id)
         self.assertIn("triage", first.cached_prompt_meta["versions"])
         self.assertIn("therapeutic", first.cached_prompt_meta["versions"])
+        self.assertIn(
+            "Keep the voice and style set in <GOALS>.",
+            GeneralResponse.model_fields["text"].description,
+        )
 
         exercise.sensitive_fields_allowed = ["medication"]
         exercise.save(update_fields=["sensitive_fields_allowed"])

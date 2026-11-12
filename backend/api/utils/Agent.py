@@ -80,7 +80,8 @@ class GeneralResponse(BaseModel):
           "Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'. "
           "Never use the double-quote character in this text. When repeating the client's words, use single quotes or no quotes. "
           "Always finish the sentence with a full stop or question mark. "
-          "Never open with 'Thanks for sharing', 'Thank you for', or 'It sounds like'."
+          "Never open with 'Thanks for sharing', 'Thank you for', or 'It sounds like'. "
+          "Keep the voice and style set in <GOALS>."
       ),
     )
     risk_level: str = Field(
@@ -1590,7 +1591,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     pending = assign_pending_question(session)
     if pending:
-        prompt = f"{prompt}\n\n{pending}"
+        reminder = "<GOALS_REMINDER>"
+        if reminder in prompt:
+            prompt = prompt.replace(reminder, f"{pending}\n\n{reminder}", 1)
+        else:
+            prompt = f"{prompt}\n\n{pending}"
 
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
