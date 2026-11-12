@@ -11,7 +11,18 @@ from ...participant.models import Participant
 from ...session.models import Session
 from ...tests.TestCase import TestCase
 from ...utils import Constants
-from ...utils.Agent import Dependencies, GeneralResponse, _register_get_exercise, _register_tools
+from ...utils.Agent import (
+    Dependencies,
+    GeneralResponse,
+    _prepare_prompt,
+    _register_get_exercise,
+    _register_tools,
+)
+from ...utils.ExerciseOffer import (
+    _resolve_offer,
+    format_agent_offer,
+    note_unresolved_typed_decline,
+)
 from ..utils import Data
 from ..utils.manager import Auth, General
 
@@ -412,3 +423,91 @@ class ExerciseOfferTest(TestCase):
         )
         self.assertTrue(offer_payload["exercise_session"]["completed"])
         self.assertEqual(offer_payload["exercise_session"]["id"], exercise_session.id)
+
+    def test_offer_wording_keeps_the_real_title_only(self):
+        named = GeneralResponse(
+            text=f"Arr, {self.exercise.title} might help. Shall we?",
+            reasoning="offer",
+            suggested_responses=["Tell me more"],
+        )
+        chips, text = format_agent_offer(named, self.exercise, self.session)
+        self.assertEqual(chips, list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES))
+        self.assertEqual(text, named.text)
+
+        wrong = GeneralResponse(
+            text="Let's try the Pirate Breathing Drill.",
+            reasoning="offer",
+            suggested_responses=["Tell me more"],
+        )
+        chips, text = format_agent_offer(wrong, self.exercise, self.session)
+        self.assertEqual(chips, list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES))
+        self.assertEqual(
+            text,
+            (
+                f"There's an exercise that fits what you're describing: {self.exercise.title}. "
+                "Would you like to start an exercise? Yes or no."
+            ),
+        )
+        self.assertNotIn("Pirate Breathing Drill", text)
+
+        finished = self._linked_chat()
+        chips, text = format_agent_offer(wrong, self.exercise, finished)
+        self.assertEqual(text, wrong.text)
+        self.assertNotIn("Would you like to start an exercise?", text)
+        self.assertNotEqual(chips, list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES))
+
+    def test_decline_stays_in_the_prompt_for_six_user_turns(self):
+        offer = self._create_offer()
+        self.session.consumer_messages_no = 3
+        self.session.save(update_fields=["consumer_messages_no", "updated_at"])
+        user_message = Message.objects.create(
+            session=self.session,
+            sender=self._consumer_participant(),
+            text="No",
+        )
+        _resolve_offer(user_message, offer, Constants.EXERCISE_OFFER_NO)
+
+        self.session.refresh_from_db()
+        stored = self.session.cached_prompt_meta["exercise_offers"][-1]
+        self.assertEqual(stored["outcome"], "declined")
+        self.assertEqual(stored["exercise_id"], self.exercise.id)
+        self.assertEqual(stored["title"], self.exercise.title)
+        self.assertEqual(stored["at_consumer_messages_no"], 4)
+
+        self.session.consumer_messages_no = 9
+        self.session.save(update_fields=["consumer_messages_no", "updated_at"])
+        prompt_at_9 = _prepare_prompt(self.session)
+        self.assertIn(
+            (
+                f"Already in this chat: {self.exercise.title}, declined, 5 user turns ago. "
+                "Do not offer it again yet. Stay in this chat in the same voice. "
+                "Do not run an exercise here."
+            ),
+            prompt_at_9,
+        )
+
+        self.session.consumer_messages_no = 10
+        self.session.save(update_fields=["consumer_messages_no", "updated_at"])
+        self.assertNotIn("Already in this chat:", _prepare_prompt(self.session))
+
+        fresh = General.create_session(consumer=self.consumer)
+        self.assertNotIn("Already in this chat:", _prepare_prompt(fresh))
+
+        typed = General.create_session(consumer=self.consumer)
+        typed.consumer_messages_no = 4
+        typed.save(update_fields=["consumer_messages_no", "updated_at"])
+        Message.objects.create(
+            session=typed,
+            sender=Participant.objects.filter(
+                session=typed, agent=self.consumer.agent
+            ).first(),
+            text=f"Would you like to start {self.exercise.title}?",
+            exercise=self.exercise,
+            suggested_responses=list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+        note_unresolved_typed_decline(typed, "no")
+        typed.refresh_from_db()
+        typed_offer = typed.cached_prompt_meta["exercise_offers"][-1]
+        self.assertEqual(typed_offer["outcome"], "declined")
+        self.assertEqual(typed_offer["at_consumer_messages_no"], 4)
+        self.assertIn("Already in this chat:", _prepare_prompt(typed))

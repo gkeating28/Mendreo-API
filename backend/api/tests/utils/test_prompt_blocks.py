@@ -5,11 +5,12 @@ from freezegun import freeze_time
 
 from ...exercise.models import Exercise
 from ...knowledge.models import KnowledgeField
+from ...prompt.models import PromptVersion
 from ...knowledge.services import write_knowledge_entry
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
-from ...utils.Agent import _prepare_prompt
+from ...utils.Agent import TRIAGE_CLOSED_LIST_RULE, _prepare_prompt
 from ...utils.prompt_blocks import (
     invalidate_published_exercises_cache,
     render_exercise_catalogue,
@@ -300,3 +301,59 @@ class PromptBlockTests(TestCase):
         self.assertIn("rested nights", prompt)
         self.assertIn("I'll lose the job", prompt)
         self.assertIn("Last time was shaky.", prompt)
+
+    def test_closed_list_rule_is_appended_after_custom_triage(self):
+        triage = PromptVersion.objects.create(
+            key=Constants.PROMPT_KEY_TRIAGE,
+            body="Help the person choose what to talk about.",
+            version=99,
+            active=False,
+        )
+        therapeutic = PromptVersion.objects.create(
+            key=Constants.PROMPT_KEY_THERAPEUTIC,
+            body="Be kind.",
+            version=99,
+            active=False,
+        )
+        session = Session.objects.create(consumer=self.consumer)
+        session.prompt_version = therapeutic
+        session.cached_prompt_meta = {
+            "versions": {
+                Constants.PROMPT_KEY_TRIAGE: triage.version,
+                Constants.PROMPT_KEY_THERAPEUTIC: therapeutic.version,
+            }
+        }
+        session.save(update_fields=["prompt_version", "cached_prompt_meta", "updated_at"])
+
+        prompt = _prepare_prompt(session)
+        self.assertIn("Help the person choose what to talk about.", prompt)
+        self.assertIn("exact <NAME>", prompt)
+        self.assertLess(
+            prompt.find("Help the person choose what to talk about."),
+            prompt.find("exact <NAME>"),
+        )
+        self.assertLess(prompt.find("exact <NAME>"), prompt.find("</TRIAGE>"))
+
+        stripped = prompt.replace(TRIAGE_CLOSED_LIST_RULE, "")
+        self.assertNotIn("exact <NAME>", stripped)
+        session.cached_prompt = stripped
+        session.save(update_fields=["cached_prompt", "updated_at"])
+        rebuilt = _prepare_prompt(session)
+        self.assertIn("exact <NAME>", rebuilt)
+
+        exercise = General.create_exercise()
+        run = Session.objects.create(
+            consumer=self.consumer,
+            exercise=exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=exercise.steps_no or 1,
+        )
+        exercise_prompt = _prepare_prompt(run)
+        self.assertNotIn("exact <NAME>", exercise_prompt)
+        self.assertEqual(_prepare_prompt(run), exercise_prompt)
+
+        finished = Session.objects.create(consumer=self.consumer, source_run=run)
+        finished_prompt = _prepare_prompt(finished)
+        self.assertNotIn("exact <NAME>", finished_prompt)
+        self.assertEqual(_prepare_prompt(finished), finished_prompt)

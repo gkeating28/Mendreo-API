@@ -62,9 +62,87 @@ def with_offer_question(text: str | None, exercise) -> str:
         "Would you like to start an exercise? Yes or no."
     )
     body = (text or "").strip()
-    if already_invites_exercise_start(body):
+    title = (getattr(exercise, "title", None) or "").strip()
+    if title and title in body:
         return body
-    return f"{body}\n\n{ask}" if body else ask
+    return ask
+
+
+_OFFER_MEMORY_LIMIT = 5
+_OFFER_MEMORY_TURNS = 6
+_OFFER_OUTCOMES = ("offered", "declined", "accepted")
+
+
+def remember_exercise_offer(session, exercise, outcome: str) -> None:
+    """Record an offer on the session. The caller saves."""
+    if session is None or exercise is None or not getattr(exercise, "id", None):
+        return
+    if getattr(session, "exercise_id", None) or getattr(session, "source_run_id", None):
+        return
+    if outcome not in _OFFER_OUTCOMES:
+        return
+    title = (getattr(exercise, "title", None) or "").replace("\n", " ").strip()
+    try:
+        at_count = int(session.consumer_messages_no or 0)
+    except (TypeError, ValueError):
+        at_count = 0
+    meta = dict(session.cached_prompt_meta or {})
+    kept = [
+        row for row in (meta.get("exercise_offers") or [])
+        if isinstance(row, dict) and row.get("exercise_id") != exercise.id
+    ]
+    kept.append({
+        "exercise_id": exercise.id,
+        "title": title,
+        "outcome": outcome,
+        "at_consumer_messages_no": at_count,
+    })
+    meta["exercise_offers"] = kept[-_OFFER_MEMORY_LIMIT:]
+    session.cached_prompt_meta = meta
+
+
+def recent_exercise_offer_block(session) -> str:
+    """Lines for offers still inside the six-turn window. The count is done here."""
+    if getattr(session, "exercise_id", None) or getattr(session, "source_run_id", None):
+        return ""
+    try:
+        current = int(session.consumer_messages_no or 0)
+    except (TypeError, ValueError):
+        return ""
+    lines = []
+    for row in (session.cached_prompt_meta or {}).get("exercise_offers") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            at_count = int(row.get("at_consumer_messages_no"))
+        except (TypeError, ValueError):
+            continue
+        turns = current - at_count
+        if turns < 0 or turns >= _OFFER_MEMORY_TURNS:
+            continue
+        title = str(row.get("title") or "").strip()
+        outcome = str(row.get("outcome") or "").strip()
+        if not title or outcome not in _OFFER_OUTCOMES:
+            continue
+        lines.append(
+            f"Already in this chat: {title}, {outcome}, {turns} user turns ago. "
+            "Do not offer it again yet. Stay in this chat in the same voice. "
+            "Do not run an exercise here."
+        )
+    return "\n".join(lines)
+
+
+def note_unresolved_typed_decline(session, text: str) -> None:
+    """Store a typed no before the next prompt is built."""
+    if getattr(session, "exercise_id", None) or getattr(session, "source_run_id", None):
+        return
+    if spoken_offer_chip(text or "") != Constants.EXERCISE_OFFER_NO:
+        return
+    offer = unresolved_offer_message(session)
+    if offer is None or not offer.exercise_id:
+        return
+    remember_exercise_offer(session, offer.exercise, "declined")
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
 
 def format_agent_offer(response, exercise, session) -> tuple[list | None, str]:
@@ -77,6 +155,8 @@ def format_agent_offer(response, exercise, session) -> tuple[list | None, str]:
             sanitize_suggested_responses(response.suggested_responses, response.text),
             response.text,
         )
+    remember_exercise_offer(session, exercise, "offered")
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
     return chips, with_offer_question(response.text, exercise)
 
 
@@ -231,12 +311,15 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
             session.messages_no += 1
             session.consumer_messages_no += 1
             session.resume_dismissed_at = None
+            if offer.exercise_id:
+                remember_exercise_offer(session, offer.exercise, "accepted")
             session.save(
                 update_fields=[
                     "last_message",
                     "messages_no",
                     "consumer_messages_no",
                     "resume_dismissed_at",
+                    "cached_prompt_meta",
                     "updated_at",
                 ]
             )
@@ -259,6 +342,8 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
         session.consumer_messages_no += 1
         session.agent_messages_no += 1
         session.resume_dismissed_at = None
+        if offer.exercise_id:
+            remember_exercise_offer(session, offer.exercise, "declined")
         session.save(
             update_fields=[
                 "last_message",
@@ -266,6 +351,7 @@ def _resolve_offer(user_message: Message, offer: Message, text: str) -> Message:
                 "consumer_messages_no",
                 "agent_messages_no",
                 "resume_dismissed_at",
+                "cached_prompt_meta",
                 "updated_at",
             ]
         )

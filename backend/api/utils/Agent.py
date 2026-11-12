@@ -475,6 +475,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     consumer = consumer_message.sender.consumer
     assert consumer, "Message sender must be a consumer"
 
+    from .ExerciseOffer import note_unresolved_typed_decline
+
+    note_unresolved_typed_decline(session, consumer_message.text or "")
     prompt = _prepare_prompt(session=session)
 
     if session.exercise:
@@ -1165,6 +1168,21 @@ def _with_source_run_background(session_context: str, source_block: str) -> str:
     return f"{session_context}\n\n{source_block}"
 
 
+# Kept in code so an admin save of the triage card cannot remove it.
+TRIAGE_CLOSED_LIST_RULE = (
+    "The only exercises you may offer are the ones in <EXERCISES>, and you must "
+    "use the exact <NAME>. Call get_exercise with that exercise's <ID> before you "
+    "offer it. Skill names, technique names, and names in <GOALS>, <CLIENT_SUMMARY>, "
+    "or <KNOWLEDGE> are not exercises. After you offer one, or the person declines, "
+    "keep this conversation in the same voice. Never walk through an exercise in "
+    "this chat, and never invent one."
+)
+
+
+def _general_chat_offers_enabled(session) -> bool:
+    return not session.exercise_id and not getattr(session, "source_run_id", None)
+
+
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     from ..grounding.retrieval import session_retrieval_enabled
@@ -1175,6 +1193,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta = dict(session.cached_prompt_meta or {})
     bare_opening = _session_is_bare_opening(session)
     source_block = _source_run_background(session)
+    from .ExerciseOffer import recent_exercise_offer_block
+
+    offer_block = (
+        recent_exercise_offer_block(session)
+        if _general_chat_offers_enabled(session)
+        else ""
+    )
     from ..setting.models import Setting
 
     consumer = session.consumer
@@ -1242,6 +1267,14 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         ).strip()
         stale_name = bool(first_name) and f"Name: {first_name}" not in cached
         stale_source = (meta.get("source_run_block") or "") != source_block
+        stale_closed_list = (
+            _general_chat_offers_enabled(session)
+            and TRIAGE_CLOSED_LIST_RULE not in cached
+        )
+        stale_offer_memory = (
+            _general_chat_offers_enabled(session)
+            and (meta.get("exercise_offers_block") or "") != offer_block
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -1258,6 +1291,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_protocol,
             stale_name,
             stale_source,
+            stale_closed_list,
+            stale_offer_memory,
         )):
             return cached
         session.cached_prompt = None
@@ -1363,7 +1398,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "exercises": render_exercise_catalogue(),
             "onboarding_followup_block": format_onboarding_followup_block(session),
             "goals": bodies.get(Constants.PROMPT_KEY_GOALS, ""),
-            "triage": bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
+            "triage": _triage_with_closed_list(
+                bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
+                session,
+                offer_block,
+            ),
             "session_context": _with_source_run_background(
                 render_session_context(consumer, session),
                 source_block,
@@ -1423,6 +1462,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["retrieval_instruction"] = retrieval_on
     meta["bare_opening"] = bare_opening
     meta["source_run_block"] = source_block
+    if _general_chat_offers_enabled(session):
+        meta["exercise_offers_block"] = offer_block
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
@@ -1435,6 +1476,16 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     )
 
     return prompt
+
+
+def _triage_with_closed_list(triage: str, session, offer_block: str) -> str:
+    """Admin triage, then the code-held closed list and any recent offers."""
+    if not _general_chat_offers_enabled(session):
+        return triage
+    body = f"{(triage or '').rstrip()}\n\n{TRIAGE_CLOSED_LIST_RULE}"
+    if offer_block:
+        body = f"{body}\n\n{offer_block}"
+    return body
 
 
 def _prompt_phase(session) -> str:
