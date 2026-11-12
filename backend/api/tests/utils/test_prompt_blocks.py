@@ -10,7 +10,12 @@ from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
 from ...utils.Agent import _prepare_prompt
-from ...utils.prompt_blocks import resolve_tokens, static_prefix
+from ...utils.prompt_blocks import (
+    invalidate_published_exercises_cache,
+    render_exercise_catalogue,
+    resolve_tokens,
+    static_prefix,
+)
 from ..TestCase import TestCase
 from ..utils.manager import Auth, General
 
@@ -91,6 +96,40 @@ class PromptBlockTests(TestCase):
         )
         pending.review_status = Constants.KNOWLEDGE_REVIEW_PENDING
         pending.save(update_fields=["review_status"])
+
+    def test_catalogue_strips_html_from_use_when(self):
+        stuck = Exercise.objects.create(
+            title="Stuck",
+            subtitle="Stuck",
+            description="Unused description.",
+            use_when="<p>Use when the person is stuck.</p>",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+        )
+        scripted = Exercise.objects.create(
+            title="Scripted",
+            subtitle="Scripted",
+            description="<div>From the description.</div><script>secret-script</script><style>h1{}</style>",
+            use_when="",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+        )
+        invalidate_published_exercises_cache()
+        text = render_exercise_catalogue()
+
+        self.assertIn(stuck.id, text)
+        self.assertIn("Use when the person is stuck.", text)
+        self.assertNotIn("<p>", text)
+        self.assertIn(scripted.id, text)
+        self.assertIn("From the description.", text)
+        self.assertNotIn("secret-script", text)
+        self.assertNotIn("h1{}", text)
+        self.assertNotIn("<script>", text)
+        self.assertNotIn("<style>", text)
 
     def test_resolve_tokens_fallback_and_empty(self):
         self.assertEqual(
