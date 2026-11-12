@@ -588,7 +588,7 @@ class ExerciseOfferTest(TestCase):
         ):
             yield prompts
 
-    def _save_scripted(self, texts, user_text, *, session=None, match=False):
+    def _save_scripted(self, texts, user_text, *, session=None, match=False, match_on_retry=False):
         """Run one turn with scripted model replies. Returns (saved message, user prompts)."""
         prompts = []
         systems = []
@@ -608,11 +608,17 @@ class ExerciseOfferTest(TestCase):
             def usage(self):
                 return _Usage()
 
+        self._scripted_calls = []
+
         def run_sync(*args, **kwargs):
             deps = kwargs.get("deps")
-            if match and not prompts and deps is not None:
+            call_index = len(prompts)
+            if match and call_index == 0 and deps is not None:
+                deps.matched_exercise = self.exercise
+            if match_on_retry and call_index >= 1 and deps is not None:
                 deps.matched_exercise = self.exercise
             prompts.append(kwargs.get("user_prompt") or "")
+            self._scripted_calls.append(kwargs)
             text = pending.pop(0) if pending else "Still here."
             return _Result(text)
 
@@ -650,6 +656,7 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(len(prompts), 2)
         self.assertNotIn(_BLANK_REPLY_HINT, prompts[0])
         self.assertTrue(prompts[1].endswith(_BLANK_REPLY_HINT))
+        self.assertNotIn("usage_limits", self._scripted_calls[1])
         self.assertEqual(saved.text, "I'm here with you today.")
         self.assertTrue(saved.text.strip())
         saved.refresh_from_db()
@@ -676,7 +683,40 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(len(prompts), 2)
         self.assertTrue(prompts[1].endswith(_OFFER_RETRY_HINT))
         self.assertNotIn(_OFFER_RETRY_HINT, prompts[0])
+        self.assertEqual(self._scripted_calls[1]["usage_limits"].tool_calls_limit, 3)
         self.assertEqual(saved.text, "Let's stay with what you said.")
+        self.assertNotEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+
+    def test_offer_retry_with_the_tool_keeps_the_offer_and_chips(self):
+        retry = f"{self.exercise.title} fits this. Would you like to try it?"
+        saved, prompts = self._save_scripted(
+            [f"Want to try {self.exercise.title}?", retry],
+            "I keep thinking about work.",
+            match_on_retry=True,
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertTrue(prompts[1].endswith(_OFFER_RETRY_HINT))
+        self.assertEqual(self._scripted_calls[1]["usage_limits"].tool_calls_limit, 3)
+        self.assertEqual(saved.text, retry)
+        self.assertEqual(saved.exercise_id, self.exercise.id)
+        self.assertEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+
+    def test_offer_retry_without_the_tool_keeps_the_text_and_adds_no_chips(self):
+        offer = f"Want to try {self.exercise.title}? It might help."
+        saved, prompts = self._save_scripted(
+            [offer, offer],
+            "I keep thinking about work.",
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertEqual(self._scripted_calls[1]["usage_limits"].tool_calls_limit, 3)
+        self.assertEqual(saved.text, offer)
+        self.assertIsNone(saved.exercise_id)
         self.assertNotEqual(
             saved.suggested_responses,
             list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
@@ -776,6 +816,21 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.json["text"], declined_offer_text(self.exercise.title))
         self.assertNotEqual(response.json["text"], "I'm here with you. Tell me a bit more.")
+
+    @override_settings(AI_ASYNC_MESSAGES=False)
+    def test_tapped_no_does_not_keep_an_offer(self):
+        self._create_offer()
+        offer = f"Want to try {self.exercise.title}?"
+        with self._scripted_posts([offer, "This second reply must not be used."]) as prompts:
+            response = self._post_message("No", from_suggested_response=True)
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json["text"], offer)
+        self.assertIsNone(response.json["exercise"])
+        self.assertNotIn(
+            Constants.EXERCISE_OFFER_YES,
+            response.json["suggested_responses"] or [],
+        )
 
     @override_settings(AI_ASYNC_MESSAGES=False)
     def test_typed_no_does_not_use_the_tapped_decline_hint(self):

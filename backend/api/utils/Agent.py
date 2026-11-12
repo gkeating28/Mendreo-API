@@ -41,8 +41,10 @@ _BLANK_REPLY_HINT = (
 )
 _BLANK_REPLY_FALLBACK = "I'm here with you. Tell me a bit more."
 _OFFER_RETRY_HINT = (
-    "Do not offer or name an exercise this turn. "
-    "Carry on the conversation in your usual voice."
+    "To offer an exercise, first call get_exercise with a valid id, "
+    "then offer it in your own words and ask if they want to try it. "
+    "If no exercise fits, carry on the conversation and end with a gentle question. "
+    "Use the same voice you have been using in this chat, including any style the person has asked for."
 )
 
 
@@ -756,12 +758,10 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 on_step_held = True
         if (
             not session.exercise_id
+            and not _offer_decline_turn(session)
             and dependencies.matched_exercise is None
         ):
-            from .ExerciseOffer import (
-                reply_offers_an_exercise,
-                without_unauthorised_offer_sentences,
-            )
+            from .ExerciseOffer import reply_offers_an_exercise
 
             user_text = consumer_message.text or ""
             if reply_offers_an_exercise(getattr(response_data, "text", None), user_text):
@@ -770,28 +770,16 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                     getattr(session, "id", None),
                     getattr(consumer_message, "id", None),
                 )
-                repair["tools"] = False
+                repair["tools"] = True
                 repair["hint"] = _OFFER_RETRY_HINT
                 try:
                     retry, _provider = run_with_failover(_run)
                     retry_data = retry.output
                     retry_text = (getattr(retry_data, "text", None) or "").strip()
                     if retry_text:
-                        if reply_offers_an_exercise(retry_text, user_text):
-                            cleaned = without_unauthorised_offer_sentences(
-                                retry_text, user_text
-                            )
-                            retry_data.text = cleaned or retry_text
                         result = retry
                         response_data = retry_data
                         debug_result = retry
-                    else:
-                        cleaned = without_unauthorised_offer_sentences(
-                            getattr(response_data, "text", None), user_text
-                        )
-                        if cleaned:
-                            response_data.text = cleaned
-                            response_data.suggested_responses = []
                 except Exception:
                     logger.exception(
                         "general-chat exercise offer retry failed session=%s message=%s",
@@ -801,6 +789,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 finally:
                     repair["tools"] = True
                     repair["hint"] = None
+                logger.info(
+                    "general-chat exercise offer retry matched session=%s message=%s matched=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                    "yes" if dependencies.matched_exercise is not None else "no",
+                )
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
