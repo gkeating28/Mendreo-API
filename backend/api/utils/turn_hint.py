@@ -53,7 +53,8 @@ ABOUT_THE_USER_HINT = (
     "plus anything {user_name} has told you earlier in this chat. Use only that. "
     "Do not guess or add anything else, such as age, hobbies, routines or feelings "
     "that are not written there. Answer in two sentences, naming one or two specific "
-    "things from it. Do not say you have no information. Then ask one simple question."
+    "things from it. Do not say you have no information. Then ask one simple question. "
+    "Answer in the same voice and style as the rest of this chat."
 )
 
 
