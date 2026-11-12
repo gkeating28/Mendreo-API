@@ -56,6 +56,97 @@ def already_invites_exercise_start(text: str | None) -> bool:
     return any(marker in lower for marker in _START_INVITE_MARKERS)
 
 
+# Small on purpose. A hit costs one tool-less retry, so keep this list tight.
+UNAUTHORISED_OFFER_PHRASES = (
+    "would you like to try",
+    "want to try",
+    "i'd suggest the",
+    "i would suggest the",
+    "i'd suggest an exercise",
+    "i would suggest an exercise",
+)
+
+_EXERCISE_QUESTION_STARTS = (
+    "what ",
+    "what's ",
+    "whats ",
+    "how ",
+    "why ",
+    "when ",
+    "where ",
+    "who ",
+    "can you ",
+    "could you ",
+    "tell me ",
+    "explain ",
+)
+
+
+def _published_exercise_titles() -> list[str]:
+    from ..exercise.models import Exercise
+
+    titles = Exercise.objects.filter(
+        status=Constants.EXERCISE_STATUS_PUBLISHED,
+        authoring_snapshot=False,
+    ).values_list("title", flat=True)
+    return [title.strip() for title in titles if title and len(title.strip()) >= 3]
+
+
+def _offer_phrase_hit(text: str) -> bool:
+    lower = _normalize_offer_text(text)
+    return any(phrase in lower for phrase in UNAUTHORISED_OFFER_PHRASES)
+
+
+def _title_hit(text: str, titles: list[str]) -> bool:
+    return any(title in (text or "") for title in titles)
+
+
+def _user_asked_about_exercise(user_text: str, titles: list[str]) -> bool:
+    raw = user_text or ""
+    lower = _normalize_offer_text(raw)
+    asks = "?" in raw or any(lower.startswith(prefix) for prefix in _EXERCISE_QUESTION_STARTS)
+    if not asks:
+        return False
+    if "exercise" in lower:
+        return True
+    return any(title.lower() in lower for title in titles)
+
+
+def reply_offers_an_exercise(reply: str | None, user_text: str | None = None) -> bool:
+    """True when a general-chat reply offers an exercise without the tool.
+
+    An exact published title counts, as does one phrase in
+    ``UNAUTHORISED_OFFER_PHRASES``. A reply that only answers a question the
+    person asked about an exercise does not.
+    """
+    body = reply or ""
+    if not body.strip():
+        return False
+    titles = _published_exercise_titles()
+    phrases = _offer_phrase_hit(body)
+    if _user_asked_about_exercise(user_text or "", titles) and not phrases:
+        return False
+    return phrases or _title_hit(body, titles)
+
+
+def without_unauthorised_offer_sentences(reply: str | None, user_text: str | None = None) -> str | None:
+    """Drop offer sentences when a normal sentence is left. Otherwise None."""
+    parts = re.split(r"(?<=[.!?])\s+", (reply or "").strip())
+    sentences = [part.strip() for part in parts if part.strip()]
+    if len(sentences) < 2:
+        return None
+    kept = [
+        sentence for sentence in sentences
+        if not reply_offers_an_exercise(sentence, user_text)
+    ]
+    if not kept or len(kept) == len(sentences):
+        return None
+    cleaned = " ".join(kept).strip()
+    if not cleaned or reply_offers_an_exercise(cleaned, user_text):
+        return None
+    return cleaned
+
+
 def with_offer_question(text: str | None, exercise) -> str:
     ask = (
         f"There's an exercise that fits what you're describing: {exercise.title}. "

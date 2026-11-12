@@ -36,6 +36,15 @@ SESSION_RESPONSE_SCHEMA = SessionAiResponse
 
 logger = logging.getLogger(__name__)
 
+_BLANK_REPLY_HINT = (
+    "Reply to the person now in your usual voice. Do not offer an exercise."
+)
+_BLANK_REPLY_FALLBACK = "I'm here with you. Tell me a bit more."
+_OFFER_RETRY_HINT = (
+    "Do not offer or name an exercise this turn. "
+    "Carry on the conversation in your usual voice."
+)
+
 
 @dataclass
 class Dependencies:
@@ -500,6 +509,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     debug_result = None
     on_step_retried = False
     on_step_held = False
+    # Retries reuse this prompt and a freshly built copy of the same history.
+    # The hint, when set, is appended to the user message only.
+    repair = {"tools": True, "hint": None}
 
     def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider)
@@ -512,7 +524,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             agent_kwargs["model_settings"] = model_settings
 
         agent: Agent[Dependencies, BaseModel] = Agent(pydantic_model, **agent_kwargs)
-        _register_tools(agent, session)
+        if repair["tools"]:
+            _register_tools(agent, session)
 
         from .history import build_history
         from .turn_hint import user_prompt_with_hint
@@ -526,6 +539,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         )
         if steer[0]:
             user_prompt = f"{user_prompt}\n\n<TURN_HINT>\n{steer[0]}\n</TURN_HINT>"
+        if repair["hint"]:
+            user_prompt = f"{user_prompt}\n\n{repair['hint']}"
         history = build_history(
             session, exclude_message_id=getattr(consumer_message, "id", None)
         )
@@ -540,13 +555,15 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         from pydantic_ai.exceptions import UsageLimitExceeded
 
         tool_calls_limit = 2 if session.exercise_id else 3
+        run_kwargs = {
+            "user_prompt": user_prompt,
+            "deps": dependencies,
+            "message_history": history,
+        }
+        if repair["tools"]:
+            run_kwargs["usage_limits"] = UsageLimits(tool_calls_limit=tool_calls_limit)
         try:
-            result = agent.run_sync(
-                user_prompt=user_prompt,
-                deps=dependencies,
-                message_history=history,
-                usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit),
-            )
+            result = agent.run_sync(**run_kwargs)
         except UsageLimitExceeded as exc:
             # A general-chat run that asks for another tool has no final
             # reply. Do not replace that with the generic apology. Leave the
@@ -596,6 +613,33 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         result, _provider = run_with_failover(_run)
         response_data = result.output
         debug_result = result
+        if not session.exercise_id and not (getattr(response_data, "text", None) or "").strip():
+            logger.info(
+                "general-chat blank reply retry session=%s message=%s",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+            repair["tools"] = False
+            repair["hint"] = _BLANK_REPLY_HINT
+            try:
+                retry, _provider = run_with_failover(_run)
+                retry_data = retry.output
+                if (getattr(retry_data, "text", None) or "").strip():
+                    result = retry
+                    response_data = retry_data
+                    debug_result = retry
+            except Exception:
+                logger.exception(
+                    "general-chat blank reply retry failed session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+            finally:
+                repair["tools"] = True
+                repair["hint"] = None
+            if not (getattr(response_data, "text", None) or "").strip():
+                response_data.text = _BLANK_REPLY_FALLBACK
+                response_data.suggested_responses = []
         if reply_ends_mid_sentence(getattr(response_data, "text", None)):
             logger.warning(
                 "reply ended mid-sentence for session=%s message=%s; retrying once",
@@ -684,6 +728,53 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             if not stayed:
                 _hold_on_step(response_data)
                 on_step_held = True
+        if (
+            not session.exercise_id
+            and dependencies.matched_exercise is None
+        ):
+            from .ExerciseOffer import (
+                reply_offers_an_exercise,
+                without_unauthorised_offer_sentences,
+            )
+
+            user_text = consumer_message.text or ""
+            if reply_offers_an_exercise(getattr(response_data, "text", None), user_text):
+                logger.info(
+                    "general-chat exercise offer retry session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+                repair["tools"] = False
+                repair["hint"] = _OFFER_RETRY_HINT
+                try:
+                    retry, _provider = run_with_failover(_run)
+                    retry_data = retry.output
+                    retry_text = (getattr(retry_data, "text", None) or "").strip()
+                    if retry_text:
+                        if reply_offers_an_exercise(retry_text, user_text):
+                            cleaned = without_unauthorised_offer_sentences(
+                                retry_text, user_text
+                            )
+                            retry_data.text = cleaned or retry_text
+                        result = retry
+                        response_data = retry_data
+                        debug_result = retry
+                    else:
+                        cleaned = without_unauthorised_offer_sentences(
+                            getattr(response_data, "text", None), user_text
+                        )
+                        if cleaned:
+                            response_data.text = cleaned
+                            response_data.suggested_responses = []
+                except Exception:
+                    logger.exception(
+                        "general-chat exercise offer retry failed session=%s message=%s",
+                        getattr(session, "id", None),
+                        getattr(consumer_message, "id", None),
+                    )
+                finally:
+                    repair["tools"] = True
+                    repair["hint"] = None
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
@@ -736,6 +827,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             on_step_retried=on_step_retried,
             on_step_held=on_step_held,
         )
+    if (
+        not session.exercise_id
+        and dependencies.matched_exercise is None
+        and response_data.suggested_responses == list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES)
+    ):
+        response_data.suggested_responses = []
     response_data.suggested_responses = sanitize_suggested_responses(
         response_data.suggested_responses,
         response_data.text,

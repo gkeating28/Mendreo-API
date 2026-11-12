@@ -11,9 +11,13 @@ from ...participant.models import Participant
 from ...session.models import Session
 from ...tests.TestCase import TestCase
 from ...utils import Constants
+from ...agent.models import Agent as PersistAgent
 from ...utils.Agent import (
     Dependencies,
     GeneralResponse,
+    _BLANK_REPLY_FALLBACK,
+    _BLANK_REPLY_HINT,
+    _OFFER_RETRY_HINT,
     _prepare_prompt,
     _register_get_exercise,
     _register_tools,
@@ -511,3 +515,141 @@ class ExerciseOfferTest(TestCase):
         self.assertEqual(typed_offer["outcome"], "declined")
         self.assertEqual(typed_offer["at_consumer_messages_no"], 4)
         self.assertIn("Already in this chat:", _prepare_prompt(typed))
+
+    def _user_message(self, text, session=None):
+        chat = session or self.session
+        sender = Participant.objects.filter(session=chat, consumer=self.consumer).first()
+        return Message.objects.create(session=chat, sender=sender, text=text)
+
+    def _save_scripted(self, texts, user_text, *, session=None, match=False):
+        """Run one turn with scripted model replies. Returns (saved message, user prompts)."""
+        prompts = []
+        systems = []
+        pending = list(texts)
+
+        class _Usage:
+            pass
+
+        class _Result:
+            def __init__(self, text):
+                self.output = GeneralResponse(
+                    text=text,
+                    suggested_responses=[],
+                    reasoning="test",
+                )
+
+            def usage(self):
+                return _Usage()
+
+        def run_sync(*args, **kwargs):
+            deps = kwargs.get("deps")
+            if match and not prompts and deps is not None:
+                deps.matched_exercise = self.exercise
+            prompts.append(kwargs.get("user_prompt") or "")
+            text = pending.pop(0) if pending else "Still here."
+            return _Result(text)
+
+        def tool(func=None, **kwargs):
+            def register(fn):
+                return fn
+
+            if func is None:
+                return register
+            return register(func)
+
+        fake = mock.Mock()
+        fake.tool.side_effect = tool
+        fake.run_sync.side_effect = run_sync
+
+        def build_agent(*args, **kwargs):
+            systems.append(kwargs.get("system_prompt"))
+            return fake
+
+        user_message = self._user_message(user_text, session=session)
+        with (
+            mock.patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            mock.patch("api.utils.Agent.Agent", side_effect=build_agent),
+        ):
+            saved = PersistAgent.get_response(session or self.session, user_message)
+        if len(systems) > 1:
+            self.assertEqual(systems[0], systems[1])
+        return saved, prompts
+
+    def test_empty_reply_retries_once_and_saves_the_reply(self):
+        saved, prompts = self._save_scripted(
+            ["", "I'm here with you today."],
+            "I keep thinking about work.",
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertNotIn(_BLANK_REPLY_HINT, prompts[0])
+        self.assertTrue(prompts[1].endswith(_BLANK_REPLY_HINT))
+        self.assertEqual(saved.text, "I'm here with you today.")
+        self.assertTrue(saved.text.strip())
+        saved.refresh_from_db()
+        self.assertEqual(saved.text, "I'm here with you today.")
+
+    def test_empty_reply_twice_saves_the_fixed_fallback(self):
+        saved, prompts = self._save_scripted(
+            ["", "   "],
+            "I keep thinking about work.",
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertEqual(saved.text, _BLANK_REPLY_FALLBACK)
+        self.assertTrue(saved.text.strip())
+        self.assertNotIn("exercise", saved.text.lower())
+
+    def test_published_title_without_a_match_retries_once(self):
+        saved, prompts = self._save_scripted(
+            [
+                f"Want to try {self.exercise.title}?",
+                "Let's stay with what you said.",
+            ],
+            "I keep thinking about work.",
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertTrue(prompts[1].endswith(_OFFER_RETRY_HINT))
+        self.assertNotIn(_OFFER_RETRY_HINT, prompts[0])
+        self.assertEqual(saved.text, "Let's stay with what you said.")
+        self.assertNotEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+
+    def test_published_title_with_a_match_does_not_retry(self):
+        first = f"{self.exercise.title} might help. Shall we?"
+        saved, prompts = self._save_scripted(
+            [first, "This second reply must not be used."],
+            "I keep thinking about work.",
+            match=True,
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(self.exercise.title, saved.text)
+        self.assertEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+
+    def test_exercise_session_does_not_check_for_an_offer(self):
+        chat = Session.objects.create(
+            consumer=self.consumer,
+            exercise=self.exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=self.exercise.steps_no or 1,
+        )
+        Participant.create_participants(chat)
+        saved, prompts = self._save_scripted(
+            [f"Let's talk about {self.exercise.title}.", "Unused retry."],
+            "I keep thinking about work.",
+            session=chat,
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(self.exercise.title, saved.text)
+
+    def test_plain_reply_does_not_retry(self):
+        saved, prompts = self._save_scripted(
+            ["You had a long day.", "Unused retry."],
+            "I keep thinking about work.",
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(saved.text, "You had a long day.")
