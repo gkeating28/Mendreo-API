@@ -165,8 +165,14 @@ def thin_answer_catalogue_text() -> str:
     )
 
 
-def turn_hint_text(previous, user_text: str) -> str | None:
-    """Hint for this model call only. None unless the previous question was open."""
+def turn_hint_text(previous, user_text: str, session=None) -> str | None:
+    """Hint for this model call only. None unless the previous question was open.
+
+    General chat has no live step, so the thin-answer hints stay off there.
+    ``thin_answer_hint_enabled`` still defaults to on for exercise sessions.
+    """
+    if session is not None and not getattr(session, "exercise_id", None):
+        return None
     from ..setting.models import Setting
 
     if not Setting.get_thin_answer_hint_enabled():
@@ -411,7 +417,7 @@ def _hinted_user_prompt(session, user_message) -> str:
                         .order_by("-created_at")
                         .first()
                     )
-                    hint = turn_hint_text(previous, text)
+                    hint = turn_hint_text(previous, text, session)
                     if hint:
                         winner = "thin_answer"
                         body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"

@@ -8,6 +8,7 @@ from ...message.models import Message
 from ...onboarding.services import submit_flow_answers
 from ...participant.models import Participant
 from ...question.models import Question
+from ...exercise.models import Exercise
 from ...session.models import Session, SessionMetric
 from ...setting.models import Setting
 from ...utils import Constants
@@ -140,8 +141,7 @@ class Wp3Tests(TestCase):
             session=session, sender=user_sender, text="yes"
         )
         prompted = user_prompt_with_hint(session, user_message)
-        self.assertIn("<TURN_HINT>", prompted)
-        self.assertIn("One question only.", prompted)
+        self.assertEqual(prompted, "yes")
         self.assertNotIn("<TURN_HINT>", user_message.text)
 
         closed = Message.objects.create(
@@ -171,6 +171,49 @@ class Wp3Tests(TestCase):
             ACCEPT_HINT,
         )
 
+        consumer = Auth.create_consumer()
+        general = Session.objects.create(consumer=consumer)
+        general_user, general_agent = Participant.create_participants(general)
+        Message.objects.create(
+            session=general,
+            sender=general_agent,
+            text="What happened?",
+            question_kind=Constants.QUESTION_KIND_OPEN,
+            probe_count=0,
+        )
+        general_reply = Message.objects.create(
+            session=general, sender=general_user, text="ok"
+        )
+        self.assertIsNone(turn_hint_text(
+            Message.objects.filter(session=general, sender=general_agent).first(),
+            "ok",
+            general,
+        ))
+        self.assertNotIn(FOLLOW_UP_HINT, user_prompt_with_hint(general, general_reply))
+
+        exercise = Exercise.objects.create(
+            title="Hint exercise",
+            subtitle="Hint",
+            description="Hint",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+        )
+        exercise_session = Session.objects.create(consumer=consumer, exercise=exercise)
+        _exercise_user, exercise_agent = Participant.create_participants(exercise_session)
+        exercise_question = Message.objects.create(
+            session=exercise_session,
+            sender=exercise_agent,
+            text="What happened?",
+            question_kind=Constants.QUESTION_KIND_OPEN,
+            probe_count=0,
+        )
+        self.assertEqual(
+            turn_hint_text(exercise_question, "ok", exercise_session),
+            FOLLOW_UP_HINT,
+        )
+
         capture = Setting.get_or_create_store_turn_prompts()
         capture.value = "true"
         capture.save()
@@ -182,6 +225,9 @@ class Wp3Tests(TestCase):
             self.assertIsNone(turn_hint_text(open_question, "fine"))
             self.assertIsNone(
                 turn_hint_text(_Previous(Constants.QUESTION_KIND_OPEN, 2), "ok")
+            )
+            self.assertIsNone(
+                turn_hint_text(exercise_question, "ok", exercise_session)
             )
 
             consumer = Auth.create_consumer()
