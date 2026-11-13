@@ -285,8 +285,10 @@ class PromptBlockTests(TestCase):
         )
         prompt = _prepare_prompt(run)
         self.assertIn(STEP_REFERENCE_RULES, prompt)
+        self.assertIn("ask the step's next question directly", prompt)
         self.assertIn('make the last sentence exactly "Do I have that right?"', prompt)
         self.assertNotIn(STEP_REFERENCE_RULES, general)
+        self.assertNotIn("ask the step's next question directly", general)
         self.assertNotIn("Never refer to it only as", general)
         self.assertNotIn("include only what the user said or clearly agreed to", general)
 

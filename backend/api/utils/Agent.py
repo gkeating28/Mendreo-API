@@ -948,7 +948,9 @@ STEP_REFERENCE_RULES = (
     "Never refer to it only as \"that action\", \"those situations\", or \"that plan\". "
     "In any summary or recap, include only what the user said or clearly agreed to. "
     "Do not present an activity or technique you suggested and the user did not accept "
-    "as a decision the user made.\n\n"
+    "as a decision the user made. "
+    "Do not ask the user whether they would like to do the step's own next task or "
+    "explore the step's topic; ask the step's next question directly.\n\n"
 )
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
@@ -1458,7 +1460,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_reference = (
             bool(session.exercise_id)
             and not session.in_pre_exercise_phase()
-            and "Never refer to it only as" not in cached
+            and "ask the step's next question directly" not in cached
         )
         if not any((
             stale_placeholders,
