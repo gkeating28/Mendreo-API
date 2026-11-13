@@ -37,7 +37,8 @@ NOT_THE_LAST_STEP_HINT = (
 LAST_STEP_HINT = (
     "This is the last step. Do not talk about moving on or a next step. "
     "If {name} has not yet confirmed your summary, summarise their decisions "
-    "and their alternative action in their own words and ask if you have it right. "
+    "and their alternative action in their own words, and make the last sentence exactly "
+    "\"Do I have that right?\". Do not rephrase it. "
     "If they have confirmed it, ask only whether they are ready to finish the exercise."
 )
 ON_STEP_FALLBACK = (
@@ -216,12 +217,13 @@ def probe_count_for(previous, question_kind: str) -> int:
 
 SUMMARY_CONFIRM_HINT = (
     "This step is not done. Summarise what this step asked for, in the user's words, "
-    "then ask if you have that right. Do not ask them to move on, and do not start another exercise."
+    "then make the last sentence exactly \"Do I have that right?\". Do not rephrase it. "
+    "Do not ask them to move on, and do not start another exercise."
 )
 STEP_SUMMARY_HINT = (
     "This step has had enough questions. In this same message, write a short summary "
     "in the user's own words of the worry, the situation it happens in, and how it affects them, "
-    "and make the last sentence ask if you have that right. "
+    "and make the last sentence exactly \"Do I have that right?\". Do not rephrase it. "
     "Never ask if you have that right without the summary in the message. "
     "Ask no other question."
 )

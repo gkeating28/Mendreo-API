@@ -95,20 +95,20 @@ class Wp5StepRenderingTests(BaseTest):
         )
         self.assertNotIn("only as background", prompt)
         self.assertNotIn("Do not apply cognitive restructuring", prompt)
-        self.assertIn("ask if you have it right", prompt)
+        self.assertIn("Do I have that right?", prompt)
         self.assertNotIn("Do not reframe the situation", prompt)
         self.assertNotIn("cognitive restructuring as appropriate", prompt)
         self.assertEqual(_prompt_phase(session), "step:3:step_active")
         self.assertEqual(steps[2].title, "Live step")
 
         session.cached_prompt = prompt.replace(
-            "ask if you have it right",
-            "Do not reframe the situation. ask if you have it right",
+            "Do I have that right?",
+            "Do not reframe the situation. Do I have that right?",
         )
         session.save(update_fields=["cached_prompt", "updated_at"])
         rebuilt = _prepare_prompt(session)
         self.assertNotIn("Do not reframe the situation", rebuilt)
-        self.assertIn("ask if you have it right", rebuilt)
+        self.assertIn("Do I have that right?", rebuilt)
 
     def test_live_step_script_includes_title_instructions_and_reference(self):
         from ...utils.Agent import _current_step_instructions

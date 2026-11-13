@@ -1191,6 +1191,19 @@ class GoalGateTests(BaseTest):
         step = self._agree_after_summary(session, "yes but change the second part")
         self.assertFalse(summary_was_confirmed(session, step))
 
+    def test_yes_after_a_recognised_summary_confirms_a_non_last_step(self):
+        session = self._two_steps()
+        self._ask(
+            session,
+            "You are feeling worried because there are layoffs at your company, which makes "
+            "your future feel uncertain and creates stress about your income stability. "
+            "You experience this worry as a heavy feeling in your chest. Do I have that right?",
+        )
+        self._user_reply(session, "yes")
+        self.assertTrue(
+            summary_was_confirmed(session, session.session_steps.get(order=0).step)
+        )
+
     def test_a_plain_yes_still_confirms_the_summary(self):
         session = self._session(done_when="The user confirmed the summary is accurate.")
         step = self._agree_after_summary(session, "yes")
@@ -2276,7 +2289,84 @@ class SummaryConfirmationTests(SimpleTestCase):
         ready = "Ask if the user is ready to move on, and move on when the user agrees."
         rule = summary_confirmation_rule(required)
         self.assertIn("summarise what this step asked for", rule)
+        self.assertIn("Do I have that right?", rule)
         self.assertNotIn("worry", rule)
         self.assertIn("summarise what this step asked for", summary_confirmation_rule(agreed))
         self.assertEqual(summary_confirmation_rule(plain), "")
         self.assertEqual(summary_confirmation_rule(ready), "")
+
+    def test_real_summaries_are_recognised_and_ordinary_questions_are_not(self):
+        from ...utils.Agent import STEP_SCOPE_RULES
+        from ...utils.turn_hint import STEP_SUMMARY_HINT, SUMMARY_CONFIRM_HINT
+
+        recognised = {
+            "A": (
+                "You feel stressed and get headaches because you worry that you do not have "
+                "a retirement plan, especially when you compare your progress to your friends "
+                "who seem much more organized. Have I understood that correctly?"
+            ),
+            "B": (
+                "You feel a lot of stress and experience headaches when you compare your lack "
+                "of a retirement plan to the progress your friends have made, particularly "
+                "while thinking about it today. Is that a correct summary of the situation?"
+            ),
+            "C": (
+                "You have decided to stop avoiding your financial planning and instead dedicate "
+                "one hour tomorrow after work to begin building your retirement plan. "
+                "Is this summary correct?"
+            ),
+            "D": (
+                "To summarize, you have decided that instead of avoiding your worries by dwelling "
+                "on them in bed or watching TV, you will read a book. Additionally, you have "
+                "committed to dedicating one hour after work tomorrow to start building your "
+                "retirement plan. Have I captured that accurately, and are you ready to finish "
+                "the exercise?"
+            ),
+            "E": (
+                "To summarize, you have decided that when you face the urge to avoid your thoughts "
+                "by watching TV or dwelling on them while in bed, you will choose to read a book "
+                "instead. You have also committed to dedicating one hour after work tomorrow to "
+                "start building your retirement plan. Have I captured your decisions accurately?"
+            ),
+            "F": (
+                "You have decided that tomorrow after work you will spend one hour starting your "
+                "retirement plan. You have also decided that when you experience the urge to avoid "
+                "your thoughts by dwelling on them in bed or watching TV, you will choose to read "
+                "a book instead. Is this correct?"
+            ),
+            "G": (
+                "You are feeling worried because there are layoffs at your company, which makes "
+                "your future feel uncertain and creates stress about your income stability. "
+                "You experience this worry as a heavy feeling in your chest. Do I have that right?"
+            ),
+            "H": (
+                "You are worried about your lack of a retirement plan and feel stressed when you "
+                "compare your progress to your friends, which is something that tends to resurface "
+                "when you are in bed alone at night and have time to dwell on your thoughts. "
+                "Do I have that right?"
+            ),
+            "I": (
+                "You have decided that the layoff situation is out of your hands and that you are "
+                "ready to manage the worry it causes. You have chosen to stop distracting yourself "
+                "with your show when the worry arises in the evening, and instead, you will use "
+                "simple, low-focus activities as a way to stay present and observe the heavy feeling "
+                "in your chest. Does this summary accurately capture your plan?"
+            ),
+        }
+        for key, text in recognised.items():
+            self.assertTrue(is_summary_confirmation(text), key)
+        self.assertFalse(is_summary_confirmation("Are you ready for the next step?"))
+        self.assertFalse(is_summary_confirmation("What do you think about that?"))
+        ordinary = (
+            "You have described a busy week at work and a plan you might try later on. "
+            "Would you like to try that this week?"
+        )
+        self.assertGreaterEqual(len(ordinary.split()), 12)
+        self.assertFalse(is_summary_confirmation(ordinary))
+        for hint in (
+            SUMMARY_CONFIRM_HINT,
+            STEP_SUMMARY_HINT,
+            summary_confirmation_rule("The user confirmed the summary is accurate."),
+            STEP_SCOPE_RULES,
+        ):
+            self.assertIn("Do I have that right?", hint)

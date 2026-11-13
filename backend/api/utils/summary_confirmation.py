@@ -13,11 +13,12 @@ _REQUIRED = re.compile(
 )
 
 _ASK = re.compile(
-    r"\b(?:did i (?:get|capture|understand)|have i got|have i understood that right|"
+    r"\b(?:did i (?:get|capture|understand)|have i got|have i captured|have i understood that (?:right|correctly)|"
     r"do i have (?:that|this) right|"
     r"does that (?:sound|seem|feel) right|does this (?:plan |summary )?sound right|"
-    r"does this summary accurately reflect|"
-    r"is that (?:right|accurate|correct)|is this right|"
+    r"does this summary accurately (?:reflect|capture)|"
+    r"is that (?:a |an )?(?:right|accurate|correct)|"
+    r"is this (?:summary |plan )?(?:right|correct|accurate)|"
     r"did i (?:get|have) (?:that|it) right|does that cover it)\b",
     re.IGNORECASE,
 )
@@ -42,7 +43,8 @@ def summary_confirmation_rule(done_when: str) -> str:
         return ""
     return (
         "\n\nBefore this step can finish, one message must summarise what this step "
-        "asked for, in the user's words, and ask if that summary is right. "
+        "asked for, in the user's words, and make the last sentence exactly "
+        "\"Do I have that right?\". Do not rephrase it. "
         "Do not set step_goal_met on that message. "
         "Do not ask if they are ready for the next step until they have confirmed the summary."
     )

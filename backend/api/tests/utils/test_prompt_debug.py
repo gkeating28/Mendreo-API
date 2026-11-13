@@ -130,7 +130,7 @@ class PromptDebugUnitTests(SimpleTestCase):
             "Your first message must be the first question in those instructions.",
             rows["step_scope_rules"]["text"],
         )
-        self.assertIn("ask if you have it right", rows["step_scope_rules"]["text"])
+        self.assertIn("Do I have that right?", rows["step_scope_rules"]["text"])
         self.assertIn(_LENGTH_OVERRIDE, rows["step_scope_rules"]["text"])
         self.assertIn(
             "you may ask whether they are ready for the next step",
