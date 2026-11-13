@@ -352,16 +352,22 @@ def pending_offer_message(session: Session) -> Message | None:
 
 
 def unresolved_offer_message(session: Session) -> Message | None:
-    """Latest offer whose exercise has not been started as a session yet.
+    """Latest offer whose exercise has not been started in this chat.
 
     Used when the user already tapped Yes (chips cleared) then declines
     from the offer sheet. Does not create a new session status.
+
+    A general chat does not own exercise runs. A run in another chat
+    does not count as this offer being started.
     """
     offers = Message.objects.filter(
         session=session,
         exercise_id__isnull=False,
         sender__agent__isnull=False,
     ).order_by("-created_at")
+
+    if not getattr(session, "exercise_id", None):
+        return offers.first()
 
     for offer in offers:
         started = Session.objects.filter(
@@ -403,6 +409,11 @@ def serialize_exercise_session(session: Session | None) -> dict | None:
 
 def exercise_session_payload_for_message(serializer, message) -> dict | None:
     if not message.exercise_id:
+        return None
+    # A general-chat offer keeps message.exercise. It must not inherit a run
+    # from another chat. Skip the cache so a later exercise-session message
+    # in the same serializer still looks up its own run.
+    if not getattr(getattr(message, "session", None), "exercise_id", None):
         return None
     cache = serializer.context.setdefault("exercise_sessions_by_id", {})
     if message.exercise_id not in cache:

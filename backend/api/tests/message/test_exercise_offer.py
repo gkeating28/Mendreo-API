@@ -23,12 +23,14 @@ from ...utils.Agent import (
     _register_get_exercise,
     _register_tools,
 )
+from ...message.serializers import MessageListSerializer
 from ...utils.ExerciseOffer import (
     _resolve_offer,
     declined_offer_text,
     format_agent_offer,
     note_unresolved_typed_decline,
     offer_decline_hint,
+    unresolved_offer_message,
 )
 from ..utils import Data
 from ..utils.manager import Auth, General
@@ -404,6 +406,17 @@ class ExerciseOfferTest(TestCase):
             ).exists()
         )
 
+    def _message_payloads(self, message_ids):
+        """Serialize these messages in one context, in the given order."""
+        rows = Message.objects.filter(id__in=message_ids).select_related(
+            "session", "exercise", "sender"
+        )
+        by_id = {row.id: row for row in rows}
+        return MessageListSerializer(
+            [by_id[message_id] for message_id in message_ids],
+            many=True,
+        ).data
+
     def test_exercise_session_payload_reuses_paused_and_completed(self):
         offer = self._create_offer(suggested_responses=[])
 
@@ -414,29 +427,103 @@ class ExerciseOfferTest(TestCase):
             current_step_no=2,
             total_steps_no=self.exercise.steps_no,
         )
+        _consumer_participant, agent_participant = Participant.create_participants(
+            exercise_session
+        )
+        inside = Message.objects.create(
+            session=exercise_session,
+            sender=agent_participant,
+            text="Still on step 2.",
+            exercise=self.exercise,
+            suggested_responses=[],
+        )
+        self.session.last_message = offer
+        self.session.save(update_fields=["last_message", "updated_at"])
+        exercise_session.last_message = inside
+        exercise_session.save(update_fields=["last_message", "updated_at"])
 
-        listed = self._get(
-            f"/messages?session_id={self.session.id}&order_by=created_at",
-            access_token=self.access_token,
-        )
-        offer_payload = next(
-            row for row in listed.json["results"] if row["id"] == offer.id
-        )
-        self.assertEqual(offer_payload["exercise_session"]["id"], exercise_session.id)
-        self.assertFalse(offer_payload["exercise_session"]["completed"])
+        def offer_row():
+            listed = self._get(
+                f"/messages?session_id={self.session.id}&order_by=created_at",
+                access_token=self.access_token,
+            )
+            return next(row for row in listed.json["results"] if row["id"] == offer.id)
+
+        def inside_row():
+            listed = self._get(
+                f"/messages?session_id={exercise_session.id}&order_by=created_at",
+                access_token=self.access_token,
+            )
+            return next(row for row in listed.json["results"] if row["id"] == inside.id)
+
+        offer_payload = offer_row()
+        self.assertEqual(offer_payload["exercise"]["id"], self.exercise.id)
+        self.assertEqual(offer_payload["suggested_responses"], [])
+        self.assertIsNone(offer_payload["exercise_session"])
+
+        inside_payload = inside_row()
+        self.assertEqual(inside_payload["exercise_session"]["id"], exercise_session.id)
+        self.assertFalse(inside_payload["exercise_session"]["completed"])
+        self.assertEqual(inside_payload["exercise_session"]["current_step_no"], 2)
+
+        # One serializer context lists a general chat and an exercise run.
+        # Either order must keep the general offer clear and the run attached.
+        for order in ((offer.id, inside.id), (inside.id, offer.id)):
+            payloads = {row["id"]: row for row in self._message_payloads(order)}
+            self.assertIsNone(payloads[offer.id]["exercise_session"])
+            self.assertEqual(payloads[offer.id]["exercise"]["id"], self.exercise.id)
+            self.assertEqual(
+                payloads[inside.id]["exercise_session"]["id"],
+                exercise_session.id,
+            )
+            self.assertFalse(payloads[inside.id]["exercise_session"]["completed"])
 
         exercise_session.completed = True
         exercise_session.save(update_fields=["completed"])
 
-        listed = self._get(
-            f"/messages?session_id={self.session.id}&order_by=created_at",
-            access_token=self.access_token,
+        offer_payload = offer_row()
+        self.assertEqual(offer_payload["exercise"]["id"], self.exercise.id)
+        self.assertEqual(offer_payload["suggested_responses"], [])
+        self.assertIsNone(offer_payload["exercise_session"])
+
+        inside_payload = inside_row()
+        self.assertEqual(inside_payload["exercise_session"]["id"], exercise_session.id)
+        self.assertTrue(inside_payload["exercise_session"]["completed"])
+
+        listed = self._get("/sessions", access_token=self.access_token)
+        previews = {row["id"]: row for row in listed.json["results"]}
+        general_preview = previews[self.session.id]["last_message"]
+        run_preview = previews[exercise_session.id]["last_message"]
+        self.assertEqual(general_preview["exercise"], self.exercise.id)
+        self.assertEqual(general_preview["suggested_responses"], [])
+        self.assertIsNone(general_preview["exercise_session"])
+        self.assertEqual(general_preview["text"], offer.text)
+        self.assertEqual(run_preview["exercise_session"]["id"], exercise_session.id)
+        self.assertTrue(run_preview["exercise_session"]["completed"])
+        self.assertEqual(run_preview["exercise_session"]["current_step_no"], 2)
+
+    def test_unresolved_offer_ignores_a_run_from_another_chat(self):
+        offer = self._create_offer(suggested_responses=[])
+        exercise_session = Session.objects.create(
+            consumer=self.consumer,
+            exercise=self.exercise,
+            completed=False,
+            current_step_no=2,
+            total_steps_no=self.exercise.steps_no,
         )
-        offer_payload = next(
-            row for row in listed.json["results"] if row["id"] == offer.id
+        _consumer_participant, agent_participant = Participant.create_participants(
+            exercise_session
         )
-        self.assertTrue(offer_payload["exercise_session"]["completed"])
-        self.assertEqual(offer_payload["exercise_session"]["id"], exercise_session.id)
+        Message.objects.create(
+            session=exercise_session,
+            sender=agent_participant,
+            text="Still on step 2.",
+            exercise=self.exercise,
+            suggested_responses=[],
+        )
+
+        self.assertEqual(unresolved_offer_message(self.session).id, offer.id)
+        self.assertIsNone(unresolved_offer_message(exercise_session))
 
     def test_offer_wording_keeps_the_real_title_only(self):
         named = GeneralResponse(
