@@ -233,7 +233,12 @@ STEP_READY_HINT = (
     "Reply with one short acknowledging sentence and then ask only whether they are ready "
     "for the next step. Set step_goal_met and asks_readiness."
 )
+STEP_MISSING_HINT = (
+    "Before summarising, ask exactly one question to find out {missing}. "
+    "Ask nothing else, and do not summarise yet."
+)
 STEP_ANSWER_CAP = 6
+STEP_HARD_CAP = 8
 
 
 def goal_hint_text(missing: str) -> str:
@@ -360,10 +365,13 @@ def _step_answer_count(session, user_message) -> int:
 
 
 def step_progress_hint(session, user_message) -> str | None:
-    """Once this step has had STEP_ANSWER_CAP user replies, summarise or move on.
+    """Once this step has had STEP_ANSWER_CAP user replies, summarise or fill the gap.
 
     A summary that already asks for confirmation stays put until the user agrees.
-    A short yes then asks only if they are ready. Any other reply gets no hint.
+    A short yes then asks only if they are ready. Any other reply to that summary
+    gets no hint. A summary already confirmed in this step is not asked for again.
+    Between the two caps, one done-when check decides whether to summarise or to
+    ask the one missing part. At STEP_HARD_CAP the summary is asked for anyway.
     """
     if not getattr(session, "exercise_id", None):
         return None
@@ -373,9 +381,14 @@ def step_progress_hint(session, user_message) -> str | None:
         in_check_in = False
     if in_check_in:
         return None
-    if _step_answer_count(session, user_message) < STEP_ANSWER_CAP:
+    count = _step_answer_count(session, user_message)
+    if count < STEP_ANSWER_CAP:
         return None
-    from .summary_confirmation import is_summary_affirmation, is_summary_confirmation
+    from .summary_confirmation import (
+        is_summary_affirmation,
+        is_summary_confirmation,
+        summary_was_confirmed,
+    )
 
     previous = last_agent_message(session)
     if previous is not None and is_summary_confirmation(getattr(previous, "text", None)):
@@ -383,7 +396,41 @@ def step_progress_hint(session, user_message) -> str | None:
         if is_summary_affirmation(reply):
             return STEP_READY_HINT
         return None
-    return STEP_SUMMARY_HINT
+    from .SessionStateMachine import _live_step
+
+    session_step = _live_step(session)
+    step = session_step.step if session_step is not None else None
+    if step is not None and summary_was_confirmed(session, step):
+        return None
+    if count >= STEP_HARD_CAP:
+        return STEP_SUMMARY_HINT
+    return _capped_step_hint(session, step)
+
+
+def _capped_step_hint(session, step) -> str:
+    """One done-when check between the caps. A failed check still summarises."""
+    if step is None:
+        return STEP_SUMMARY_HINT
+    from .extraction import check_done_when
+    from .summary_confirmation import missing_is_only_summary_confirmation
+
+    try:
+        result = check_done_when(session, step)
+    except Exception:
+        logger.exception(
+            "done_when check failed for session=%s step=%s",
+            getattr(session, "id", None),
+            getattr(step, "id", None),
+        )
+        return STEP_SUMMARY_HINT
+    if not isinstance(result, dict):
+        return STEP_SUMMARY_HINT
+    if result.get("met"):
+        return STEP_SUMMARY_HINT
+    missing = " ".join((result.get("missing") or "").split())
+    if not missing or missing_is_only_summary_confirmation(missing):
+        return STEP_SUMMARY_HINT
+    return STEP_MISSING_HINT.format(missing=missing)
 
 
 def about_the_user_hint(session, text: str) -> str | None:

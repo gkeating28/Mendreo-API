@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 
 from api.message.models import Message
@@ -8,6 +10,8 @@ from api.utils import Constants
 from api.utils.turn_hint import (
     EXERCISE_NUDGE_HINT,
     STEP_ANSWER_CAP,
+    STEP_HARD_CAP,
+    STEP_MISSING_HINT,
     STEP_READY_HINT,
     STEP_SUMMARY_HINT,
     SUMMARY_CONFIRM_HINT,
@@ -182,6 +186,7 @@ class StepAnswerCapTests(TestCase):
 
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertIn("In this same message", STEP_SUMMARY_HINT)
+        self.assertIn("Do I have that right?", STEP_SUMMARY_HINT)
         self.assertIn("without the summary in the message", STEP_SUMMARY_HINT)
         self.assertTrue(prompted.startswith(reply.text))
 
@@ -212,3 +217,77 @@ class StepAnswerCapTests(TestCase):
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertTrue(prompted.startswith(again.text))
+
+    def _live_step(self):
+        SessionStep.create(self.session, self.exercise)
+        return self.session.session_steps.select_related("step").get(order=0).step
+
+    def test_below_the_cap_does_not_check_done_when(self):
+        self._live_step()
+        replies = self._replies(5)
+        with patch("api.utils.extraction.check_done_when") as checker:
+            self.assertIsNone(step_progress_hint(self.session, replies[-1]))
+        checker.assert_not_called()
+
+    def test_at_the_cap_a_met_step_is_summarised(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
+        checker.assert_called_once()
+
+    def test_at_the_cap_a_substantive_gap_asks_one_question(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP)
+        missing = "what they would do about the obstacles"
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": missing},
+        ):
+            hint = step_progress_hint(self.session, replies[-1])
+        self.assertEqual(hint, STEP_MISSING_HINT.format(missing=missing))
+        self.assertIn(missing, hint)
+        self.assertNotIn(STEP_SUMMARY_HINT, hint)
+
+    def test_a_missing_summary_confirmation_still_summarises(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "confirmed the summary is accurate"},
+        ):
+            self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
+
+    def test_the_hard_cap_summarises_without_the_checker(self):
+        self._live_step()
+        replies = self._replies(STEP_HARD_CAP)
+        with patch("api.utils.extraction.check_done_when") as checker:
+            self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
+        checker.assert_not_called()
+
+    def test_a_failed_checker_still_summarises(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            side_effect=RuntimeError("down"),
+        ):
+            self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
+
+    def test_a_confirmed_summary_is_not_asked_for_again(self):
+        self._live_step()
+        self._replies(4)
+        self._summary()
+        self._reply("yes")
+        Message.objects.create(
+            session=self.session,
+            sender=self.agent,
+            text="What else happens in that situation?",
+        )
+        again = self._reply("I fall behind on the bills")
+        with patch("api.utils.extraction.check_done_when") as checker:
+            self.assertIsNone(step_progress_hint(self.session, again))
+        checker.assert_not_called()
