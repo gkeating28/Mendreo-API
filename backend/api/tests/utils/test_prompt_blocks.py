@@ -288,17 +288,20 @@ class PromptBlockTests(TestCase):
         self.assertIn("ask the step's next question directly", prompt)
         self.assertIn("ask the user for their own idea first", prompt)
         self.assertIn("at most three short sentences", prompt)
+        self.assertIn("ready to move on", prompt)
         self.assertIn('make the last sentence exactly "Do I have that right?"', prompt)
         self.assertIn('end with the exact sentence "Do I have that right?"', prompt)
         self.assertNotIn(STEP_REFERENCE_RULES, general)
         self.assertNotIn("ask the step's next question directly", general)
         self.assertNotIn("ask the user for their own idea first", general)
         self.assertNotIn("at most three short sentences", general)
+        self.assertNotIn("ready to move on", general)
         self.assertNotIn("Never refer to it only as", general)
         self.assertNotIn("include only what the user said or clearly agreed to", general)
 
         run.refresh_from_db()
         for phrase, broken in (
+            ("ready to move on", "ready to go on"),
             ("at most three short sentences", "at most three sentences"),
             ("ask the user for their own idea first", "ask the user for an idea first"),
             ("ask the step's next question directly", "ask the step's next question"),
