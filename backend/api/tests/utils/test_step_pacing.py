@@ -1196,6 +1196,33 @@ class GoalGateTests(BaseTest):
         step = self._agree_after_summary(session, "yes")
         self.assertTrue(summary_was_confirmed(session, step))
 
+    def test_a_non_last_step_uses_the_same_short_yes(self):
+        from ...utils.turn_hint import STEP_READY_HINT, step_progress_hint
+
+        accepted = ("Yes, that is right", "yes", "Yes that's it")
+        rejected = ("no, not quite", "yes but that's not all", "kind of")
+        for reply in accepted:
+            session = self._two_steps()
+            step = self._agree_after_summary(session, reply)
+            self.assertTrue(summary_was_confirmed(session, step), reply)
+        for reply in rejected:
+            session = self._two_steps()
+            step = self._agree_after_summary(session, reply)
+            self.assertFalse(summary_was_confirmed(session, step), reply)
+
+        session = self._two_steps()
+        for _ in range(6):
+            self._user_reply(session, "I keep worrying about losing my job")
+        self._ask(
+            session,
+            self._summary_recap("Have I got that right?"),
+        )
+        yes = self._user_reply(session, "Yes, that is right")
+        self.assertEqual(step_progress_hint(session, yes), STEP_READY_HINT)
+        self.assertTrue(
+            summary_was_confirmed(session, session.session_steps.get(order=0).step)
+        )
+
     def test_a_non_last_summary_question_still_holds_the_step(self):
         session = self._two_steps()
         text = self._summary_recap("Does this plan sound right to you?")
@@ -1217,7 +1244,7 @@ class GoalGateTests(BaseTest):
         prompted = user_prompt_with_hint(session, user_message)
         self.assertIn(SUMMARY_CONFIRM_HINT, prompted)
         self.assertNotIn("has confirmed the summary", prompted)
-        self.assertFalse(
+        self.assertTrue(
             summary_was_confirmed(session, session.session_steps.get(order=0).step)
         )
 
@@ -2221,6 +2248,8 @@ class SummaryConfirmationTests(SimpleTestCase):
         self.assertTrue(is_summary_affirmation("Yes, that covers it"))
         self.assertTrue(is_summary_affirmation("yes"))
         self.assertFalse(is_summary_affirmation("yes but change the second part"))
+        self.assertFalse(is_summary_affirmation("yes but I also worry about X"))
+        self.assertFalse(is_summary_affirmation("yes and no"))
 
     def test_a_recap_counts_and_a_readiness_close_does_not(self):
         recap = (

@@ -75,7 +75,10 @@ def matches_summary_affirmation(text: str) -> bool:
 
 
 def is_summary_affirmation(text: str) -> bool:
-    """A short agreement after a summary. Used only by summary_was_confirmed."""
+    """A short agreement after a summary.
+
+    Ten words or fewer, and it must not contain no, not, but, except, change, or wrong.
+    """
     if matches_summary_affirmation(text):
         return True
     raw = " ".join(
@@ -91,9 +94,6 @@ def is_summary_affirmation(text: str) -> bool:
 
 def summary_was_confirmed(session, step) -> bool:
     """True when the user agreed after an assistant summary in this step."""
-    from .SessionStateMachine import _is_last_step
-
-    agreed = is_summary_affirmation if _is_last_step(session) else matches_summary_affirmation
     pending = False
     for message in _step_messages(session, step):
         text = message.text or ""
@@ -101,7 +101,7 @@ def summary_was_confirmed(session, step) -> bool:
         if not is_user and is_summary_confirmation(text):
             pending = True
             continue
-        if is_user and pending and agreed(text):
+        if is_user and pending and is_summary_affirmation(text):
             return True
         if is_user:
             pending = False

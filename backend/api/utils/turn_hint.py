@@ -218,6 +218,19 @@ SUMMARY_CONFIRM_HINT = (
     "This step is not done. Summarise what this step asked for, in the user's words, "
     "then ask if you have that right. Do not ask them to move on, and do not start another exercise."
 )
+STEP_SUMMARY_HINT = (
+    "This step has had enough questions. In this same message, write a short summary "
+    "in the user's own words of the worry, the situation it happens in, and how it affects them, "
+    "and make the last sentence ask if you have that right. "
+    "Never ask if you have that right without the summary in the message. "
+    "Ask no other question."
+)
+STEP_READY_HINT = (
+    "The user confirmed your summary. This step is done. "
+    "Ask no more questions about this step. "
+    "Reply with one short acknowledging sentence and then ask only whether they are ready "
+    "for the next step. Set step_goal_met and asks_readiness."
+)
 STEP_ANSWER_CAP = 6
 
 
@@ -331,10 +344,10 @@ def _step_answer_count(session, user_message) -> int:
 
 
 def step_progress_hint(session, user_message) -> str | None:
-    """Summarise once this step has had STEP_ANSWER_CAP user replies.
+    """Once this step has had STEP_ANSWER_CAP user replies, summarise or move on.
 
-    A reply to a summary that already asks for confirmation gets no hint,
-    so yes and no do not start another summary.
+    A summary that already asks for confirmation stays put until the user agrees.
+    A short yes then asks only if they are ready. Any other reply gets no hint.
     """
     if not getattr(session, "exercise_id", None):
         return None
@@ -346,12 +359,15 @@ def step_progress_hint(session, user_message) -> str | None:
         return None
     if _step_answer_count(session, user_message) < STEP_ANSWER_CAP:
         return None
-    from .summary_confirmation import is_summary_confirmation
+    from .summary_confirmation import is_summary_affirmation, is_summary_confirmation
 
     previous = last_agent_message(session)
     if previous is not None and is_summary_confirmation(getattr(previous, "text", None)):
+        reply = getattr(user_message, "text", None)
+        if is_summary_affirmation(reply):
+            return STEP_READY_HINT
         return None
-    return SUMMARY_CONFIRM_HINT
+    return STEP_SUMMARY_HINT
 
 
 def about_the_user_hint(session, text: str) -> str | None:

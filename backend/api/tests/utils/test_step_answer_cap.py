@@ -8,6 +8,8 @@ from api.utils import Constants
 from api.utils.turn_hint import (
     EXERCISE_NUDGE_HINT,
     STEP_ANSWER_CAP,
+    STEP_READY_HINT,
+    STEP_SUMMARY_HINT,
     SUMMARY_CONFIRM_HINT,
     step_progress_hint,
     user_prompt_with_hint,
@@ -46,7 +48,8 @@ class StepAnswerCapTests(TestCase):
 
         prompted = user_prompt_with_hint(self.session, replies[-1])
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertNotIn("<TURN_HINT>", prompted)
         self.assertEqual(prompted, replies[-1].text)
 
@@ -55,7 +58,8 @@ class StepAnswerCapTests(TestCase):
 
         prompted = user_prompt_with_hint(self.session, replies[-1])
 
-        self.assertIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
         self.assertTrue(prompted.startswith(replies[-1].text))
 
     def test_check_in_messages_are_not_counted(self):
@@ -74,7 +78,8 @@ class StepAnswerCapTests(TestCase):
         self.assertEqual([row.step_no for row in replies], [1, 1, 1, 1, 1])
         prompted = user_prompt_with_hint(self.session, replies[-1])
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertEqual(prompted, replies[-1].text)
 
     def test_earlier_step_messages_are_not_counted(self):
@@ -92,7 +97,8 @@ class StepAnswerCapTests(TestCase):
         self.assertEqual([row.step_no for row in replies], [2, 2, 2, 2, 2])
         prompted = user_prompt_with_hint(self.session, replies[-1])
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertEqual(prompted, replies[-1].text)
 
     def test_general_chat_is_unaffected(self):
@@ -111,7 +117,8 @@ class StepAnswerCapTests(TestCase):
 
         prompted = user_prompt_with_hint(general, replies[-1])
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertIn(EXERCISE_NUDGE_HINT, prompted)
 
     def test_existing_goal_hint_still_wins(self):
@@ -123,7 +130,8 @@ class StepAnswerCapTests(TestCase):
         prompted = user_prompt_with_hint(self.session, replies[-1])
 
         self.assertIn(hint, prompted)
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.session.refresh_from_db()
         self.assertNotIn("goal_hint", self.session.cached_prompt_meta or {})
 
@@ -137,16 +145,16 @@ class StepAnswerCapTests(TestCase):
             ),
         )
 
-    def test_yes_after_a_summary_gets_no_hint(self):
+    def test_yes_after_a_summary_asks_if_ready(self):
         self._replies(6)
         self._summary()
         yes = self._reply("yes")
 
         prompted = user_prompt_with_hint(self.session, yes)
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
-        self.assertNotIn("<TURN_HINT>", prompted)
-        self.assertEqual(prompted, "yes")
+        self.assertIn(STEP_READY_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertTrue(prompted.startswith("yes"))
 
     def test_no_after_a_summary_gets_no_hint(self):
         self._replies(6)
@@ -155,9 +163,38 @@ class StepAnswerCapTests(TestCase):
 
         prompted = user_prompt_with_hint(self.session, no)
 
-        self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertIsNone(step_progress_hint(self.session, no))
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertNotIn("<TURN_HINT>", prompted)
         self.assertEqual(prompted, "no, not quite")
+
+    def test_summary_hint_requires_the_summary_in_the_same_message(self):
+        self._replies(5)
+        Message.objects.create(
+            session=self.session,
+            sender=self.agent,
+            text="What else can you tell me about that worry?",
+        )
+        reply = self._reply()
+
+        prompted = user_prompt_with_hint(self.session, reply)
+
+        self.assertIn(STEP_SUMMARY_HINT, prompted)
+        self.assertIn("In this same message", STEP_SUMMARY_HINT)
+        self.assertIn("without the summary in the message", STEP_SUMMARY_HINT)
+        self.assertTrue(prompted.startswith(reply.text))
+
+    def test_yes_that_is_right_after_a_summary_asks_if_ready(self):
+        self._replies(6)
+        self._summary()
+        yes = self._reply("Yes, that is right")
+
+        prompted = user_prompt_with_hint(self.session, yes)
+
+        self.assertIn(STEP_READY_HINT, prompted)
+        self.assertNotIn(STEP_SUMMARY_HINT, prompted)
+        self.assertTrue(prompted.startswith("Yes, that is right"))
 
     def test_hint_returns_after_a_normal_question(self):
         self._replies(6)
@@ -172,5 +209,6 @@ class StepAnswerCapTests(TestCase):
 
         prompted = user_prompt_with_hint(self.session, again)
 
-        self.assertIn(SUMMARY_CONFIRM_HINT, prompted)
+        self.assertIn(STEP_SUMMARY_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
         self.assertTrue(prompted.startswith(again.text))
