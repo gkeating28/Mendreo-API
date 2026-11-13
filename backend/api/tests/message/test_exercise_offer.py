@@ -675,7 +675,16 @@ class ExerciseOfferTest(TestCase):
         ):
             yield prompts
 
-    def _save_scripted(self, texts, user_text, *, session=None, match=False, match_on_retry=False):
+    def _save_scripted(
+        self,
+        texts,
+        user_text,
+        *,
+        session=None,
+        match=False,
+        match_on_retry=False,
+        model_level="none",
+    ):
         """Run one turn with scripted model replies. Returns (saved message, user prompts)."""
         prompts = []
         systems = []
@@ -690,6 +699,7 @@ class ExerciseOfferTest(TestCase):
                     text=text,
                     suggested_responses=[],
                     reasoning="test",
+                    risk_level=model_level,
                 )
 
             def usage(self):
@@ -748,6 +758,34 @@ class ExerciseOfferTest(TestCase):
         self.assertTrue(saved.text.strip())
         saved.refresh_from_db()
         self.assertEqual(saved.text, "I'm here with you today.")
+
+    def test_risky_turn_skips_the_blank_and_unauthorised_offer_retries(self):
+        saved, prompts = self._save_scripted(
+            ["", "This second reply must not be used."],
+            "I might hurt myself",
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(saved.text, _BLANK_REPLY_FALLBACK)
+        self.assertIsNone(saved.exercise_id)
+        self.assertNotEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
+
+        saved, prompts = self._save_scripted(
+            [
+                f"Want to try {self.exercise.title}?",
+                "This second reply must not be used.",
+            ],
+            "I slept badly last night",
+            model_level="low",
+        )
+        self.assertEqual(len(prompts), 1)
+        self.assertIsNone(saved.exercise_id)
+        self.assertNotEqual(
+            saved.suggested_responses,
+            list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES),
+        )
 
     def test_empty_reply_twice_saves_the_fixed_fallback(self):
         saved, prompts = self._save_scripted(

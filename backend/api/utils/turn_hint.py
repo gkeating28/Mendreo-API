@@ -655,8 +655,7 @@ def _nudge_blocked_by_risk(session, text: str) -> bool:
         return True
     from .risk import risk_prescreen
 
-    flagged = risk_prescreen(text)
-    return flagged in (Constants.LIVE_RISK_LEVEL_MODERATE, Constants.LIVE_RISK_LEVEL_HIGH)
+    return risk_prescreen(text) != Constants.LIVE_RISK_LEVEL_NONE
 
 
 def _consume_goal_hint(session) -> str | None:

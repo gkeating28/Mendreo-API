@@ -130,6 +130,7 @@ class HighRiskTurnTests(TestCase):
         exercise=None,
         about="self_now",
         live_risk_level=None,
+        matched_exercise=None,
     ):
         consumer = Auth.create_consumer()
         session = Session.objects.create(
@@ -162,7 +163,7 @@ class HighRiskTurnTests(TestCase):
             patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
             patch(
                 "api.utils.Agent.get_response",
-                return_value=(mocked, {}, None, None),
+                return_value=(mocked, {}, None, matched_exercise),
             ),
         ]
         if about is not False:
@@ -217,6 +218,22 @@ class HighRiskTurnTests(TestCase):
                 self._assert_closed(
                     consumer, session, agent_message, close, queued, model_text
                 )
+
+    def test_high_turn_drops_a_matched_exercise(self):
+        exercise = General.create_exercise()
+        model_text = "Let's try that exercise."
+        consumer, session, agent_message, close, queued = self._turn(
+            "I want to die",
+            model_level="high",
+            model_text=model_text,
+            matched_exercise=exercise,
+        )
+        self._assert_closed(consumer, session, agent_message, close, queued, model_text)
+        self.assertIsNone(agent_message.exercise_id)
+        offers = (session.cached_prompt_meta or {}).get("exercise_offers") or []
+        self.assertFalse(
+            any(isinstance(row, dict) and row.get("outcome") == "offered" for row in offers)
+        )
 
     def test_model_high_without_keywords_closes(self):
         model_text = "I am here with you."

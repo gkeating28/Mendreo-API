@@ -48,6 +48,20 @@ _OFFER_RETRY_HINT = (
 )
 
 
+def _offer_retry_allowed(user_text, response_data) -> bool:
+    """False when this turn already carries any risk signal.
+
+    A blank retry or an unauthorised-offer retry must not run then, so the
+    second call cannot attach an exercise.
+    """
+    from .risk import normalize_risk_level, risk_prescreen
+
+    if risk_prescreen(user_text or "") != Constants.LIVE_RISK_LEVEL_NONE:
+        return False
+    level = normalize_risk_level(getattr(response_data, "risk_level", None))
+    return level == Constants.LIVE_RISK_LEVEL_NONE
+
+
 def _offer_decline_turn(session) -> bool:
     from .ExerciseOffer import OFFER_DECLINE_TITLE_KEY
 
@@ -650,11 +664,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         debug_result = result
         if _offer_decline_turn(session):
             dependencies.matched_exercise = None
-        if (
+        blank_reply = (
             not session.exercise_id
             and not _offer_decline_turn(session)
             and not (getattr(response_data, "text", None) or "").strip()
-        ):
+        )
+        if blank_reply and _offer_retry_allowed(consumer_message.text, response_data):
             logger.info(
                 "general-chat blank reply retry session=%s message=%s",
                 getattr(session, "id", None),
@@ -678,9 +693,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             finally:
                 repair["tools"] = True
                 repair["hint"] = None
-            if not (getattr(response_data, "text", None) or "").strip():
-                response_data.text = _BLANK_REPLY_FALLBACK
-                response_data.suggested_responses = []
+        if blank_reply and not (getattr(response_data, "text", None) or "").strip():
+            response_data.text = _BLANK_REPLY_FALLBACK
+            response_data.suggested_responses = []
         if reply_ends_mid_sentence(getattr(response_data, "text", None)):
             logger.warning(
                 "reply ended mid-sentence for session=%s message=%s; retrying once",
@@ -773,6 +788,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             not session.exercise_id
             and not _offer_decline_turn(session)
             and dependencies.matched_exercise is None
+            and _offer_retry_allowed(consumer_message.text, response_data)
         ):
             from .ExerciseOffer import reply_offers_an_exercise
 

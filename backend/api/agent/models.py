@@ -193,6 +193,9 @@ class Agent(SmartModel):
             shape_chips,
         )
 
+        prior_offers = list(
+            (session.cached_prompt_meta or {}).get("exercise_offers") or []
+        )
         suggested_responses, text = format_agent_offer(response, exercise, session)
         if followup.suggested_responses is not None:
             suggested_responses = list(followup.suggested_responses)
@@ -238,6 +241,12 @@ class Agent(SmartModel):
             suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FREE
             question_kind = Constants.QUESTION_KIND_NONE
             probe_count = 0
+            exercise = None
+            meta = dict(session.cached_prompt_meta or {})
+            if meta.get("exercise_offers") != prior_offers:
+                meta["exercise_offers"] = prior_offers
+                session.cached_prompt_meta = meta
+                session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
         skipped = getattr(session, "_retrieval_skipped", "") or ""
