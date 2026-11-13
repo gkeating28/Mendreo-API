@@ -942,6 +942,14 @@ STEP_SCOPE_RULES = (
     "If this step's instructions ask for a longer reply, such as a summary, "
     "that overrides the reply-length line above.\n\n"
 )
+STEP_REFERENCE_RULES = (
+    "When a message refers to something from an earlier step, such as the alternative action, "
+    "the situation, or the worry, say what it is in a few words using the user's own terms. "
+    "Never refer to it only as \"that action\", \"those situations\", or \"that plan\". "
+    "In any summary or recap, include only what the user said or clearly agreed to. "
+    "Do not present an activity or technique you suggested and the user did not accept "
+    "as a decision the user made.\n\n"
+)
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
 )
@@ -1447,6 +1455,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             and not session.in_pre_exercise_phase()
             and "Current task: step " not in cached
         )
+        stale_reference = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "Never refer to it only as" not in cached
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -1466,6 +1479,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_closed_list,
             stale_offer_memory,
             stale_step_focus,
+            stale_reference,
         )):
             return cached
         session.cached_prompt = None
@@ -1787,7 +1801,7 @@ def _session_is_bare_opening(session) -> bool:
 
 
 def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = False) -> str:
-    scope = STEP_SCOPE_RULES
+    scope = STEP_SCOPE_RULES + STEP_REFERENCE_RULES
     if bare_opening and step_no <= 1:
         scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
         return scope

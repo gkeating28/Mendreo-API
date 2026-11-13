@@ -10,7 +10,12 @@ from ...knowledge.services import write_knowledge_entry
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
-from ...utils.Agent import TRIAGE_CLOSED_LIST_RULE, GeneralResponse, _prepare_prompt
+from ...utils.Agent import (
+    STEP_REFERENCE_RULES,
+    TRIAGE_CLOSED_LIST_RULE,
+    GeneralResponse,
+    _prepare_prompt,
+)
 from ...utils.prompt_blocks import (
     invalidate_published_exercises_cache,
     render_exercise_catalogue,
@@ -267,6 +272,23 @@ class PromptBlockTests(TestCase):
         run_a.save(update_fields=["cached_prompt"])
         allowed = _prepare_prompt(run_a)
         self.assertIn("sertraline", allowed)
+
+    def test_exercise_prompt_names_earlier_steps_and_limits_summaries(self):
+        exercise = General.create_exercise()
+        general = _prepare_prompt(Session.objects.create(consumer=self.consumer))
+        run = Session.objects.create(
+            consumer=self.consumer,
+            exercise=exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=exercise.steps_no,
+        )
+        prompt = _prepare_prompt(run)
+        self.assertIn(STEP_REFERENCE_RULES, prompt)
+        self.assertIn('make the last sentence exactly "Do I have that right?"', prompt)
+        self.assertNotIn(STEP_REFERENCE_RULES, general)
+        self.assertNotIn("Never refer to it only as", general)
+        self.assertNotIn("include only what the user said or clearly agreed to", general)
 
     def test_pending_question_stays_before_goals_and_closed_list_stays_in_triage(self):
         from ...knowledge.models import KnowledgeQuestion
