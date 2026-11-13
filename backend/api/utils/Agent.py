@@ -1440,6 +1440,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             _general_chat_offers_enabled(session)
             and (meta.get("exercise_offers_block") or "") != offer_block
         )
+        stale_step_focus = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "Current task: step " not in cached
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -1458,6 +1463,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_source,
             stale_closed_list,
             stale_offer_memory,
+            stale_step_focus,
         )):
             return cached
         session.cached_prompt = None
@@ -1484,6 +1490,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     exercise_extra = {}
     exercise = session.exercise
+    live_step = None
+    live_step_no = None
 
     if exercise:
         if create_summary and not session.authoring_test:
@@ -1526,6 +1534,12 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
                 step_no = only_index + 1
+                ordered_steps = list(steps) if steps is not None else list(
+                    exercise.steps.order_by("order")
+                )
+                if ordered_steps and only_index < len(ordered_steps):
+                    live_step = ordered_steps[only_index]
+                    live_step_no = step_no
                 description = DESCRIPTION_PREFIX + description
             completed_steps = ""
             if _state_machine_enabled():
@@ -1620,6 +1634,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     pending = assign_pending_question(session)
     if pending:
         prompt = _insert_pending_question(prompt, pending)
+    if live_step is not None:
+        prompt = _focus_live_step(prompt, live_step, live_step_no, token_context)
 
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
@@ -1664,6 +1680,72 @@ def _triage_with_closed_list(triage: str, session, offer_block: str) -> str:
     if offer_block:
         body = f"{body}\n\n{offer_block}"
     return body
+
+
+_LIVE_STEP_BLOCK = re.compile(
+    r"[ \t]*<STEP>\s*<NO>.*?</STEP>[ \t]*\n?",
+    re.DOTALL,
+)
+# The opening tag must be on its own line. The programming text mentions
+# these names mid-sentence, and that mention is not the block.
+_TAG_BLOCK = {
+    tag: re.compile(rf"(?m)^[ \t]*<{tag}>[ \t]*\n.*?</{tag}>[ \t]*\n?", re.DOTALL)
+    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE", "DESCRIPTION")
+}
+
+
+def _cut_first(text: str, pattern: re.Pattern) -> tuple[str, str]:
+    match = pattern.search(text)
+    if not match:
+        return text, ""
+    return text[: match.start()] + text[match.end() :], match.group(0).strip() + "\n"
+
+
+def _one_line(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _current_task_line(step, step_no, token_context) -> str:
+    from .prompt_blocks import resolve_tokens
+
+    name = _one_line(getattr(step, "title", "") or "")
+    description = _one_line(resolve_tokens(getattr(step, "description", "") or "", token_context or {}))
+    line = f"Current task: step {step_no}, {name}."
+    if description:
+        line = f"{line} {description}"
+    return line
+
+
+def _focus_live_step(prompt: str, step, step_no, token_context) -> str:
+    """Put background first and the live step last, then the date and one restatement.
+
+    Check-in and general chat never call this. The step's own title and
+    description are repeated after the date. No other wording is added.
+    """
+    prompt, live = _cut_first(prompt, _LIVE_STEP_BLOCK)
+    background = []
+    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE", "DESCRIPTION"):
+        prompt, block = _cut_first(prompt, _TAG_BLOCK[tag])
+        if block:
+            background.append(block)
+    if background:
+        body = "".join(background) + "\n"
+        if prompt.startswith("<DATA>"):
+            rest = prompt[len("<DATA>") :].lstrip("\n")
+            prompt = "<DATA>\n" + body + rest
+        else:
+            prompt = body + prompt
+    if live:
+        # Programming text mentions the <DATE> block by name. Only the tag
+        # on its own line is the block.
+        date_match = re.search(r"(?m)^[ \t]*<DATE>[ \t]*$", prompt)
+        if date_match is None:
+            prompt = prompt.rstrip() + "\n\n" + live
+        else:
+            date_at = date_match.start()
+            prompt = prompt[:date_at] + live + "\n" + prompt[date_at:]
+    line = _current_task_line(step, step_no, token_context)
+    return prompt.rstrip() + "\n\n" + line + "\n"
 
 
 def _prompt_phase(session) -> str:

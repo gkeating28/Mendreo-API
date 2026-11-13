@@ -202,21 +202,34 @@ class PromptBlockTests(TestCase):
         )
         self.assertNotIn("<GOALS_REMINDER>", exercise_a)
         self.assertNotIn("<GOALS>", exercise_a)
+        self.assertNotIn("Current task:", general_a)
         _assert_in_order(
             self,
             exercise_a,
             [
+                "<CLIENT_SUMMARY>",
+                "<EXERCISE_SUMMARY>",
+                "<KNOWLEDGE>",
+                "<DESCRIPTION>",
                 "<THERAPEUTIC_INSTRUCTIONS>",
                 "<PROGRAMMING_INSTRUCTIONS>",
                 "<EXERCISE>",
                 "<SESSION_CONTEXT>",
-                "<KNOWLEDGE>",
                 "<FORM_ANSWERS>",
-                "<CLIENT_SUMMARY>",
-                "<EXERCISE_SUMMARY>",
                 "<DATE>",
             ],
         )
+        self.assertLess(exercise_a.index("</FORM_ANSWERS>"), exercise_a.index("<INSTRUCTIONS>"))
+        date_block = re.search(r"(?m)^[ \t]*<DATE>[ \t]*$", exercise_a)
+        self.assertIsNotNone(date_block)
+        self.assertLess(exercise_a.index("<INSTRUCTIONS>"), date_block.start())
+        between = exercise_a[exercise_a.rindex("</STEP>") + len("</STEP>") : date_block.start()]
+        self.assertEqual(between.strip(), "")
+        task = exercise_a.rstrip().splitlines()[-1]
+        step = exercise.steps.order_by("order").first()
+        self.assertTrue(task.startswith(f"Current task: step 1, {step.title}."))
+        self.assertIn(" ".join(step.description.split())[:40], task)
+        self.assertLess(exercise_a.index("</DATE>"), exercise_a.rindex("Current task:"))
 
         self.assertIn("cognitive restructuring as appropriate", general_a)
         self.assertNotIn("cognitive restructuring as appropriate", exercise_a)
