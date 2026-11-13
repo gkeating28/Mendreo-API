@@ -250,6 +250,9 @@ class StepAnswerCapTests(TestCase):
             hint = step_progress_hint(self.session, replies[-1])
         self.assertEqual(hint, STEP_MISSING_HINT.format(missing=missing))
         self.assertIn(missing, hint)
+        self.assertIn("ask exactly one question", hint)
+        self.assertIn("build on what the user has already said", hint)
+        self.assertIn("Ask nothing else, and do not summarise yet.", hint)
         self.assertNotIn(STEP_SUMMARY_HINT, hint)
 
     def test_a_missing_summary_confirmation_still_summarises(self):

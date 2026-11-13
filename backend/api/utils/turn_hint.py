@@ -235,6 +235,8 @@ STEP_READY_HINT = (
 )
 STEP_MISSING_HINT = (
     "Before summarising, ask exactly one question to find out {missing}. "
+    "That question must be specific and build on what the user has already said, "
+    "and must not ask them to describe or explain everything again. "
     "Ask nothing else, and do not summarise yet."
 )
 STEP_ANSWER_CAP = 6
