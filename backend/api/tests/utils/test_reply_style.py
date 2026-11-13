@@ -611,16 +611,39 @@ class UserNamedActivityTests(BaseTest):
         )
 
     def test_breathing_toni_introduces_is_still_flagged(self):
-        session = self._session()
-        session.current_step_no = 1
-        session.save(update_fields=["current_step_no", "updated_at"])
-        self._say(session, "breathing exercises")
-        session.current_step_no = 4
-        session.save(update_fields=["current_step_no", "updated_at"])
+        session = self._session(step_no=5)
         self._say(session, "I would go for a walk")
         self.assertTrue(
             reply_leaves_the_step(
                 "We could try a breathing exercise when that happens.",
+                _STEP_FOUR,
+                session,
+            )
+        )
+
+    def test_breathing_from_an_earlier_step_is_allowed_in_the_opening_recap(self):
+        session = self._session(step_no=3)
+        self._say(session, "breathing exercises")
+        session.current_step_no = 5
+        session.save(update_fields=["current_step_no", "updated_at"])
+        self.assertFalse(
+            reply_leaves_the_step(
+                "You chose breathing exercises for the evenings when the worry shows up. "
+                "What will you do if you cannot use them?",
+                _STEP_FOUR,
+                session,
+            )
+        )
+
+    def test_breathing_named_only_in_the_check_in_is_allowed(self):
+        session = self._session(step_no=0)
+        self._say(session, "I use breathing exercises when I cannot sleep")
+        session.current_step_no = 5
+        session.save(update_fields=["current_step_no", "updated_at"])
+        self.assertFalse(
+            reply_leaves_the_step(
+                "You chose breathing exercises for the evenings when the worry shows up. "
+                "What will you do if you cannot use them?",
                 _STEP_FOUR,
                 session,
             )

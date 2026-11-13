@@ -246,16 +246,21 @@ def stay_on_step_catalogue_text() -> str:
     return "\n".join(lines)
 
 
-def _words_the_user_said_this_step(session) -> str:
-    """User replies in the live step. General chat and check-in have none."""
+def _words_the_user_said_this_run(session) -> str:
+    """Every user message in this exercise run, including check-in and earlier steps.
+
+    General chat has none. This is not the current-step reply count.
+    """
     if session is None or not getattr(session, "exercise_id", None):
         return ""
-    from .turn_hint import _step_user_reply_rows
+    if not getattr(session, "pk", None):
+        return ""
+    from ..message.models import Message
 
-    numbered, unnumbered = _step_user_reply_rows(session)
-    texts = list(numbered.values_list("text", flat=True)) + list(
-        unnumbered.values_list("text", flat=True)
-    )
+    texts = Message.objects.filter(
+        session=session,
+        sender__consumer__isnull=False,
+    ).values_list("text", flat=True)
     return "\n".join(text for text in texts if text)
 
 
@@ -264,8 +269,8 @@ def reply_leaves_the_step(text: str | None, instructions: str | None, session=No
 
     A summary the user can confirm, and the question that asks if they are
     ready for the next step, are how a step finishes. They stay.
-    An activity word the user already used in this step stays too. One Toni
-    introduces herself does not.
+    An activity word the user already used in this exercise run stays too.
+    One Toni introduces herself, that the user never said, does not.
     """
     from .summary_confirmation import is_summary_confirmation
 
@@ -273,7 +278,7 @@ def reply_leaves_the_step(text: str | None, instructions: str | None, session=No
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
-    user_text = _words_the_user_said_this_step(session)
+    user_text = _words_the_user_said_this_run(session)
     if _offers_unlisted_method(raw, allowed, user_text):
         return True
     if _offered_activity_missing(raw, allowed, user_text):
