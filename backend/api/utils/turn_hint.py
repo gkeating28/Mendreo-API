@@ -218,6 +218,7 @@ SUMMARY_CONFIRM_HINT = (
     "This step is not done. Summarise what this step asked for, in the user's words, "
     "then ask if you have that right. Do not ask them to move on, and do not start another exercise."
 )
+STEP_ANSWER_CAP = 6
 
 
 def goal_hint_text(missing: str) -> str:
@@ -226,6 +227,131 @@ def goal_hint_text(missing: str) -> str:
         "This step is not done yet. "
         f"Ask one question that would supply what is still missing: {gap}"
     )
+
+
+def _stored_step_no(message):
+    """Message.step_no when this row has one. Unsaved rows carry a database default."""
+    from django.db.models.expressions import DatabaseDefault
+
+    if message is None:
+        return None
+    raw = message.__dict__.get("step_no", None)
+    if raw is None or isinstance(raw, DatabaseDefault):
+        return None
+    return raw
+
+
+def _exercise_run_started_at(session):
+    """When this exercise run's steps began.
+
+    A finished check-in stamps pre_exercise_completed_at. That is the start of
+    the steps. A run with no check-in starts when the session row was created.
+    """
+    return getattr(session, "pre_exercise_completed_at", None) or getattr(
+        session, "created_at", None
+    )
+
+
+def _null_step_lower_bound(session):
+    """Earliest time a user message with no step_no can belong to the live step.
+
+    Check-in messages are at or before pre_exercise_completed_at. An earlier
+    step ends at its last numbered message, or at the completed SessionStep.
+    Without one of those, a null step_no on step 2 or later is left out.
+    """
+    from ..message.models import Message
+
+    current = getattr(session, "current_step_no", None) or 0
+    run_started = _exercise_run_started_at(session)
+    if current <= 1:
+        return run_started
+    earlier_at = (
+        Message.objects.filter(session=session, step_no__gte=1, step_no__lt=current)
+        .order_by("-created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    previous_at = (
+        session.session_steps.filter(order__lt=current - 1, completed=True)
+        .order_by("-order")
+        .values_list("updated_at", flat=True)
+        .first()
+    )
+    bounds = [item for item in (earlier_at, previous_at) if item is not None]
+    if not bounds:
+        return None
+    if run_started is not None:
+        bounds.append(run_started)
+    return max(bounds)
+
+
+def _unnumbered_user_replies(session, rows):
+    """User replies saved before Message.step_no was filled in."""
+    current = getattr(session, "current_step_no", None) or 0
+    unnumbered = rows.filter(step_no__isnull=True)
+    if current > 1:
+        bound = _null_step_lower_bound(session)
+        if bound is None:
+            return unnumbered.none()
+        return unnumbered.filter(created_at__gt=bound)
+    if getattr(session, "pre_exercise_completed_at", None) is not None:
+        return unnumbered.filter(created_at__gt=session.pre_exercise_completed_at)
+    started = getattr(session, "created_at", None)
+    if started is not None:
+        return unnumbered.filter(created_at__gte=started)
+    return unnumbered
+
+
+def _step_answer_count(session, user_message) -> int:
+    """User replies in the current step of this exercise run, including the one just sent.
+
+    Message.step_no is the live step copied onto each row. Check-in is 0, so
+    those rows are not this step. Earlier steps keep their own number. A row
+    with no step_no is counted only after the exercise run started, and only
+    when that still leaves earlier steps out.
+    """
+    from ..message.models import Message
+
+    current = getattr(session, "current_step_no", None) or 0
+    if current < 1:
+        return 0
+    rows = Message.objects.filter(session=session, sender__consumer__isnull=False)
+    numbered = rows.filter(step_no=current)
+    unnumbered = _unnumbered_user_replies(session, rows)
+    count = numbered.count() + unnumbered.count()
+    if user_message is None:
+        return count
+    pk = getattr(user_message, "pk", None)
+    if pk and (numbered.filter(pk=pk).exists() or unnumbered.filter(pk=pk).exists()):
+        return count
+    step_no = _stored_step_no(user_message)
+    if step_no is not None:
+        return count + (1 if step_no == current else 0)
+    return count + 1
+
+
+def step_progress_hint(session, user_message) -> str | None:
+    """Summarise once this step has had STEP_ANSWER_CAP user replies.
+
+    A reply to a summary that already asks for confirmation gets no hint,
+    so yes and no do not start another summary.
+    """
+    if not getattr(session, "exercise_id", None):
+        return None
+    try:
+        in_check_in = session.in_pre_exercise_phase()
+    except Exception:
+        in_check_in = False
+    if in_check_in:
+        return None
+    if _step_answer_count(session, user_message) < STEP_ANSWER_CAP:
+        return None
+    from .summary_confirmation import is_summary_confirmation
+
+    previous = last_agent_message(session)
+    if previous is not None and is_summary_confirmation(getattr(previous, "text", None)):
+        return None
+    return SUMMARY_CONFIRM_HINT
 
 
 def about_the_user_hint(session, text: str) -> str | None:
@@ -442,27 +568,32 @@ def _hinted_user_prompt(session, user_message) -> str:
                 winner = "goal"
                 body = f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
             else:
-                depth = _consume_depth_hint(session)
-                if depth:
-                    winner = "depth"
-                    body = f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
+                progress = step_progress_hint(session, user_message)
+                if progress:
+                    winner = "step_progress"
+                    body = f"{text}\n\n<TURN_HINT>\n{progress}\n</TURN_HINT>"
                 else:
-                    previous = (
-                        Message.objects.filter(session=session, sender__agent__isnull=False)
-                        .order_by("-created_at")
-                        .first()
-                    )
-                    hint = turn_hint_text(previous, text, session)
-                    if hint:
-                        winner = "thin_answer"
-                        body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+                    depth = _consume_depth_hint(session)
+                    if depth:
+                        winner = "depth"
+                        body = f"{text}\n\n<TURN_HINT>\n{depth}\n</TURN_HINT>"
                     else:
-                        nudge = _exercise_nudge_hint(session, user_message)
-                        if nudge:
-                            winner = "exercise_nudge"
-                            body = f"{text}\n\n<TURN_HINT>\n{nudge}\n</TURN_HINT>"
+                        previous = (
+                            Message.objects.filter(session=session, sender__agent__isnull=False)
+                            .order_by("-created_at")
+                            .first()
+                        )
+                        hint = turn_hint_text(previous, text, session)
+                        if hint:
+                            winner = "thin_answer"
+                            body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
                         else:
-                            body = text
+                            nudge = _exercise_nudge_hint(session, user_message)
+                            if nudge:
+                                winner = "exercise_nudge"
+                                body = f"{text}\n\n<TURN_HINT>\n{nudge}\n</TURN_HINT>"
+                            else:
+                                body = text
     _note_thin_answer(session, user_message, winner)
     return body
 
