@@ -186,6 +186,7 @@ class StepAnswerCapTests(TestCase):
 
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertIn("In this same message", STEP_SUMMARY_HINT)
+        self.assertIn("action, plan or choice", STEP_SUMMARY_HINT)
         self.assertIn("Do I have that right?", STEP_SUMMARY_HINT)
         self.assertIn("without the summary in the message", STEP_SUMMARY_HINT)
         self.assertTrue(prompted.startswith(reply.text))

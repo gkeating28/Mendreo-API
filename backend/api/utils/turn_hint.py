@@ -222,7 +222,8 @@ SUMMARY_CONFIRM_HINT = (
 )
 STEP_SUMMARY_HINT = (
     "This step has had enough questions. In this same message, write a short summary "
-    "in the user's own words of the worry, the situation it happens in, and how it affects them, "
+    "in the user's own words of what they have told you in this step, including any action, "
+    "plan or choice they made, "
     "and make the last sentence exactly \"Do I have that right?\". Do not rephrase it. "
     "Never ask if you have that right without the summary in the message. "
     "Ask no other question."
