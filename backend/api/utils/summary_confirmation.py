@@ -38,6 +38,63 @@ def summary_confirmation_required(done_when: str) -> bool:
     return bool(_REQUIRED.search(done_when or ""))
 
 
+_GAP_FILLER = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "the",
+        "that",
+        "this",
+        "user",
+        "has",
+        "have",
+        "is",
+        "was",
+        "their",
+        "they",
+        "to",
+        "of",
+        "with",
+        "for",
+        "still",
+        "not",
+        "yet",
+        "been",
+        "be",
+        "it",
+        "its",
+        "or",
+    }
+)
+
+
+def missing_is_only_summary_confirmation(missing: str) -> bool:
+    """True when the gap is only the summary-confirmation clause ``_REQUIRED`` matches.
+
+    The checker often names that clause by itself, for example "confirmed the
+    summary is accurate" or "confirmation of the summary". Any other word left
+    after the clause is a real gap.
+    """
+    raw = " ".join((missing or "").split())
+    names_the_clause = bool(_REQUIRED.search(raw)) or (
+        re.search(r"\bsummary\b", raw, re.IGNORECASE) is not None
+        and re.search(r"\bconfirm", raw, re.IGNORECASE) is not None
+    )
+    if not names_the_clause:
+        return False
+    rest = _REQUIRED.sub(" ", raw)
+    rest = re.sub(r"\bis\s+accurate\b", " ", rest, flags=re.IGNORECASE)
+    rest = re.sub(
+        r"\b(?:confirm(?:ed|s|ing|ation)?|agree(?:d|s|ment)?|summary|summaries|accurate|accuracy)\b",
+        " ",
+        rest,
+        flags=re.IGNORECASE,
+    )
+    words = re.findall(r"[A-Za-z']+", rest)
+    return all(word.lower() in _GAP_FILLER for word in words)
+
+
 def summary_confirmation_rule(done_when: str) -> str:
     if not summary_confirmation_required(done_when):
         return ""
