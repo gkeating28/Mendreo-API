@@ -950,7 +950,9 @@ STEP_REFERENCE_RULES = (
     "Do not present an activity or technique you suggested and the user did not accept "
     "as a decision the user made. "
     "Do not ask the user whether they would like to do the step's own next task or "
-    "explore the step's topic; ask the step's next question directly.\n\n"
+    "explore the step's topic; ask the step's next question directly. "
+    "When the step asks the user to identify, choose or plan something, ask the user for their own idea first and offer a suggestion only if they say they cannot think of one; do not present a technique or plan and ask the user to agree to it, but if the step's instructions tell you to explain something or to summarise, still do that. "
+    "Keep each message short, at most three short sentences followed by one question, unless the step's instructions require an explanation or a summary; a summary may be longer, but it must still end with the exact sentence \"Do I have that right?\".\n\n"
 )
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
@@ -1460,7 +1462,15 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         stale_reference = (
             bool(session.exercise_id)
             and not session.in_pre_exercise_phase()
-            and "ask the step's next question directly" not in cached
+            and any(
+                phrase not in cached
+                for phrase in (
+                    "Never refer to it only as",
+                    "ask the step's next question directly",
+                    "ask the user for their own idea first",
+                    "at most three short sentences",
+                )
+            )
         )
         if not any((
             stale_placeholders,
