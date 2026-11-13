@@ -42,8 +42,14 @@ class ListCreate(SmartAPIView):
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
                 Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
                 Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+                "exercise_nudge_enabled",
             ):
                 data[setting.key] = setting.value.lower() == "true"
+            elif setting.key == "exercise_nudge_after_messages":
+                try:
+                    data[setting.key] = int(setting.value)
+                except (TypeError, ValueError):
+                    data[setting.key] = Setting.get_exercise_nudge_after_messages()
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
                 try:
                     data[setting.key] = float(setting.value)
@@ -131,6 +137,8 @@ class ListCreate(SmartAPIView):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "exercise_nudge_enabled": Setting.get_exercise_nudge_enabled(),
+            "exercise_nudge_after_messages": Setting.get_exercise_nudge_after_messages(),
             "require_exact_yes": Setting.get_require_exact_yes(),
             "ready_phrases": Setting.get_ready_phrases(),
             "finish_phrases": Setting.get_finish_phrases(),

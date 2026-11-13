@@ -89,6 +89,8 @@ class SettingCreateSerializer(serializers.Serializer):
     session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
     thin_answer_hint_enabled = serializers.BooleanField(required=False)
+    exercise_nudge_enabled = serializers.BooleanField(required=False)
+    exercise_nudge_after_messages = serializers.IntegerField(required=False, min_value=1)
     require_exact_yes = serializers.BooleanField(required=False)
     ready_phrases = serializers.ListField(
         child=serializers.CharField(min_length=1, max_length=60),
@@ -330,6 +332,16 @@ class SettingCreateSerializer(serializers.Serializer):
             hint.value = str(validated_data["thin_answer_hint_enabled"]).lower()
             hint.save()
 
+        if "exercise_nudge_enabled" in validated_data:
+            nudge = Setting.get_or_create_exercise_nudge_enabled()
+            nudge.value = str(validated_data["exercise_nudge_enabled"]).lower()
+            nudge.save()
+
+        if "exercise_nudge_after_messages" in validated_data:
+            after = Setting.get_or_create_exercise_nudge_after_messages()
+            after.value = str(validated_data["exercise_nudge_after_messages"])
+            after.save()
+
         if "require_exact_yes" in validated_data:
             exact = Setting.get_or_create_require_exact_yes()
             exact.value = str(validated_data["require_exact_yes"]).lower()
@@ -489,6 +501,8 @@ class SettingCreateSerializer(serializers.Serializer):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "exercise_nudge_enabled": Setting.get_exercise_nudge_enabled(),
+            "exercise_nudge_after_messages": Setting.get_exercise_nudge_after_messages(),
             "require_exact_yes": Setting.get_require_exact_yes(),
             "ready_phrases": Setting.get_ready_phrases(),
             "finish_phrases": Setting.get_finish_phrases(),

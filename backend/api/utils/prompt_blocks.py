@@ -26,8 +26,13 @@ KNOWLEDGE_PREFACE = (
     "When the client asks about a fact listed here, answer with that value."
 )
 
-_PUBLISHED_EXERCISES_CACHE_KEY = "prompt:published_exercises_v2"
+_PUBLISHED_EXERCISES_CACHE_KEY = "prompt:published_exercises_v3"
 _PUBLISHED_EXERCISES_CACHE_TTL = 300
+_SCRIPT_OR_STYLE = re.compile(
+    r"<(script|style)\b[^>]*>.*?</\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CATALOGUE_WHITESPACE = re.compile(r"\s+")
 
 
 def static_prefix(prompt: str) -> str:
@@ -408,6 +413,15 @@ def token_catalogue(exercise=None) -> list[dict]:
     return rows
 
 
+def _plain_catalogue_text(value: str) -> str:
+    """Drop script and style bodies, then tags, then spare whitespace."""
+    from django.utils.html import strip_tags
+
+    text = _SCRIPT_OR_STYLE.sub(" ", value or "")
+    text = strip_tags(text)
+    return _CATALOGUE_WHITESPACE.sub(" ", text).strip()
+
+
 def render_exercise_catalogue() -> str:
     """Published exercises for general-chat triage. Cached."""
     from django.core.cache import cache
@@ -424,7 +438,8 @@ def render_exercise_catalogue() -> str:
         authoring_snapshot=False,
     ).prefetch_related("steps__result_field")
     for exercise in exercises:
-        use_when = (exercise.use_when or "").strip() or (exercise.description or "")
+        raw_use_when = (exercise.use_when or "").strip() or (exercise.description or "")
+        use_when = _plain_catalogue_text(raw_use_when)
         result_keys = []
         for step in exercise.steps.all():
             field = step.result_field

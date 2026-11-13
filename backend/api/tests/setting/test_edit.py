@@ -33,6 +33,40 @@ class EditTest(TestCase):
         self.assertEqual(turned_on.status_code, status.HTTP_200_OK, turned_on.data)
         self.assertIs(turned_on.data["thin_answer_hint_enabled"], True)
 
+    def test_exercise_nudge_settings(self):
+        token = Auth.get_platform_admin_access_token()
+        listed = self._get("/settings", access_token=token)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertIs(listed.json["exercise_nudge_enabled"], True)
+        self.assertEqual(listed.json["exercise_nudge_after_messages"], 3)
+
+        turned_off = self._edit(
+            {
+                "survey_enabled": True,
+                "exercise_nudge_enabled": False,
+                "exercise_nudge_after_messages": 5,
+            },
+            access_token=token,
+        )
+        self.assertEqual(turned_off.status_code, status.HTTP_200_OK, turned_off.data)
+        self.assertIs(turned_off.data["exercise_nudge_enabled"], False)
+        self.assertEqual(turned_off.data["exercise_nudge_after_messages"], 5)
+        listed = self._get("/settings", access_token=token)
+        self.assertIs(listed.json["exercise_nudge_enabled"], False)
+        self.assertEqual(listed.json["exercise_nudge_after_messages"], 5)
+
+        restored = self._edit(
+            {
+                "survey_enabled": True,
+                "exercise_nudge_enabled": True,
+                "exercise_nudge_after_messages": 3,
+            },
+            access_token=token,
+        )
+        self.assertEqual(restored.status_code, status.HTTP_200_OK, restored.data)
+        self.assertIs(restored.data["exercise_nudge_enabled"], True)
+        self.assertEqual(restored.data["exercise_nudge_after_messages"], 3)
+
     def test_ready_reply_settings(self):
         token = Auth.get_platform_admin_access_token()
         listed = self._get("/settings", access_token=token)

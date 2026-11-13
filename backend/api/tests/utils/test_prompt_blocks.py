@@ -5,12 +5,18 @@ from freezegun import freeze_time
 
 from ...exercise.models import Exercise
 from ...knowledge.models import KnowledgeField
+from ...prompt.models import PromptVersion
 from ...knowledge.services import write_knowledge_entry
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
-from ...utils.Agent import _prepare_prompt
-from ...utils.prompt_blocks import resolve_tokens, static_prefix
+from ...utils.Agent import TRIAGE_CLOSED_LIST_RULE, GeneralResponse, _prepare_prompt
+from ...utils.prompt_blocks import (
+    invalidate_published_exercises_cache,
+    render_exercise_catalogue,
+    resolve_tokens,
+    static_prefix,
+)
 from ..TestCase import TestCase
 from ..utils.manager import Auth, General
 
@@ -92,6 +98,40 @@ class PromptBlockTests(TestCase):
         pending.review_status = Constants.KNOWLEDGE_REVIEW_PENDING
         pending.save(update_fields=["review_status"])
 
+    def test_catalogue_strips_html_from_use_when(self):
+        stuck = Exercise.objects.create(
+            title="Stuck",
+            subtitle="Stuck",
+            description="Unused description.",
+            use_when="<p>Use when the person is stuck.</p>",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+        )
+        scripted = Exercise.objects.create(
+            title="Scripted",
+            subtitle="Scripted",
+            description="<div>From the description.</div><script>secret-script</script><style>h1{}</style>",
+            use_when="",
+            steps_no=1,
+            icon="leaf",
+            icon_background_color="tan",
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+        )
+        invalidate_published_exercises_cache()
+        text = render_exercise_catalogue()
+
+        self.assertIn(stuck.id, text)
+        self.assertIn("Use when the person is stuck.", text)
+        self.assertNotIn("<p>", text)
+        self.assertIn(scripted.id, text)
+        self.assertIn("From the description.", text)
+        self.assertNotIn("secret-script", text)
+        self.assertNotIn("h1{}", text)
+        self.assertNotIn("<script>", text)
+        self.assertNotIn("<style>", text)
+
     def test_resolve_tokens_fallback_and_empty(self):
         self.assertEqual(
             resolve_tokens("Hi {{user.first_name|friend}}", {"user.first_name": "Ada"}),
@@ -143,15 +183,25 @@ class PromptBlockTests(TestCase):
                 "<THERAPEUTIC_INSTRUCTIONS>",
                 "<PROGRAMMING_INSTRUCTIONS>",
                 "<EXERCISES>",
-                "<GOALS>",
-                "</GOALS>",
                 "<TRIAGE>",
                 "<SESSION_CONTEXT>",
                 "<KNOWLEDGE>",
                 "<CLIENT_SUMMARY>",
                 "<DATE>",
+                "<GOALS>",
+                "</GOALS>",
+                "<GOALS_REMINDER>",
             ],
         )
+        after_goals = general_a.split("</GOALS>", 1)[1]
+        self.assertTrue(after_goals.lstrip().startswith("<GOALS_REMINDER>"))
+        self.assertEqual(after_goals.split("</GOALS_REMINDER>", 1)[1].strip(), "</DATA>")
+        self.assertIn(
+            "Once the person has told you what is troubling them, move towards offering one suitable exercise from <EXERCISES>: call get_exercise first, then offer it in your own words and ask if they would like to try it. Do not run the exercise's steps in the chat yourself.",
+            general_a,
+        )
+        self.assertNotIn("<GOALS_REMINDER>", exercise_a)
+        self.assertNotIn("<GOALS>", exercise_a)
         _assert_in_order(
             self,
             exercise_a,
@@ -193,6 +243,10 @@ class PromptBlockTests(TestCase):
         self.assertIsNotNone(first.prompt_version_id)
         self.assertIn("triage", first.cached_prompt_meta["versions"])
         self.assertIn("therapeutic", first.cached_prompt_meta["versions"])
+        self.assertIn(
+            "Keep the voice and style set in <GOALS>.",
+            GeneralResponse.model_fields["text"].description,
+        )
 
         exercise.sensitive_fields_allowed = ["medication"]
         exercise.save(update_fields=["sensitive_fields_allowed"])
@@ -200,6 +254,36 @@ class PromptBlockTests(TestCase):
         run_a.save(update_fields=["cached_prompt"])
         allowed = _prepare_prompt(run_a)
         self.assertIn("sertraline", allowed)
+
+    def test_pending_question_stays_before_goals_and_closed_list_stays_in_triage(self):
+        from ...knowledge.models import KnowledgeQuestion
+
+        field = KnowledgeField.objects.create(
+            key="sleep_check",
+            label="Sleep",
+            category="Health",
+            active=True,
+        )
+        question = KnowledgeQuestion.objects.create(
+            prompt="How has sleep been?",
+            target_field=field,
+            active=True,
+        )
+        session = Session.objects.create(consumer=self.consumer)
+        session.pending_knowledge_question = question
+        session.save(update_fields=["pending_knowledge_question", "updated_at"])
+
+        prompt = _prepare_prompt(session)
+        triage_body = prompt.split("<TRIAGE>", 1)[1].split("</TRIAGE>", 1)[0]
+        self.assertNotIn("<PENDING_QUESTION>", triage_body)
+        self.assertTrue(triage_body.rstrip().endswith(TRIAGE_CLOSED_LIST_RULE))
+        goals_at = re.search(r"(?m)^[ \t]*<GOALS>[ \t]*$", prompt).start()
+        reminder_at = re.search(r"(?m)^[ \t]*<GOALS_REMINDER>[ \t]*$", prompt).start()
+        self.assertLess(prompt.index("</DATE>"), prompt.index("<PENDING_QUESTION>"))
+        self.assertLess(prompt.index("</PENDING_QUESTION>"), goals_at)
+        self.assertLess(goals_at, reminder_at)
+        self.assertNotIn("<PENDING_QUESTION>", prompt[prompt.index("</GOALS>") : reminder_at])
+        self.assertIn("How has sleep been?", prompt)
 
     def test_client_summary_includes_the_account_name(self):
         from ...utils.prompt_blocks import render_client_summary
@@ -261,3 +345,59 @@ class PromptBlockTests(TestCase):
         self.assertIn("rested nights", prompt)
         self.assertIn("I'll lose the job", prompt)
         self.assertIn("Last time was shaky.", prompt)
+
+    def test_closed_list_rule_is_appended_after_custom_triage(self):
+        triage = PromptVersion.objects.create(
+            key=Constants.PROMPT_KEY_TRIAGE,
+            body="Help the person choose what to talk about.",
+            version=99,
+            active=False,
+        )
+        therapeutic = PromptVersion.objects.create(
+            key=Constants.PROMPT_KEY_THERAPEUTIC,
+            body="Be kind.",
+            version=99,
+            active=False,
+        )
+        session = Session.objects.create(consumer=self.consumer)
+        session.prompt_version = therapeutic
+        session.cached_prompt_meta = {
+            "versions": {
+                Constants.PROMPT_KEY_TRIAGE: triage.version,
+                Constants.PROMPT_KEY_THERAPEUTIC: therapeutic.version,
+            }
+        }
+        session.save(update_fields=["prompt_version", "cached_prompt_meta", "updated_at"])
+
+        prompt = _prepare_prompt(session)
+        self.assertIn("Help the person choose what to talk about.", prompt)
+        self.assertIn("exact <NAME>", prompt)
+        self.assertLess(
+            prompt.find("Help the person choose what to talk about."),
+            prompt.find("exact <NAME>"),
+        )
+        self.assertLess(prompt.find("exact <NAME>"), prompt.find("</TRIAGE>"))
+
+        stripped = prompt.replace(TRIAGE_CLOSED_LIST_RULE, "")
+        self.assertNotIn("exact <NAME>", stripped)
+        session.cached_prompt = stripped
+        session.save(update_fields=["cached_prompt", "updated_at"])
+        rebuilt = _prepare_prompt(session)
+        self.assertIn("exact <NAME>", rebuilt)
+
+        exercise = General.create_exercise()
+        run = Session.objects.create(
+            consumer=self.consumer,
+            exercise=exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=exercise.steps_no or 1,
+        )
+        exercise_prompt = _prepare_prompt(run)
+        self.assertNotIn("exact <NAME>", exercise_prompt)
+        self.assertEqual(_prepare_prompt(run), exercise_prompt)
+
+        finished = Session.objects.create(consumer=self.consumer, source_run=run)
+        finished_prompt = _prepare_prompt(finished)
+        self.assertNotIn("exact <NAME>", finished_prompt)
+        self.assertEqual(_prepare_prompt(finished), finished_prompt)
