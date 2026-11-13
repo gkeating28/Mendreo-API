@@ -439,6 +439,206 @@ def _reply_offers_to_move_on(text: str | None) -> bool:
     return bool(_OFFERS_TO_MOVE_ON.search(text or ""))
 
 
+def _last_sentence(text: str | None) -> str:
+    raw = " ".join((text or "").split())
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", raw) if part.strip()]
+    return parts[-1] if parts else ""
+
+
+_READY_QUESTION = re.compile(
+    r"\bare you ready\b|\bready to\b|\bready for the next\b",
+    re.IGNORECASE,
+)
+
+
+def _readiness_question(text: str | None) -> bool:
+    closing = _last_sentence(text)
+    return closing.endswith("?") and bool(_READY_QUESTION.search(closing))
+
+
+def _official_ready_question(text: str | None) -> bool:
+    """The end-of-step question the finish and move-on guards already own."""
+    if _reply_offers_to_end_the_exercise(text) or _reply_offers_to_move_on(text):
+        return True
+    from .StepProgress import is_advance_gate_text
+    from .SessionStateMachine import _ends_with_readiness_question
+
+    closing = _last_sentence(text)
+    return is_advance_gate_text(closing) or _ends_with_readiness_question(text or "")
+
+
+def _readiness_guard_applies(text: str | None, response_data) -> bool:
+    """Stray readiness questions always. Official ones only when the model claims the step is done."""
+    if not _readiness_question(text):
+        return False
+    if not _official_ready_question(text):
+        return True
+    return bool(getattr(response_data, "step_goal_met", False)) or bool(
+        getattr(response_data, "asks_readiness", False)
+    )
+
+
+def _clear_ready_claim(response_data) -> None:
+    if hasattr(response_data, "asks_readiness"):
+        response_data.asks_readiness = False
+    if hasattr(response_data, "step_goal_met"):
+        response_data.step_goal_met = False
+
+
+def _risk_blocks_reply_guard(session, consumer_message, response_data) -> bool:
+    """High-risk and crisis turns keep the reply the risk path will show."""
+    from .turn_hint import _nudge_blocked_by_risk
+
+    if _nudge_blocked_by_risk(session, getattr(consumer_message, "text", None) or ""):
+        return True
+    level = (getattr(response_data, "risk_level", None) or "none").strip().lower()
+    return level not in ("", "none")
+
+
+_STRAY_READY_HINT = (
+    "This step is not finished. Do not ask whether the user is ready to move on, "
+    "continue, or work on something. Ask the step's next question. "
+    "If you were told to summarise, write that summary in this message and make "
+    "the last sentence exactly \"Do I have that right?\". Do not rephrase it."
+)
+_QUESTION_HINT = (
+    "End this message with exactly one question, and ask nothing else after it."
+)
+
+
+def _retry_once_with_steer(steer, run, hint: str):
+    """One extra model call. The caller keeps its reply when this returns None.
+
+    None means the retry threw or came back empty. steer is always cleared.
+    """
+    steer[0] = hint
+    try:
+        retry, _provider = run_with_failover(run)
+        retry_data = getattr(retry, "output", None)
+        if not (getattr(retry_data, "text", None) or "").strip():
+            return None, None
+        return retry, retry_data
+    except Exception:
+        logger.exception("steer retry failed")
+        return None, None
+    finally:
+        steer[0] = None
+
+
+def _statement_reply_stands(session, response_data) -> bool:
+    """Replies that are allowed to end without a question.
+
+    The model-failure apology is built after these guards, in the get_response
+    except. "Step skipped." and the check-in skip line are not built here.
+    The exercise completion card is not a chat message, and finishing does not
+    generate a goodbye through this path. ON_STEP_FALLBACK already ends with a
+    question; it is listed so a later edit of that line is not forced into
+    another question. Awaiting-ready is the not-ready acknowledgement, which
+    is one or two sentences and must not ask readiness again. The high-risk
+    close is written after get_response returns.
+    """
+    from .turn_hint import ON_STEP_FALLBACK
+
+    text = (getattr(response_data, "text", None) or "").strip()
+    if text == ON_STEP_FALLBACK:
+        return True
+    state = getattr(session, "state", None)
+    return state in (
+        Constants.SESSION_STATE_AWAITING_READY,
+        Constants.SESSION_STATE_COMPLETED,
+    )
+
+
+def _apply_readiness_guard(
+    session,
+    consumer_message,
+    instructions,
+    result,
+    response_data,
+    debug_result,
+    steer,
+    run,
+):
+    kept = (result, response_data, debug_result)
+    try:
+        text = getattr(response_data, "text", None)
+        if instructions is None or _risk_blocks_reply_guard(session, consumer_message, response_data):
+            return result, response_data, debug_result
+        if not _readiness_guard_applies(text, response_data):
+            return result, response_data, debug_result
+        from .SessionStateMachine import _live_step
+        from .extraction import check_done_when
+        from .summary_confirmation import summary_confirmation_required, summary_was_confirmed
+
+        session_step = _live_step(session)
+        step = session_step.step if session_step is not None else None
+        if session_step is None or session_step.goal_met_at is not None or step is None:
+            return result, response_data, debug_result
+        verdict = check_done_when(session, step)
+        done_when = getattr(step, "done_when", None) or ""
+        needs_summary = summary_confirmation_required(done_when) and not summary_was_confirmed(session, step)
+        rejected = needs_summary or (verdict is not None and not verdict.get("met"))
+        if not rejected:
+            return result, response_data, debug_result
+        retry, retry_data = _retry_once_with_steer(steer, run, _STRAY_READY_HINT)
+        if retry is None:
+            return result, response_data, debug_result
+        result = retry
+        response_data = retry_data
+        debug_result = retry
+        if _readiness_question(getattr(response_data, "text", None)):
+            _clear_ready_claim(response_data)
+        return result, response_data, debug_result
+    except Exception:
+        logger.exception(
+            "readiness guard failed for session=%s",
+            getattr(session, "id", None),
+        )
+        return kept
+
+
+def _apply_statement_guard(
+    session,
+    consumer_message,
+    instructions,
+    result,
+    response_data,
+    debug_result,
+    steer,
+    run,
+):
+    kept = (result, response_data, debug_result)
+    try:
+        if instructions is None or _risk_blocks_reply_guard(session, consumer_message, response_data):
+            return result, response_data, debug_result
+        if _statement_reply_stands(session, response_data):
+            return result, response_data, debug_result
+        if _last_sentence(getattr(response_data, "text", None)).endswith("?"):
+            return result, response_data, debug_result
+        from .SessionStateMachine import _live_step
+        from .summary_confirmation import summary_confirmation_required
+
+        hint = _QUESTION_HINT
+        session_step = _live_step(session)
+        step = session_step.step if session_step is not None else None
+        done_when = getattr(step, "done_when", None) or "" if step is not None else ""
+        if summary_confirmation_required(done_when):
+            hint += (
+                " If this message is a summary or recap, make that question exactly "
+                "\"Do I have that right?\". Do not rephrase it."
+            )
+        retry, retry_data = _retry_once_with_steer(steer, run, hint)
+        if retry is None:
+            return result, response_data, debug_result
+        return retry, retry_data, retry
+    except Exception:
+        logger.exception(
+            "statement guard failed for session=%s",
+            getattr(session, "id", None),
+        )
+        return kept
+
+
 def _hold_on_step(response_data) -> None:
     """Replace an off-script reply so the user is not offered another technique."""
     from .turn_hint import ON_STEP_FALLBACK
@@ -791,6 +991,26 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             if not stayed:
                 _hold_on_step(response_data)
                 on_step_held = True
+        result, response_data, debug_result = _apply_readiness_guard(
+            session,
+            consumer_message,
+            instructions,
+            result,
+            response_data,
+            debug_result,
+            steer,
+            _run,
+        )
+        result, response_data, debug_result = _apply_statement_guard(
+            session,
+            consumer_message,
+            instructions,
+            result,
+            response_data,
+            debug_result,
+            steer,
+            _run,
+        )
         if (
             not session.exercise_id
             and not _offer_decline_turn(session)
