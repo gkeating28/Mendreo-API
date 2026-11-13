@@ -67,6 +67,18 @@ class RiskPrescreenTests(TestCase):
         self.assertIn("own risk", general)
         self.assertIn("something they read", general)
 
+    def test_live_risk_levels_name_everyday_worry_as_none(self):
+        text = GeneralResponse.model_fields["risk_level"].description
+        self.assertEqual(text, ExerciseStateResponse.model_fields["risk_level"].description)
+        self.assertIn("none: no safety concern", text)
+        self.assertIn("ordinary worry, stress, work or money", text)
+        self.assertIn("discussing their emotions or general topics", text)
+        self.assertIn("nothing about harming themselves", text)
+        self.assertIn("hinted towards possible self-harm", text)
+        self.assertIn("do not want to be here", text)
+        self.assertIn("want to die", text)
+        self.assertIn("or have a plan", text)
+
     def test_critical_maps_to_high(self):
         self.assertEqual(
             normalize_risk_level("critical"),

@@ -91,7 +91,12 @@ class Dependencies:
 
 # Shared by GeneralResponse and ExerciseStateResponse (the subclass inherits it).
 OWN_RISK_LEVEL_DESCRIPTION = (
-    "The user's own risk in this message. One of none, low, moderate, high. "
+    "The user's own risk in this message. "
+    "none: no safety concern. This includes ordinary worry, stress, work or money problems, "
+    "sadness, frustration or anxiety about everyday life. "
+    "low: discussing their emotions or general topics, with some distress, but nothing about harming themselves. "
+    "moderate: hinted towards possible self-harm, or saying they do not want to be here or feel hopeless in a way that suggests harming themselves. "
+    "high: clearly stating they want to die, intend to harm or kill themselves, or have a plan. "
     "Talk about another person, the past, fiction, news, or something they read "
     "is none, unless they also express their own risk."
 )
