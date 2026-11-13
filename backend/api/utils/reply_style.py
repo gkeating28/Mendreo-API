@@ -155,11 +155,15 @@ def _word_is_in_instructions(word: str, instructions: str) -> bool:
     return False
 
 
-def _offers_unlisted_method(text: str, allowed: str) -> bool:
+def _offers_unlisted_method(text: str, allowed: str, user_text: str = "") -> bool:
     """True when the reply invites something the step instructions do not name."""
     for match in _OFFER_LEAD.finditer(text or ""):
-        if not _word_is_in_instructions(match.group(1), allowed):
-            return True
+        word = match.group(1)
+        if _word_is_in_instructions(word, allowed):
+            continue
+        if _contains_term(user_text, word):
+            continue
+        return True
     return False
 
 
@@ -195,20 +199,28 @@ def _called_name(raw: str) -> str:
     return name.strip()
 
 
-def _unnamed_technique(text: str, allowed: str) -> bool:
+def _user_said_group(user_text: str, group: tuple[str, ...]) -> bool:
+    return any(_contains_term(user_text, term) for term in group)
+
+
+def _user_said_name(user_text: str, name: str) -> bool:
+    return (name or "").lower() in (user_text or "").lower()
+
+
+def _unnamed_technique(text: str, allowed: str, user_text: str = "") -> bool:
     """True when the reply names a technique the step script does not."""
     allowed_lower = (allowed or "").lower()
     for group in _TECHNIQUE_GROUPS:
         if any(_contains_term(text, term) for term in group) and not any(
             _contains_term(allowed, term) for term in group
-        ):
+        ) and not _user_said_group(user_text, group):
             return True
     for match in _CALLED_ACTIVITY.finditer(text or ""):
         name = _called_name(match.group(1))
         letters = re.sub(r"[^a-z]", "", name.lower())
         if len(letters) < 4:
             continue
-        if name.lower() not in allowed_lower:
+        if name.lower() not in allowed_lower and not _user_said_name(user_text, name):
             return True
     return False
 
@@ -234,11 +246,26 @@ def stay_on_step_catalogue_text() -> str:
     return "\n".join(lines)
 
 
-def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
+def _words_the_user_said_this_step(session) -> str:
+    """User replies in the live step. General chat and check-in have none."""
+    if session is None or not getattr(session, "exercise_id", None):
+        return ""
+    from .turn_hint import _step_user_reply_rows
+
+    numbered, unnumbered = _step_user_reply_rows(session)
+    texts = list(numbered.values_list("text", flat=True)) + list(
+        unnumbered.values_list("text", flat=True)
+    )
+    return "\n".join(text for text in texts if text)
+
+
+def reply_leaves_the_step(text: str | None, instructions: str | None, session=None) -> bool:
     """True when a reply starts an activity the live step does not name.
 
     A summary the user can confirm, and the question that asks if they are
     ready for the next step, are how a step finishes. They stay.
+    An activity word the user already used in this step stays too. One Toni
+    introduces herself does not.
     """
     from .summary_confirmation import is_summary_confirmation
 
@@ -246,11 +273,12 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
     if is_summary_confirmation(raw):
         return False
     allowed = instructions or ""
-    if _offers_unlisted_method(raw, allowed):
+    user_text = _words_the_user_said_this_step(session)
+    if _offers_unlisted_method(raw, allowed, user_text):
         return True
-    if _offered_activity_missing(raw, allowed):
+    if _offered_activity_missing(raw, allowed, user_text):
         return True
-    unnamed = _unnamed_technique(raw, allowed)
+    unnamed = _unnamed_technique(raw, allowed, user_text)
     if _STEP_READY.search(raw) and not unnamed:
         return False
     for pattern in _ACTIVITY_PATTERNS:
@@ -258,19 +286,21 @@ def reply_leaves_the_step(text: str | None, instructions: str | None) -> bool:
             return True
     # "A method called thought defusion" is a different activity.
     # "Reframe that thought" is not, unless the reply asks them to switch into it.
-    if _called_name_missing(raw, allowed):
+    if _called_name_missing(raw, allowed, user_text):
         return True
     if unnamed and re.search(r"\b(?:give it a try|ready to try)\b", raw, re.IGNORECASE):
         return True
     return False
 
 
-def _offered_activity_missing(text: str, allowed: str) -> bool:
+def _offered_activity_missing(text: str, allowed: str, user_text: str = "") -> bool:
     """True when the reply offers a technique the live step does not name."""
     for group in _OFFERED_TERMS:
         if not any(_contains_term(text, term) for term in group):
             continue
         if any(_contains_term(allowed, term) for term in group):
+            continue
+        if _user_said_group(user_text, group):
             continue
         if group[0] in {"grounding", "breathing"}:
             return True
@@ -279,14 +309,14 @@ def _offered_activity_missing(text: str, allowed: str) -> bool:
     return False
 
 
-def _called_name_missing(text: str, allowed: str) -> bool:
+def _called_name_missing(text: str, allowed: str, user_text: str = "") -> bool:
     allowed_lower = (allowed or "").lower()
     for match in _CALLED_ACTIVITY.finditer(text or ""):
         name = _called_name(match.group(1))
         letters = re.sub(r"[^a-z]", "", name.lower())
         if len(letters) < 4:
             continue
-        if name.lower() not in allowed_lower:
+        if name.lower() not in allowed_lower and not _user_said_name(user_text, name):
             return True
     return False
 

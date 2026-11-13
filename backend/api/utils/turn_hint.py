@@ -315,6 +315,24 @@ def _unnumbered_user_replies(session, rows):
     return unnumbered
 
 
+def _step_user_reply_rows(session):
+    """User messages in the live step, as a numbered set and an unnumbered set.
+
+    Message.step_no is the live step copied onto each row. Check-in is 0.
+    Earlier steps keep their own number. A row with no step_no is included
+    only after the exercise run started, and only when that still leaves
+    earlier steps out. These are the same rows _step_answer_count counts.
+    """
+    from ..message.models import Message
+
+    current = getattr(session, "current_step_no", None) or 0
+    if not getattr(session, "pk", None) or current < 1:
+        empty = Message.objects.none()
+        return empty, empty
+    rows = Message.objects.filter(session=session, sender__consumer__isnull=False)
+    return rows.filter(step_no=current), _unnumbered_user_replies(session, rows)
+
+
 def _step_answer_count(session, user_message) -> int:
     """User replies in the current step of this exercise run, including the one just sent.
 
@@ -323,14 +341,10 @@ def _step_answer_count(session, user_message) -> int:
     with no step_no is counted only after the exercise run started, and only
     when that still leaves earlier steps out.
     """
-    from ..message.models import Message
-
     current = getattr(session, "current_step_no", None) or 0
     if current < 1:
         return 0
-    rows = Message.objects.filter(session=session, sender__consumer__isnull=False)
-    numbered = rows.filter(step_no=current)
-    unnumbered = _unnumbered_user_replies(session, rows)
+    numbered, unnumbered = _step_user_reply_rows(session)
     count = numbered.count() + unnumbered.count()
     if user_message is None:
         return count

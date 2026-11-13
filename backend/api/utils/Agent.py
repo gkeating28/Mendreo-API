@@ -722,7 +722,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 )
         instructions = _current_step_instructions(session)
         reply_text = getattr(response_data, "text", None)
-        left = instructions is not None and reply_leaves_the_step(reply_text, instructions)
+        left = instructions is not None and reply_leaves_the_step(
+            reply_text, instructions, session
+        )
         from .SessionStateMachine import _is_last_step
 
         ending = (
@@ -770,7 +772,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                     result = retry
                     response_data = retry_data
                     stayed = True
-                elif not reply_leaves_the_step(retry_text, instructions):
+                elif not reply_leaves_the_step(retry_text, instructions, session):
                     result = retry
                     response_data = retry_data
                     stayed = True

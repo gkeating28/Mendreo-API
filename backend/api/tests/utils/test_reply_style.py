@@ -565,3 +565,116 @@ class OffersToMoveOnTests(SimpleTestCase):
                 r"|\bthe next (?:step|part|stage) of (?:this|the|our) exercise\b"
             ),
         )
+
+
+_STEP_FOUR = (
+    "Ask if the alternative can be used in those situations. "
+    "Ask what they will do if they cannot use it. "
+    "Ask what obstacles they might face."
+)
+
+
+class UserNamedActivityTests(BaseTest):
+    def endpoint(self):
+        return "sessions"
+
+    def _session(self, *, exercise=True, step_no=4):
+        created = General.create_exercise() if exercise else None
+        if created is not None:
+            created.steps.all().delete()
+            created.steps_no = 5
+            created.save(update_fields=["steps_no", "updated_at"])
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=created,
+            current_step_no=step_no if exercise else None,
+            total_steps_no=5 if exercise else None,
+            state=Constants.SESSION_STATE_STEP_ACTIVE if exercise else Constants.SESSION_STATE_GENERAL,
+        )
+        Participant.create_participants(session)
+        return session
+
+    def _say(self, session, text):
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        return Message.objects.create(session=session, sender=user, text=text)
+
+    def test_a_reply_may_use_the_activity_the_user_just_named(self):
+        session = self._session()
+        self._say(session, "Grounding techniques")
+        self.assertFalse(
+            reply_leaves_the_step(
+                "Grounding techniques could work at your desk. "
+                "What will you do if you cannot use them?",
+                _STEP_FOUR,
+                session,
+            )
+        )
+
+    def test_breathing_toni_introduces_is_still_flagged(self):
+        session = self._session()
+        session.current_step_no = 1
+        session.save(update_fields=["current_step_no", "updated_at"])
+        self._say(session, "breathing exercises")
+        session.current_step_no = 4
+        session.save(update_fields=["current_step_no", "updated_at"])
+        self._say(session, "I would go for a walk")
+        self.assertTrue(
+            reply_leaves_the_step(
+                "We could try a breathing exercise when that happens.",
+                _STEP_FOUR,
+                session,
+            )
+        )
+
+    def test_breathing_the_user_named_earlier_in_the_step_is_not_flagged(self):
+        session = self._session()
+        self._say(session, "breathing exercises")
+        self._say(session, "I would go for a walk")
+        self.assertFalse(
+            reply_leaves_the_step(
+                "You could use breathing when you cannot take that walk. "
+                "What obstacle might get in the way?",
+                _STEP_FOUR,
+                session,
+            )
+        )
+
+    def test_general_chat_is_not_held_on_a_step(self):
+        session = self._session(exercise=False)
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="What should I do when I feel anxious?",
+        )
+
+        class _FakeAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def tool(self, func=None, **kwargs):
+                if func is None:
+                    return lambda fn: fn
+                return func
+
+            def run_sync(self, user_prompt="", **kwargs):
+                output = SimpleNamespace(
+                    text="We could try a breathing exercise when that happens.",
+                    reasoning="test",
+                    suggested_responses=[],
+                )
+                return SimpleNamespace(
+                    output=output,
+                    usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+                )
+
+        with (
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", _FakeAgent),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+        self.assertEqual(
+            response.text,
+            "We could try a breathing exercise when that happens.",
+        )
+        self.assertNotIn(ON_STEP_FALLBACK, response.text)
