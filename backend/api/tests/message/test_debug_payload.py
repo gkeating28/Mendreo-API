@@ -104,7 +104,20 @@ class HintLadderTests(SimpleTestCase):
         self.assertIn("twice", winner["reason"])
 
     def test_goal_hint_stops_the_ladder(self):
-        prompted = f"ok\n\n<TURN_HINT>\n{goal_hint_text('a named worry')}\n</TURN_HINT>"
+        text = goal_hint_text("a named worry")
+        self.assertEqual(
+            text,
+            "This step is not done yet. What is still missing: a named worry. "
+            "Continue with this step's own instructions for that part. "
+            "Do not ask a question those instructions do not name.",
+        )
+        self.assertEqual(
+            goal_hint_text("  "),
+            "This step is not done yet. What is still missing: what this step still requires. "
+            "Continue with this step's own instructions for that part. "
+            "Do not ask a question those instructions do not name.",
+        )
+        prompted = f"ok\n\n<TURN_HINT>\n{text}\n</TURN_HINT>"
         ladder = hint_ladder(prompted)
         self.assertEqual(ladder["winner"], "goal")
         by_key = {row["key"]: row for row in ladder["candidates"]}

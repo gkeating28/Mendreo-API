@@ -224,7 +224,9 @@ def goal_hint_text(missing: str) -> str:
     gap = (missing or "").strip() or "what this step still requires"
     return (
         "This step is not done yet. "
-        f"Ask one question that would supply what is still missing: {gap}"
+        f"What is still missing: {gap}. "
+        "Continue with this step's own instructions for that part. "
+        "Do not ask a question those instructions do not name."
     )
 
 
