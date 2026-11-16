@@ -638,13 +638,13 @@ class GoalGateTests(BaseTest):
             message.usage["step_decision"]["check_done_when"],
             {"met": False, "missing": "the location"},
         )
-        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
-        self.assertEqual(
-            message.suggested_responses,
-            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
-        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
 
-    def test_two_user_replies_show_the_chip_when_done_when_fails(self):
+    def test_two_user_replies_still_reject_a_failed_readiness_claim(self):
         session = self._plain_two_steps()
         self._user_reply(session, "The worry is the deadline.")
         self._user_reply(session, "It happens before presentations.")
@@ -663,13 +663,12 @@ class GoalGateTests(BaseTest):
             message.usage["step_decision"]["check_done_when"],
             {"met": False, "missing": "the location"},
         )
-        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
-        self.assertEqual(
-            message.suggested_responses,
-            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
-        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
 
-    def test_readiness_question_keeps_the_chip_when_done_when_fails(self):
+    def test_a_non_last_readiness_question_is_rejected_when_done_when_is_not_met(self):
         session = self._plain_two_steps()
         self._user_reply(session, "The worry is the deadline.")
         self._user_reply(session, "It happens before presentations.")
@@ -686,15 +685,46 @@ class GoalGateTests(BaseTest):
         message.refresh_from_db()
         decision = message.usage["step_decision"]
         self.assertTrue(decision["inferred_asks_readiness"])
-        self.assertTrue(decision["accepted"]["asks_readiness"])
+        self.assertFalse(decision["accepted"]["step_goal_met"])
+        self.assertFalse(decision["accepted"]["asks_readiness"])
         self.assertEqual(decision["check_done_when"], {"met": False, "missing": "the location"})
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+
+    def test_the_third_readiness_claim_is_forced_on_a_non_last_step(self):
+        session = self._plain_two_steps()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "Are you ready to continue?",
+                "You named the worry. Are you ready to continue?",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                on_model_turn(session, message, response)
+            session.refresh_from_db()
+            self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 2})
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named. Are you ready to continue?"
+            )
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        session.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(
+            third.usage["step_decision"]["check_done_when"],
+            {"met": True, "missing": "", "forced": True},
+        )
         self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
         self.assertEqual(
-            message.suggested_responses,
+            third.suggested_responses,
             [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
         )
-        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
-        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
 
     def test_third_done_when_check_is_forced_after_two_rejections(self):
         session = self._plain_two_steps()
