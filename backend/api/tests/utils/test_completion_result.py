@@ -13,11 +13,49 @@ from ...utils.completion import (
     pick_completion_result_from_texts,
     strip_trailing_readiness_phrase,
 )
-from ...utils.extraction import extract_step_result
+from ...utils.extraction import extract_step_result, check_done_when
 from ..utils.manager import Auth, General
 
 
 class CompletionResultTextTests(SimpleTestCase):
+    def test_check_done_when_guidance_keeps_the_parsed_result(self):
+        self.assertIsNone(check_done_when(None, type("Step", (), {"done_when": "  "})()))
+        step = type("Step", (), {"done_when": "A named worry and a plan."})()
+        with mock.patch(
+            "api.utils.extraction._step_transcript",
+            return_value="User: a named worry.",
+        ), mock.patch(
+            "api.utils.extraction.AI.ask",
+            return_value={"met": True, "missing": "ignored"},
+        ) as ask:
+            met = check_done_when(None, step)
+            prompt = ask.call_args.args[0]
+            self.assertIn(
+                "Judge every part of Done when against the transcript and require all parts.",
+                prompt,
+            )
+            self.assertIn(
+                "When Done when asks for a count or a length, count literally and do not round up.",
+                prompt,
+            )
+            self.assertIn(
+                "A bare yes, no, or one-word reply to a question is not by itself a description "
+                "or a rich answer unless Done when says otherwise.",
+                prompt,
+            )
+            self.assertIn(
+                "Decide whether every concrete element named in DONE_WHEN is present",
+                prompt,
+            )
+            self.assertEqual(met, {"met": True, "missing": ""})
+            ask.return_value = {"met": "yes", "missing": None}
+            self.assertEqual(check_done_when(None, step), {"met": True, "missing": ""})
+            ask.return_value = {"met": False, "missing": "the plan"}
+            self.assertEqual(
+                check_done_when(None, step),
+                {"met": False, "missing": "the plan"},
+            )
+
     def test_rejects_placeholders_and_confirmations(self):
         for value in [
             None,
