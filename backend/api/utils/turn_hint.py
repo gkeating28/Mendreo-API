@@ -247,7 +247,6 @@ STEP_MISSING_HINT = (
     "Ask nothing else, and do not summarise yet."
 )
 STEP_ANSWER_CAP = 6
-STEP_HARD_CAP = 8
 
 
 def goal_hint_text(missing: str) -> str:
@@ -374,13 +373,16 @@ def _step_answer_count(session, user_message) -> int:
 
 
 def step_progress_hint(session, user_message) -> str | None:
-    """Once this step has had STEP_ANSWER_CAP user replies, summarise or fill the gap.
+    """Once this step has had STEP_ANSWER_CAP user replies, follow the done_when check.
 
     A summary that already asks for confirmation stays put until the user agrees.
     A short yes then asks only if they are ready. Any other reply to that summary
     gets no hint. A summary already confirmed in this step is not asked for again.
-    Between the two caps, one done-when check decides whether to summarise or to
-    ask the one missing part. At STEP_HARD_CAP the summary is asked for anyway.
+    Every later reply calls the done-when check once. The summary is asked for
+    when that check says the work is covered, or only the summary confirmation
+    is missing. A real gap is asked once. A failed or empty check gives no hint.
+    After this step has been asked about that gap as many times as
+    done_when_rejections allows, the next reply asks for the summary.
     """
     if not getattr(session, "exercise_id", None):
         return None
@@ -411,8 +413,6 @@ def step_progress_hint(session, user_message) -> str | None:
     step = session_step.step if session_step is not None else None
     if step is not None and summary_was_confirmed(session, step):
         return None
-    if count >= STEP_HARD_CAP:
-        return STEP_SUMMARY_HINT
     return _capped_step_hint(session, step)
 
 
@@ -425,10 +425,10 @@ def step_ready_hint(session) -> str:
     return STEP_READY_HINT
 
 
-def _capped_step_hint(session, step) -> str:
-    """One done-when check between the caps. A failed check still summarises."""
+def _capped_step_hint(session, step) -> str | None:
+    """One done-when check. A summary follows a covered step, never a failed check."""
     if step is None:
-        return STEP_SUMMARY_HINT
+        return None
     from .extraction import check_done_when
     from .summary_confirmation import missing_is_only_summary_confirmation
 
@@ -440,14 +440,26 @@ def _capped_step_hint(session, step) -> str:
             getattr(session, "id", None),
             getattr(step, "id", None),
         )
-        return STEP_SUMMARY_HINT
-    if not isinstance(result, dict):
-        return STEP_SUMMARY_HINT
+        return None
+    # This turn's readiness guard reads the same verdict instead of checking again.
+    session._turn_done_when_result = result
+    if not isinstance(result, dict) or not result:
+        return None
     if result.get("met"):
         return STEP_SUMMARY_HINT
     missing = " ".join((result.get("missing") or "").split())
-    if not missing or missing_is_only_summary_confirmation(missing):
+    if missing_is_only_summary_confirmation(missing):
         return STEP_SUMMARY_HINT
+    if not missing:
+        return None
+    from .SessionStateMachine import (
+        _done_when_rejections_exhausted,
+        _note_done_when_rejection,
+    )
+
+    if _done_when_rejections_exhausted(session):
+        return STEP_SUMMARY_HINT
+    _note_done_when_rejection(session)
     return STEP_MISSING_HINT.format(missing=missing)
 
 

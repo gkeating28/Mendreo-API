@@ -992,6 +992,17 @@ def _ends_with_readiness_question(text: str) -> bool:
     return bool(_INFERRED_READINESS.search(closing))
 
 
+# How many times a rejected done_when check may ask about the same gap
+# before the next check is treated as met. This is the limit _done_when_passed
+# already uses. The step cap reads it and does not pick a second number.
+DONE_WHEN_REJECTION_LIMIT = 2
+
+
+def _done_when_rejections_exhausted(session) -> bool:
+    """True once this step has been asked about its gap the existing allowance."""
+    return _done_when_rejection_count(session) >= DONE_WHEN_REJECTION_LIMIT
+
+
 def _done_when_rejection_count(session) -> int:
     record = (session.cached_prompt_meta or {}).get("done_when_rejections")
     if not isinstance(record, dict):
@@ -1016,10 +1027,34 @@ def _note_done_when_rejection(session) -> None:
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
 
+def _restore_done_when_rejection_count(session, count: int) -> None:
+    """Put this step's rejection count back when the turn showed no reply."""
+    meta = dict(session.cached_prompt_meta or {})
+    record = dict(meta.get("done_when_rejections") or {})
+    step_no = str(session.current_step_no or 1)
+    try:
+        current = int(record.get(step_no) or 0)
+    except (TypeError, ValueError):
+        current = 0
+    if current == count:
+        return
+    if count <= 0:
+        record.pop(step_no, None)
+    else:
+        record[step_no] = count
+    if record:
+        meta["done_when_rejections"] = record
+    else:
+        meta.pop("done_when_rejections", None)
+    session.cached_prompt_meta = meta
+    if getattr(session, "pk", None):
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
 def _done_when_passed(session, session_step, agent_message, *, advisory: bool = False) -> bool:
     from .extraction import check_done_when
 
-    if not advisory and _done_when_rejection_count(session) >= 2:
+    if not advisory and _done_when_rejections_exhausted(session):
         result = {"met": True, "missing": "", "forced": True}
     else:
         try:

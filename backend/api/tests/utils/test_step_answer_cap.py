@@ -7,10 +7,10 @@ from api.participant.models import Participant
 from api.session.models import Session, SessionStep
 from api.tests.utils.test_session_progress import _consumer, _exercise
 from api.utils import Constants
+from api.utils.SessionStateMachine import DONE_WHEN_REJECTION_LIMIT
 from api.utils.turn_hint import (
     EXERCISE_NUDGE_HINT,
     STEP_ANSWER_CAP,
-    STEP_HARD_CAP,
     STEP_MISSING_HINT,
     STEP_READY_HINT,
     STEP_READY_LAST_HINT,
@@ -60,9 +60,14 @@ class StepAnswerCapTests(TestCase):
         self.assertEqual(prompted, replies[-1].text)
 
     def test_hint_at_six_replies(self):
+        self._live_step()
         replies = self._replies(6)
 
-        prompted = user_prompt_with_hint(self.session, replies[-1])
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            prompted = user_prompt_with_hint(self.session, replies[-1])
 
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertNotIn(SUMMARY_CONFIRM_HINT, prompted)
@@ -178,6 +183,7 @@ class StepAnswerCapTests(TestCase):
         self.assertEqual(prompted, "no, not quite")
 
     def test_summary_hint_requires_the_summary_in_the_same_message(self):
+        self._live_step()
         self._replies(5)
         Message.objects.create(
             session=self.session,
@@ -186,7 +192,11 @@ class StepAnswerCapTests(TestCase):
         )
         reply = self._reply()
 
-        prompted = user_prompt_with_hint(self.session, reply)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            prompted = user_prompt_with_hint(self.session, reply)
 
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertIn("In this same message", STEP_SUMMARY_HINT)
@@ -223,6 +233,7 @@ class StepAnswerCapTests(TestCase):
         self.assertTrue(prompted.startswith("Yes, that is right"))
 
     def test_hint_returns_after_a_normal_question(self):
+        self._live_step()
         self._replies(6)
         self._summary()
         self._reply("no, not quite")
@@ -233,7 +244,11 @@ class StepAnswerCapTests(TestCase):
         )
         again = self._reply("I fall behind on the bills")
 
-        prompted = user_prompt_with_hint(self.session, again)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            prompted = user_prompt_with_hint(self.session, again)
 
         self.assertIn(STEP_SUMMARY_HINT, prompted)
         self.assertNotIn(STEP_READY_HINT, prompted)
@@ -285,21 +300,70 @@ class StepAnswerCapTests(TestCase):
         ):
             self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
 
-    def test_the_hard_cap_summarises_without_the_checker(self):
+    def test_above_the_cap_each_reply_checks_once(self):
         self._live_step()
-        replies = self._replies(STEP_HARD_CAP)
-        with patch("api.utils.extraction.check_done_when") as checker:
+        replies = self._replies(STEP_ANSWER_CAP + 4)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
             self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
-        checker.assert_not_called()
+        checker.assert_called_once()
 
-    def test_a_failed_checker_still_summarises(self):
+    def test_above_the_cap_a_real_gap_still_asks_one_question(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP + 3)
+        missing = "what they would do about the obstacles"
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": missing},
+        ) as checker:
+            hint = step_progress_hint(self.session, replies[-1])
+        checker.assert_called_once()
+        self.assertEqual(hint, STEP_MISSING_HINT.format(missing=missing))
+
+    def test_a_failed_checker_gives_no_hint(self):
         self._live_step()
         replies = self._replies(STEP_ANSWER_CAP)
         with patch(
             "api.utils.extraction.check_done_when",
             side_effect=RuntimeError("down"),
-        ):
-            self.assertEqual(step_progress_hint(self.session, replies[-1]), STEP_SUMMARY_HINT)
+        ) as checker:
+            self.assertIsNone(step_progress_hint(self.session, replies[-1]))
+        checker.assert_called_once()
+
+    def test_a_none_or_empty_result_gives_no_hint(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP)
+        for result in (None, {}, {"met": False, "missing": ""}):
+            with patch(
+                "api.utils.extraction.check_done_when",
+                return_value=result,
+            ) as checker:
+                self.assertIsNone(step_progress_hint(self.session, replies[-1]))
+            checker.assert_called_once()
+
+    def test_a_repeated_gap_summarises_at_the_existing_rejection_limit(self):
+        self._live_step()
+        replies = self._replies(STEP_ANSWER_CAP + DONE_WHEN_REJECTION_LIMIT)
+        capped = replies[STEP_ANSWER_CAP - 1 :]
+        missing = "what they would do next"
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": missing},
+        ) as checker:
+            hints = [step_progress_hint(self.session, reply) for reply in capped]
+        self.assertEqual(checker.call_count, len(capped))
+        self.assertEqual(
+            hints[:-1],
+            [STEP_MISSING_HINT.format(missing=missing)] * DONE_WHEN_REJECTION_LIMIT,
+        )
+        self.assertEqual(hints[-1], STEP_SUMMARY_HINT)
+        self.session.refresh_from_db()
+        self.assertEqual(
+            self.session.cached_prompt_meta["done_when_rejections"]["1"],
+            DONE_WHEN_REJECTION_LIMIT,
+        )
 
     def test_a_confirmed_summary_is_not_asked_for_again(self):
         self._live_step()

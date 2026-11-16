@@ -247,6 +247,360 @@ class ReplyGuardTests(BaseTest):
         self.assertFalse(response.step_goal_met)
         self.assertFalse(response.asks_readiness)
 
+    def _two_providers(self, reply):
+        providers = (
+            SimpleNamespace(default_model="a", _resolved_model_name="a"),
+            SimpleNamespace(default_model="b", _resolved_model_name="b"),
+        )
+
+        class _FakeAgent:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def tool(self, func=None, **kwargs):
+                if func is None:
+                    return lambda fn: fn
+                return func
+
+            def run_sync(self, user_prompt="", **kwargs):
+                return reply(user_prompt, **kwargs)
+
+        def failover(operation):
+            last = None
+            for provider in providers:
+                try:
+                    return operation(provider), provider
+                except Exception as exc:
+                    last = exc
+            raise last
+
+        return _FakeAgent, failover
+
+    def test_one_hint_build_survives_failover_and_both_guard_retries(self):
+        from api.utils.turn_hint import step_progress_hint as real_hint
+
+        session = self._session()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        for _ in range(5):
+            Message.objects.create(
+                session=session,
+                sender=user,
+                text="I keep thinking about the deadline.",
+            )
+        counts = {"hint": 0, "check": 0}
+        calls = []
+        answers = [
+            _EXPLORE,
+            "You chose to step outside when the worry starts.",
+            _NEXT,
+        ]
+
+        def counting_hint(session, message):
+            counts["hint"] += 1
+            return real_hint(session, message)
+
+        def counting_check(session, step):
+            counts["check"] += 1
+            return {"met": False, "missing": "what they would do next"}
+
+        def run_sync(user_prompt="", **kwargs):
+            calls.append(user_prompt)
+            if len(calls) % 2 == 1:
+                raise RuntimeError("provider down")
+            text = answers[(len(calls) // 2) - 1]
+            output = ExerciseStateResponse(
+                text=text,
+                reasoning="test",
+                suggested_responses=[],
+                step_goal_met=False,
+                asks_readiness=False,
+                risk_level="none",
+            )
+            return SimpleNamespace(
+                output=output,
+                usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        fake, failover = self._two_providers(run_sync)
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        with (
+            patch("api.utils.turn_hint.step_progress_hint", counting_hint),
+            patch("api.utils.extraction.check_done_when", counting_check),
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+
+        self.assertEqual(counts["hint"], 1)
+        self.assertEqual(counts["check"], 1)
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(calls[0], calls[1])
+        self.assertNotIn("Ask the step's next question", calls[0])
+        self.assertTrue(calls[2].startswith(calls[0]))
+        self.assertTrue(calls[3].startswith(calls[0]))
+        self.assertIn("Ask the step's next question", calls[2])
+        self.assertIn("Ask the step's next question", calls[3])
+        self.assertIn("exactly one question", calls[4])
+        self.assertIn("exactly one question", calls[5])
+        self.assertEqual(response.text, _NEXT)
+        session.refresh_from_db()
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"]["1"], 1)
+        self.assertFalse(hasattr(session, "_turn_done_when_result"))
+
+    def test_a_stored_goal_hint_is_on_every_attempt(self):
+        from api.utils.turn_hint import step_progress_hint as real_hint
+
+        session = self._session()
+        goal = "Ask one question about the bus they named."
+        session.cached_prompt_meta = {"goal_hint": goal}
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        counts = {"hint": 0}
+        calls = []
+
+        def counting_hint(session, message):
+            counts["hint"] += 1
+            return real_hint(session, message)
+
+        def run_sync(user_prompt="", **kwargs):
+            calls.append(user_prompt)
+            if len(calls) % 2 == 1:
+                raise RuntimeError("provider down")
+            text = _EXPLORE if len(calls) == 2 else _NEXT
+            output = ExerciseStateResponse(
+                text=text,
+                reasoning="test",
+                suggested_responses=[],
+                step_goal_met=False,
+                asks_readiness=False,
+                risk_level="none",
+            )
+            return SimpleNamespace(
+                output=output,
+                usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        fake, failover = self._two_providers(run_sync)
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        with (
+            patch("api.utils.turn_hint.step_progress_hint", counting_hint),
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": False, "missing": "the plan"},
+            ) as checked,
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            get_response(session, user_message)
+
+        self.assertEqual(counts["hint"], 0)
+        self.assertEqual(checked.call_count, 1)
+        self.assertGreaterEqual(len(calls), 4)
+        for prompt in calls:
+            self.assertIn(goal, prompt)
+        self.assertNotIn("Ask the step's next question", calls[0])
+        self.assertIn("Ask the step's next question", calls[2])
+        session.refresh_from_db()
+        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
+
+    def test_a_failed_turn_does_not_keep_the_rejection(self):
+        from api.utils.turn_hint import step_progress_hint as real_hint
+
+        session = self._session()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        for _ in range(5):
+            Message.objects.create(
+                session=session,
+                sender=user,
+                text="I keep thinking about the deadline.",
+            )
+        counts = {"hint": 0, "check": 0}
+
+        def counting_hint(session, message):
+            counts["hint"] += 1
+            return real_hint(session, message)
+
+        def counting_check(session, step):
+            counts["check"] += 1
+            return {"met": False, "missing": "what they would do next"}
+
+        def run_sync(user_prompt="", **kwargs):
+            raise RuntimeError("provider down")
+
+        fake, failover = self._two_providers(run_sync)
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        with (
+            patch("api.utils.turn_hint.step_progress_hint", counting_hint),
+            patch("api.utils.extraction.check_done_when", counting_check),
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+
+        self.assertEqual(counts["hint"], 1)
+        self.assertEqual(counts["check"], 1)
+        self.assertIn(_SORRY, response.text)
+        session.refresh_from_db()
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+
+    def test_general_chat_builds_the_hint_once_across_providers(self):
+        from api.utils.turn_hint import step_progress_hint as real_hint
+
+        session = Session.objects.create(consumer=self.consumer_one)
+        user, _agent = Participant.create_participants(session)
+        counts = {"hint": 0}
+        calls = []
+
+        def counting_hint(session, message):
+            counts["hint"] += 1
+            return real_hint(session, message)
+
+        def run_sync(user_prompt="", **kwargs):
+            calls.append(user_prompt)
+            if len(calls) == 1:
+                raise RuntimeError("provider down")
+            output = ExerciseStateResponse(
+                text="You have a plan to walk when it happens.",
+                reasoning="test",
+                suggested_responses=[],
+                step_goal_met=False,
+                asks_readiness=False,
+                risk_level="none",
+            )
+            return SimpleNamespace(
+                output=output,
+                usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        fake, failover = self._two_providers(run_sync)
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="I might walk when it happens.",
+        )
+        with (
+            patch("api.utils.turn_hint.step_progress_hint", counting_hint),
+            patch(
+                "api.utils.extraction.check_done_when",
+                side_effect=AssertionError("general chat must not check done_when"),
+            ),
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+
+        self.assertEqual(counts["hint"], 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(response.text, "You have a plan to walk when it happens.")
+        session.refresh_from_db()
+        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+
+    def test_turn_done_when_result_is_cleared_on_every_path(self):
+        session = self._session()
+        session._turn_done_when_result = {"met": True, "missing": ""}
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the plan"},
+        ) as checked:
+            calls, response = self._ask(session, [_EXPLORE, _NEXT])
+        self.assertEqual(checked.call_count, 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(response.text, _NEXT)
+        self.assertFalse(hasattr(session, "_turn_done_when_result"))
+
+        session = self._session()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        for _ in range(5):
+            Message.objects.create(
+                session=session,
+                sender=user,
+                text="I keep thinking about the deadline.",
+            )
+        session._turn_done_when_result = {"met": True, "missing": "stale"}
+
+        def run_sync(user_prompt="", **kwargs):
+            raise RuntimeError("provider down")
+
+        fake, failover = self._two_providers(run_sync)
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        with (
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": False, "missing": "what they would do next"},
+            ),
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            response, _, _, _ = get_response(session, user_message)
+        self.assertIn(_SORRY, response.text)
+        self.assertFalse(hasattr(session, "_turn_done_when_result"))
+
+        session = self._session()
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        for _ in range(5):
+            Message.objects.create(
+                session=session,
+                sender=user,
+                text="I keep thinking about the deadline.",
+            )
+        session._turn_done_when_result = {"met": True, "missing": "stale"}
+
+        def succeed(user_prompt="", **kwargs):
+            output = ExerciseStateResponse(
+                text="You have a plan.",
+                reasoning="test",
+                suggested_responses=[],
+                step_goal_met=False,
+                asks_readiness=False,
+                risk_level="none",
+            )
+            return SimpleNamespace(
+                output=output,
+                usage=lambda: SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        fake, failover = self._two_providers(succeed)
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the deadline.",
+        )
+        with (
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": False, "missing": "what they would do next"},
+            ),
+            patch("api.utils.Agent.normalise_reply", side_effect=RuntimeError("after the reply")),
+            patch("api.utils.Agent.build_pydantic_model", return_value=(object(), None)),
+            patch("api.utils.Agent.Agent", fake),
+            patch("api.utils.Agent.run_with_failover", failover),
+        ):
+            with self.assertRaises(RuntimeError):
+                get_response(session, user_message)
+        self.assertFalse(hasattr(session, "_turn_done_when_result"))
+
     def test_an_official_ready_question_without_a_claim_is_not_retried(self):
         session = self._session()
         with patch(

@@ -574,7 +574,10 @@ def _apply_readiness_guard(
         step = session_step.step if session_step is not None else None
         if session_step is None or session_step.goal_met_at is not None or step is None:
             return result, response_data, debug_result
-        verdict = check_done_when(session, step)
+        if hasattr(session, "_turn_done_when_result"):
+            verdict = session._turn_done_when_result
+        else:
+            verdict = check_done_when(session, step)
         done_when = getattr(step, "done_when", None) or ""
         needs_summary = summary_confirmation_required(done_when) and not summary_was_confirmed(session, step)
         rejected = needs_summary or (verdict is not None and not verdict.get("met"))
@@ -732,6 +735,17 @@ def _note_reply_decisions(session, *, before, after, on_step_retried, on_step_he
 
 def get_response(session: Session, consumer_message: Message) -> (GeneralResponse | ExerciseResponse, dict, Asset | None, Exercise | None):
     """Entry point: get the agent's response to a user's message."""
+    if hasattr(session, "_turn_done_when_result"):
+        delattr(session, "_turn_done_when_result")
+    try:
+        return _response_for_turn(session, consumer_message)
+    finally:
+        if hasattr(session, "_turn_done_when_result"):
+            delattr(session, "_turn_done_when_result")
+
+
+def _response_for_turn(session: Session, consumer_message: Message):
+    """Build and return one reply. The caller clears any done-when verdict."""
     from .prompt_debug import capture_on, remember_reply, remember_turn
 
     consumer = consumer_message.sender.consumer
@@ -764,8 +778,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     on_step_retried = False
     on_step_held = False
     # Retries reuse this prompt and a freshly built copy of the same history.
-    # The hint, when set, is appended to the user message only.
+    # A steer, when set, is appended to the user message only.
     repair = {"tools": True, "hint": None}
+    rejections_before = None
 
     def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider)
@@ -782,15 +797,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             _register_tools(agent, session)
 
         from .history import build_history
-        from .turn_hint import user_prompt_with_hint
-        from ..grounding.retrieval import augment_user_prompt
         from ..message.turn_prompt import stash_turn_prompt
 
-        user_prompt = augment_user_prompt(
-            session,
-            consumer_message,
-            user_prompt_with_hint(session, consumer_message),
-        )
+        user_prompt = base_user_prompt
         if steer[0]:
             user_prompt = f"{user_prompt}\n\n<TURN_HINT>\n{steer[0]}\n</TURN_HINT>"
         if repair["hint"]:
@@ -864,6 +873,17 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         return result
 
     try:
+        from .turn_hint import user_prompt_with_hint
+        from ..grounding.retrieval import augment_user_prompt
+        from .SessionStateMachine import _done_when_rejection_count
+
+        # Built once for this call. Not stored on the session. Retries reuse it.
+        rejections_before = _done_when_rejection_count(session)
+        base_user_prompt = augment_user_prompt(
+            session,
+            consumer_message,
+            user_prompt_with_hint(session, consumer_message),
+        )
         result, _provider = run_with_failover(_run)
         response_data = result.output
         debug_result = result
@@ -1058,6 +1078,16 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         model_failed = True
         timer_end = time.perf_counter()
         session._pending_retrieval = None
+        if rejections_before is not None:
+            try:
+                from .SessionStateMachine import _restore_done_when_rejection_count
+
+                _restore_done_when_rejection_count(session, rejections_before)
+            except Exception:
+                logger.exception(
+                    "could not undo a done_when rejection for session=%s",
+                    getattr(session, "id", None),
+                )
         logger.exception(
             "Agent.get_response failed for session=%s message=%s",
             getattr(session, "id", None),
