@@ -513,7 +513,8 @@ class FinishEarlyRetryTests(BaseTest):
         self.assertNotIn(hint, calls[0])
         self.assertIn(hint, calls[1])
         self.assertNotIn(" his ", hint)
-        self.assertIn("their decisions", hint)
+        self.assertIn("what this step's instructions told you to recap", hint)
+        self.assertNotIn("alternative action", hint)
         self.assertEqual(response.text, "Are you ready to finish the exercise?")
 
     def test_last_step_finish_question_does_not_retry(self):

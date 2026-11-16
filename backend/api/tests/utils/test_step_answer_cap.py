@@ -13,6 +13,8 @@ from api.utils.turn_hint import (
     STEP_HARD_CAP,
     STEP_MISSING_HINT,
     STEP_READY_HINT,
+    STEP_READY_LAST_HINT,
+    step_ready_hint,
     STEP_SUMMARY_HINT,
     SUMMARY_CONFIRM_HINT,
     step_progress_hint,
@@ -157,6 +159,8 @@ class StepAnswerCapTests(TestCase):
         prompted = user_prompt_with_hint(self.session, yes)
 
         self.assertIn(STEP_READY_HINT, prompted)
+        self.assertIn("the next step", STEP_READY_HINT)
+        self.assertNotIn("finish the exercise", STEP_READY_HINT)
         self.assertNotIn(STEP_SUMMARY_HINT, prompted)
         self.assertTrue(prompted.startswith("yes"))
 
@@ -190,6 +194,22 @@ class StepAnswerCapTests(TestCase):
         self.assertIn("Do I have that right?", STEP_SUMMARY_HINT)
         self.assertIn("without the summary in the message", STEP_SUMMARY_HINT)
         self.assertTrue(prompted.startswith(reply.text))
+
+    def test_yes_after_a_summary_on_the_last_step_asks_about_finishing(self):
+        self.session.current_step_no = 2
+        self.session.total_steps_no = 2
+        self.session.save(update_fields=["current_step_no", "total_steps_no", "updated_at"])
+        self._replies(6)
+        self._summary()
+        yes = self._reply("yes")
+
+        self.assertEqual(step_ready_hint(self.session), STEP_READY_LAST_HINT)
+        self.assertIn("finish the exercise", STEP_READY_LAST_HINT)
+        self.assertNotIn("next step", STEP_READY_LAST_HINT)
+        self.assertIn('exactly "Do I have that right?"', STEP_SUMMARY_HINT)
+        prompted = user_prompt_with_hint(self.session, yes)
+        self.assertIn(STEP_READY_LAST_HINT, prompted)
+        self.assertNotIn(STEP_READY_HINT, prompted)
 
     def test_yes_that_is_right_after_a_summary_asks_if_ready(self):
         self._replies(6)

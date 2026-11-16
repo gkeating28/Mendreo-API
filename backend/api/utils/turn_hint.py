@@ -36,8 +36,8 @@ NOT_THE_LAST_STEP_HINT = (
 )
 LAST_STEP_HINT = (
     "This is the last step. Do not talk about moving on or a next step. "
-    "If {name} has not yet confirmed your summary, summarise their decisions "
-    "and their alternative action in their own words, and make the last sentence exactly "
+    "If {name} has not yet confirmed your summary, summarise what this step's instructions "
+    "told you to recap, in the user's own words, and make the last sentence exactly "
     "\"Do I have that right?\". Do not rephrase it. "
     "If they have confirmed it, ask only whether they are ready to finish the exercise."
 )
@@ -234,6 +234,12 @@ STEP_READY_HINT = (
     "Reply with one short acknowledging sentence and then ask only whether they are ready "
     "for the next step. Set step_goal_met and asks_readiness."
 )
+STEP_READY_LAST_HINT = (
+    "The user confirmed your summary. This step is done. "
+    "Ask no more questions about this step. "
+    "Reply with one short acknowledging sentence and then ask only whether they are ready "
+    "to finish the exercise. Set step_goal_met and asks_readiness."
+)
 STEP_MISSING_HINT = (
     "Before summarising, ask exactly one question to find out {missing}. "
     "That question must be specific and build on what the user has already said, "
@@ -397,7 +403,7 @@ def step_progress_hint(session, user_message) -> str | None:
     if previous is not None and is_summary_confirmation(getattr(previous, "text", None)):
         reply = getattr(user_message, "text", None)
         if is_summary_affirmation(reply):
-            return STEP_READY_HINT
+            return step_ready_hint(session)
         return None
     from .SessionStateMachine import _live_step
 
@@ -408,6 +414,15 @@ def step_progress_hint(session, user_message) -> str | None:
     if count >= STEP_HARD_CAP:
         return STEP_SUMMARY_HINT
     return _capped_step_hint(session, step)
+
+
+def step_ready_hint(session) -> str:
+    """The ready question after a confirmed summary. The last step asks about finishing."""
+    from .SessionStateMachine import _is_last_step
+
+    if _is_last_step(session):
+        return STEP_READY_LAST_HINT
+    return STEP_READY_HINT
 
 
 def _capped_step_hint(session, step) -> str:

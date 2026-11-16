@@ -9,7 +9,9 @@ from ...participant.models import Participant
 from ...session.models import Session, SessionStep
 from ...step.models import Step
 from ...utils import Constants
+from ...utils.turn_hint import LAST_STEP_HINT
 from ...utils.Agent import (
+    STEP_REFERENCE_RULES,
     ExerciseStateResponse,
     _QUESTION_HINT,
     _READY_QUESTION,
@@ -59,6 +61,19 @@ class ReplyGuardImportTests(SimpleTestCase):
         )
         for name in names:
             self.assertTrue(callable(name) or name is _READY_QUESTION or isinstance(name, str))
+
+    def test_shared_rules_do_not_name_one_exercise(self):
+        for text in (STEP_REFERENCE_RULES, LAST_STEP_HINT):
+            self.assertNotIn("alternative action", text)
+            self.assertNotIn("the worry", text)
+            self.assertNotIn("those situations", text)
+        self.assertIn("using the user's own terms", STEP_REFERENCE_RULES)
+        self.assertIn("or the step's instructions tell you to suggest one", STEP_REFERENCE_RULES)
+        self.assertIn("working through several prompts", STEP_REFERENCE_RULES)
+        self.assertIn("done_when ask for one", STEP_REFERENCE_RULES)
+        self.assertIn('the exact sentence "Do I have that right?"', STEP_REFERENCE_RULES)
+        self.assertIn("what this step's instructions told you to recap", LAST_STEP_HINT)
+        self.assertIn('exactly "Do I have that right?"', LAST_STEP_HINT)
 
 
 class ReplyGuardTests(BaseTest):

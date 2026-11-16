@@ -285,27 +285,40 @@ class PromptBlockTests(TestCase):
         )
         prompt = _prepare_prompt(run)
         self.assertIn(STEP_REFERENCE_RULES, prompt)
+        self.assertIn("Do not point at it only with", prompt)
         self.assertIn("ask the step's next question directly", prompt)
         self.assertIn("ask the user for their own idea first", prompt)
+        self.assertIn("tell you to suggest one", prompt)
+        self.assertIn("working through several prompts", prompt)
         self.assertIn("at most three short sentences", prompt)
+        self.assertIn("done_when ask for one", prompt)
         self.assertIn("ready to move on", prompt)
         self.assertIn('make the last sentence exactly "Do I have that right?"', prompt)
         self.assertIn('end with the exact sentence "Do I have that right?"', prompt)
+        self.assertNotIn("alternative action", STEP_REFERENCE_RULES)
+        self.assertNotIn("the worry", STEP_REFERENCE_RULES)
+        self.assertNotIn("those situations", STEP_REFERENCE_RULES)
         self.assertNotIn(STEP_REFERENCE_RULES, general)
+        self.assertNotIn("Do not point at it only with", general)
         self.assertNotIn("ask the step's next question directly", general)
         self.assertNotIn("ask the user for their own idea first", general)
+        self.assertNotIn("tell you to suggest one", general)
+        self.assertNotIn("working through several prompts", general)
         self.assertNotIn("at most three short sentences", general)
+        self.assertNotIn("done_when ask for one", general)
         self.assertNotIn("ready to move on", general)
-        self.assertNotIn("Never refer to it only as", general)
         self.assertNotIn("include only what the user said or clearly agreed to", general)
 
         run.refresh_from_db()
         for phrase, broken in (
+            ("Do not point at it only with", "Do not point at it with"),
+            ("tell you to suggest one", "tell you to offer one"),
+            ("working through several prompts", "working through prompts"),
+            ("done_when ask for one", "done_when ask for it"),
             ("ready to move on", "ready to go on"),
             ("at most three short sentences", "at most three sentences"),
             ("ask the user for their own idea first", "ask the user for an idea first"),
             ("ask the step's next question directly", "ask the step's next question"),
-            ("Never refer to it only as", "Never refer to it as"),
         ):
             run.cached_prompt = prompt.replace(phrase, broken, 1)
             run.save(update_fields=["cached_prompt", "updated_at"])

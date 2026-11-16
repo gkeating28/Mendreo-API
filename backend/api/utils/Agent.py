@@ -1163,17 +1163,16 @@ STEP_SCOPE_RULES = (
     "that overrides the reply-length line above.\n\n"
 )
 STEP_REFERENCE_RULES = (
-    "When a message refers to something from an earlier step, such as the alternative action, "
-    "the situation, or the worry, say what it is in a few words using the user's own terms. "
-    "Never refer to it only as \"that action\", \"those situations\", or \"that plan\". "
+    "When you refer to something from an earlier step, name it in a few words using the user's own terms. "
+    "Do not point at it only with \"that\" or \"those\". "
     "In any summary or recap, include only what the user said or clearly agreed to. "
     "Do not present an activity or technique you suggested and the user did not accept "
     "as a decision the user made. "
     "Do not ask the user whether they would like to do the step's own next task or "
     "explore the step's topic; ask the step's next question directly. "
-    "When the step asks the user to identify, choose or plan something, ask the user for their own idea first and offer a suggestion only if they say they cannot think of one; do not present a technique or plan and ask the user to agree to it, but if the step's instructions tell you to explain something or to summarise, still do that. "
-    "Keep each message short, at most three short sentences followed by one question, unless the step's instructions require an explanation or a summary; a summary may be longer, but it must still end with the exact sentence \"Do I have that right?\". "
-    "Do not ask whether the user is ready to move on, ready to continue, or ready to work on something, except as the final question of a step that is finished; during a step, just ask the step's next question.\n\n"
+    "When the step asks the user to identify, choose or plan something, ask the user for their own idea first and offer a suggestion only if they say they cannot think of one or the step's instructions tell you to suggest one; do not present a technique or plan and ask the user to agree to it, but if the step's instructions tell you to explain something or to summarise, still do that. "
+    "Keep each message short, at most three short sentences followed by one question, unless the step's instructions require an explanation or a summary, or set a different format, such as explaining, listing, or working through several prompts; a summary may be longer, but it must still end with the exact sentence \"Do I have that right?\". "
+    "Do not ask whether the user is ready to move on, ready to continue, or ready to work on something, except as the final question of a step that is finished, or when the live step's instructions or done_when ask for one; during a step, just ask the step's next question.\n\n"
 )
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
@@ -1686,10 +1685,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             and any(
                 phrase not in cached
                 for phrase in (
-                    "Never refer to it only as",
+                    "Do not point at it only with",
                     "ask the step's next question directly",
                     "ask the user for their own idea first",
+                    "tell you to suggest one",
+                    "working through several prompts",
                     "at most three short sentences",
+                    "done_when ask for one",
                     "ready to move on",
                 )
             )
