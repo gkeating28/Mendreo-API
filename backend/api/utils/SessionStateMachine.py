@@ -203,6 +203,14 @@ def on_model_turn(session, agent_message, response) -> None:
                 asks = False
                 accepted_goal = False
 
+        if (
+            session_step is not None
+            and session_step.goal_met_at is not None
+            and _is_last_step(session)
+        ):
+            _enter_awaiting_ready(session, agent_message, session_step)
+            return
+
         if not asks or session_step is None or session_step.goal_met_at is None:
             _drop_unaccepted_ready_chips(agent_message, text)
             return
@@ -394,9 +402,10 @@ def _confirm_typed_ready(session, user_message, *, last_step, summary_confirmed,
 
 
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
-    """An affirmation that meets done_when completes a step that is not the last.
+    """An affirmation after a summary question completes a step that is not the last.
 
-    The last step returns here so the chat model can ask whether they are ready to finish.
+    The previous assistant message has to be that summary question. The last
+    step returns here so the chat model can ask whether they are ready to finish.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -415,13 +424,11 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     if not (getattr(session_step.step, "done_when", None) or "").strip():
         return None
 
-    from .summary_confirmation import is_summary_confirmation, summary_confirmation_required
+    from .summary_confirmation import is_summary_confirmation
 
-    done_when = session_step.step.done_when or ""
-    if summary_confirmation_required(done_when):
-        previous = _last_agent_message(session, before=user_message)
-        if previous is None or not is_summary_confirmation(previous.text or ""):
-            return None
+    previous = _last_agent_message(session, before=user_message)
+    if previous is None or not is_summary_confirmation(previous.text or ""):
+        return None
 
     from .extraction import check_done_when
 
