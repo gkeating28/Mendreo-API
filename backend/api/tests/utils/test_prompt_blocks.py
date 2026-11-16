@@ -244,6 +244,10 @@ class PromptBlockTests(TestCase):
         for sentence in (
             "Done when lists what this step needs. Once every part is covered, stop asking about it and move on to the summary if the instructions call for one. Do not ask questions the step's instructions do not name.",
             "Only ask whether they are ready for the next step when every part of Done when is covered. If a part is not covered yet, continue with this step's instructions for it.",
+            "Ask whether they are ready for the next step only once, and make it the only question in that message.",
+            "Once a summary has been confirmed, do not summarise again.",
+            "Do not repeat a question the user has already answered.",
+            "Your first message must be the first question in those instructions.",
             "If the user raises something that belongs to a later step, acknowledge it in a few words, say you will come to it later, then continue with this step's next instruction.",
         ):
             self.assertIn(sentence, exercise_a)

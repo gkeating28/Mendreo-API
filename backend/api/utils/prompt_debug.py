@@ -49,8 +49,8 @@ _SPECS = (
     {
         "label": "step_scope_rules",
         "applies": (
-            "exercise only; the first-message sentence is omitted "
-            "on the no-check-in opening turn"
+            "exercise only; the first-message sentence is included "
+            "only on the first turn of a step"
         ),
         "module": "api.utils.Agent",
         "name": "STEP_SCOPE_RULES",

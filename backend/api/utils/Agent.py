@@ -944,6 +944,9 @@ STEP_SCOPE_RULES = (
     "Do not ask questions the step's instructions do not name. "
     "Only ask whether they are ready for the next step when every part of Done when is covered. "
     "If a part is not covered yet, continue with this step's instructions for it. "
+    "Ask whether they are ready for the next step only once, and make it the only question in that message. "
+    "Once a summary has been confirmed, do not summarise again. "
+    "Do not repeat a question the user has already answered. "
     "If the user raises something that belongs to a later step, acknowledge it in a few words, "
     "say you will come to it later, then continue with this step's next instruction.\n\n"
 )
@@ -1364,6 +1367,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
     bare_opening = _session_is_bare_opening(session)
+    step_has_reply = _live_step_has_agent_reply(session)
     source_block = _source_run_background(session)
     from .ExerciseOffer import recent_exercise_offer_block
 
@@ -1458,6 +1462,14 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "Done when lists what this step needs." not in cached
             or "Only ask whether they are ready for the next step when every part of Done when is covered."
             not in cached
+            or "Ask whether they are ready for the next step only once, and make it the only question in that message."
+            not in cached
+            or "Once a summary has been confirmed, do not summarise again." not in cached
+            or "Do not repeat a question the user has already answered." not in cached
+        )
+        wants_first_sentence = step_live and not step_has_reply
+        stale_first_message = step_live and (
+            (_FIRST_MESSAGE_SENTENCE.strip() in cached) != wants_first_sentence
         )
         stale_exercise_description = step_live and "Clinical background only." in cached
         stale_pending_outline = step_live and "<STATUS>pending</STATUS>" in cached
@@ -1484,6 +1496,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_step_rules,
             stale_exercise_description,
             stale_pending_outline,
+            stale_first_message,
         )):
             return cached
         session.cached_prompt = None
@@ -1566,7 +1579,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                     exercise, session, token_context, only_index, steps=steps
                 )
                 exercise_steps = _step_already_started(
-                    step_no, live_steps_no, bare_opening=bare_opening
+                    step_no,
+                    live_steps_no,
+                    bare_opening=bare_opening,
+                    step_started=step_has_reply,
                 ) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
@@ -1811,10 +1827,31 @@ def _session_is_bare_opening(session) -> bool:
     return is_bare_opening(False, step_no, stored)
 
 
-def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = False) -> str:
+def _live_step_has_agent_reply(session) -> bool:
+    """True once an agent reply is stored on the live step."""
+    if not getattr(session, "exercise_id", None) or session.in_pre_exercise_phase():
+        return False
+    step_no = session.current_step_no or 1
+    from ..message.models import Message
+
+    return Message.objects.filter(
+        session=session,
+        sender__agent__isnull=False,
+        step_no=step_no,
+    ).exists()
+
+
+def _step_already_started(
+    step_no: int,
+    steps_no: int,
+    *,
+    bare_opening: bool = False,
+    step_started: bool = False,
+) -> str:
     scope = STEP_SCOPE_RULES
-    if bare_opening and step_no <= 1:
+    if step_started:
         scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
+    if bare_opening and step_no <= 1:
         return scope
     if step_no <= 1:
         return (

@@ -169,6 +169,74 @@ class Wp5StepRenderingTests(BaseTest):
         )
         self.assertIn("<EXERCISES>", chat_prompt)
 
+    def test_first_message_sentence_is_only_on_the_first_turn(self):
+        from ...message.models import Message
+        from ...participant.models import Participant
+
+        exercise = General.create_exercise()
+        _replace_steps(exercise)
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            current_step_no=3,
+            total_steps_no=5,
+            state="step_active",
+        )
+        SessionStep.create(session, exercise)
+        sentence = "Your first message must be the first question in those instructions."
+        first = _prepare_prompt(session)
+        self.assertIn(sentence, first)
+        self.assertIn("You are already on step 3 of 5.", first)
+        _, agent_sender = Participant.create_participants(session)
+        Message.objects.create(
+            session=session,
+            sender=agent_sender,
+            text="Opening question.",
+            step_no=1,
+        )
+        still_first = _prepare_prompt(session)
+        self.assertIn(sentence, still_first)
+        Message.objects.create(
+            session=session,
+            sender=agent_sender,
+            text="Opening question.",
+            step_no=3,
+        )
+        session.cached_prompt = still_first
+        session.save(update_fields=["cached_prompt", "updated_at"])
+        later = _prepare_prompt(session)
+        self.assertNotIn(sentence, later)
+        self.assertIn("You are already on step 3 of 5.", later)
+        self.assertIn(
+            "Ask whether they are ready for the next step only once, and make it the only question in that message.",
+            later,
+        )
+
+    def test_a_cached_prompt_missing_the_scope_sentences_is_rebuilt(self):
+        exercise = General.create_exercise()
+        session = Session.objects.create(
+            consumer=self.consumer_one,
+            exercise=exercise,
+            current_step_no=1,
+            total_steps_no=exercise.steps_no,
+            state="step_active",
+        )
+        fresh = _prepare_prompt(session)
+        sentence = "Do not repeat a question the user has already answered."
+        self.assertIn(sentence, fresh)
+        session.cached_prompt = fresh.replace(sentence, "")
+        session.save(update_fields=["cached_prompt", "updated_at"])
+        rebuilt = _prepare_prompt(session)
+        self.assertIn(sentence, rebuilt)
+        self.assertIn(
+            "Once a summary has been confirmed, do not summarise again.",
+            rebuilt,
+        )
+        self.assertIn(
+            "Ask whether they are ready for the next step only once, and make it the only question in that message.",
+            rebuilt,
+        )
+
     def test_live_step_script_includes_title_instructions_and_reference(self):
         from ...utils.Agent import _current_step_instructions
 
