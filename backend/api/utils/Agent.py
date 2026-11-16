@@ -920,7 +920,7 @@ DESCRIPTION_PREFIX = (
 )
 STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
-    "Steps in <STEP_OUTLINE> are context only. Do not start them. "
+    "Completed steps in <STEP_OUTLINE> are context only. "
     "Do only what this step's instructions tell you to do. "
     "Those instructions are the only task for this turn. "
     "Do not offer a technique, strategy, practice, grounding, or breathing exercise "
@@ -1460,6 +1460,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             not in cached
         )
         stale_exercise_description = step_live and "Clinical background only." in cached
+        stale_pending_outline = step_live and "<STATUS>pending</STATUS>" in cached
         if not any((
             stale_placeholders,
             stale_click,
@@ -1482,6 +1483,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_listen,
             stale_step_rules,
             stale_exercise_description,
+            stale_pending_outline,
         )):
             return cached
         session.cached_prompt = None
@@ -1829,7 +1831,7 @@ def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = F
 
 
 def _render_state_machine_steps(exercise, session, token_context, live_index, steps=None) -> str:
-    """Live step in full. Every other step is a title outline."""
+    """Live step in full. Completed steps are a title outline."""
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
@@ -1840,11 +1842,14 @@ def _render_state_machine_steps(exercise, session, token_context, live_index, st
     for i, step in enumerate(ordered):
         number = i + 1
         if i != live_index:
+            status = statuses.get(step.id, "pending")
+            if status == "pending":
+                continue
             blocks.append(
                 "<STEP_OUTLINE>\n"
                 f"    <NO>{number}</NO>\n"
                 f"    <NAME>{step.title}</NAME>\n"
-                f"    <STATUS>{statuses.get(step.id, 'pending')}</STATUS>\n"
+                f"    <STATUS>{status}</STATUS>\n"
                 "</STEP_OUTLINE>"
             )
             continue
