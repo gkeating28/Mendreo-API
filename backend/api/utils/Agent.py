@@ -942,6 +942,8 @@ STEP_SCOPE_RULES = (
     "Done when lists what this step needs. Once every part is covered, stop asking about it "
     "and move on to the summary if the instructions call for one. "
     "Do not ask questions the step's instructions do not name. "
+    "Only ask whether they are ready for the next step when every part of Done when is covered. "
+    "If a part is not covered yet, continue with this step's instructions for it. "
     "If the user raises something that belongs to a later step, acknowledge it in a few words, "
     "say you will come to it later, then continue with this step's next instruction.\n\n"
 )
@@ -1452,8 +1454,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         )
         step_live = bool(session.exercise_id) and not session.in_pre_exercise_phase()
         stale_listen = step_live and "simply listen and invite reflection" in cached
-        stale_step_rules = (
-            step_live and "Done when lists what this step needs." not in cached
+        stale_step_rules = step_live and (
+            "Done when lists what this step needs." not in cached
+            or "Only ask whether they are ready for the next step when every part of Done when is covered."
+            not in cached
         )
         stale_exercise_description = step_live and "Clinical background only." in cached
         if not any((
