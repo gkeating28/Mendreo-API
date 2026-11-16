@@ -204,6 +204,7 @@ def on_model_turn(session, agent_message, response) -> None:
                 accepted_goal = False
 
         if not asks or session_step is None or session_step.goal_met_at is None:
+            _drop_unaccepted_ready_chips(agent_message, text)
             return
 
         _enter_awaiting_ready(session, agent_message, session_step)
@@ -575,9 +576,10 @@ def _confirm_listed_ready(session, user_message, session_step, *, last_step, sum
 def confirm_readiness_reply(user_message) -> ChipOutcome | None:
     """A yes after Toni asked to move on completes the step.
 
-    A phrase from the lists confirms without a model call. Any other reply is
-    read by the model unless an exact yes is required. A clear no stays on
-    this gate and Toni answers. Anything else stays in the chat.
+    The live step's goal must already have been accepted. A phrase from the
+    lists confirms without a model call. Any other reply is read by the model
+    unless an exact yes is required. A clear no stays on this gate and Toni
+    answers. Anything else stays in the chat.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -612,6 +614,8 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
             return _retreat_outcome(session, user_message)
         if verdict != "yes":
             return None
+    if session_step.goal_met_at is None:
+        return None
     return _confirm_listed_ready(
         session,
         user_message,
@@ -973,6 +977,18 @@ def _closing_sentence(text: str) -> str:
     raw = (text or "").strip()
     parts = re.split(r"(?<=[.!])\s+", raw)
     return parts[-1] if parts else ""
+
+
+def _drop_unaccepted_ready_chips(agent_message, text: str) -> None:
+    """Clear reply chips when a readiness question was not accepted."""
+    from .StepProgress import is_advance_gate_text
+
+    if not is_advance_gate_text(text) and not _ends_with_readiness_question(text):
+        return
+    if not getattr(agent_message, "suggested_responses", None):
+        return
+    agent_message.suggested_responses = []
+    agent_message.save(update_fields=["suggested_responses", "updated_at"])
 
 
 def _ends_with_readiness_question(text: str) -> bool:
