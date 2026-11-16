@@ -897,8 +897,7 @@ class GoalGateTests(BaseTest):
         self.assertEqual(len(prompts), 1)
         self.assertNotIn("the location", prompts[0])
         self.assertNotIn(hint, prompts[0])
-        if "<TURN_HINT>" in prompts[0]:
-            self.assertIn("The next part is: Ask for a plan.", prompts[0])
+        self.assertNotIn("The next part is", prompts[0])
 
     def test_goal_hint_is_still_consumed_inside_the_same_step(self):
         session = self._session()
@@ -910,9 +909,30 @@ class GoalGateTests(BaseTest):
         prompted = user_prompt_with_hint(session, user_message)
         self.assertIn("<TURN_HINT>", prompted)
         self.assertIn("the situation", prompted)
+        self.assertNotIn("The next part is", prompted)
         session.refresh_from_db()
         self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
         self.assertEqual(session.current_step_no, 1)
+
+    def test_an_exercise_turn_with_no_other_hint_has_no_turn_hint(self):
+        session = self._session()
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text="What is the worry?",
+            question_kind=Constants.QUESTION_KIND_READINESS,
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the presentation deadline and the bills that follow it.",
+        )
+        prompted = user_prompt_with_hint(session, user_message)
+        self.assertNotIn("The next part is", prompted)
+        self.assertNotIn("<TURN_HINT>", prompted)
+        self.assertEqual(prompted, user_message.text)
 
     def test_ready_chip_drops_the_previous_steps_goal_hint(self):
         session = self._two_steps()
@@ -950,8 +970,7 @@ class GoalGateTests(BaseTest):
         self.assertEqual(len(prompts), 1)
         self.assertNotIn("the plan", prompts[0])
         self.assertNotIn(hint, prompts[0])
-        if "<TURN_HINT>" in prompts[0]:
-            self.assertIn("The next part is: Ask for a plan.", prompts[0])
+        self.assertNotIn("The next part is", prompts[0])
 
     def test_yes_completes_when_the_completion_prompt_fails(self):
         session = self._two_steps()

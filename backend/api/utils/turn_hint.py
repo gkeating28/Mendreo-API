@@ -335,33 +335,8 @@ def finish_after_confirmed_summary_hint(session) -> str | None:
 
 
 def _with_step_sequence(session, body: str) -> str:
-    """Keep an exercise turn on the next written instruction."""
-    if not getattr(session, "exercise_id", None):
-        return body
-    try:
-        in_check_in = session.in_pre_exercise_phase()
-    except Exception:
-        in_check_in = False
-    if in_check_in:
-        return body
-    from .Agent import _current_step_instructions
-    from .step_script import sequence_hint
-    from ..message.models import Message
-
-    instructions = _current_step_instructions(session)
-    if not instructions:
-        return body
-    prior = list(
-        Message.objects.filter(session=session, sender__agent__isnull=False)
-        .order_by("created_at")
-        .values_list("text", flat=True)
-    )
-    hint = sequence_hint(instructions, prior)
-    if not hint:
-        return body
-    if "</TURN_HINT>" in body:
-        return body.replace("</TURN_HINT>", f"\n{hint}\n</TURN_HINT>", 1)
-    return f"{body}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+    """No guessed next-instruction line is added to the turn hint."""
+    return body
 
 
 def user_prompt_with_hint(session, user_message) -> str:
