@@ -210,7 +210,6 @@ class PromptBlockTests(TestCase):
                 "<CLIENT_SUMMARY>",
                 "<EXERCISE_SUMMARY>",
                 "<KNOWLEDGE>",
-                "<DESCRIPTION>",
                 "<THERAPEUTIC_INSTRUCTIONS>",
                 "<PROGRAMMING_INSTRUCTIONS>",
                 "<EXERCISE>",
@@ -231,6 +230,23 @@ class PromptBlockTests(TestCase):
         self.assertIn(" ".join(step.description.split())[:40], task)
         self.assertLess(exercise_a.index("</DATE>"), exercise_a.rindex("Current task:"))
 
+        self.assertNotIn("<DESCRIPTION>\n", exercise_a)
+        self.assertNotIn("Clinical background only", exercise_a)
+        self.assertNotIn("knowledgeable and caring coach", exercise_a)
+        self.assertIn(
+            "If no clear therapeutic intervention applies, simply listen and invite reflection.",
+            general_a,
+        )
+        self.assertNotIn(
+            "If no clear therapeutic intervention applies, simply listen and invite reflection.",
+            exercise_a,
+        )
+        for sentence in (
+            "Done when lists what this step needs. Once every part is covered, stop asking about it and move on to the summary if the instructions call for one. Do not ask questions the step's instructions do not name.",
+            "If the user raises something that belongs to a later step, acknowledge it in a few words, say you will come to it later, then continue with this step's next instruction.",
+        ):
+            self.assertIn(sentence, exercise_a)
+            self.assertNotIn(sentence, general_a)
         self.assertIn("cognitive restructuring as appropriate", general_a)
         self.assertNotIn("cognitive restructuring as appropriate", exercise_a)
         self.assertNotIn("only as background", exercise_a)

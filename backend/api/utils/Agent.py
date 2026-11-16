@@ -938,7 +938,12 @@ STEP_SCOPE_RULES = (
     "- brainstorm solutions, plans, or who can support them\n"
     "Your first message must be the first question in those instructions. "
     "If this step's instructions ask for a longer reply, such as a summary, "
-    "that overrides the reply-length line above.\n\n"
+    "that overrides the reply-length line above. "
+    "Done when lists what this step needs. Once every part is covered, stop asking about it "
+    "and move on to the summary if the instructions call for one. "
+    "Do not ask questions the step's instructions do not name. "
+    "If the user raises something that belongs to a later step, acknowledge it in a few words, "
+    "say you will come to it later, then continue with this step's next instruction.\n\n"
 )
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
@@ -1445,6 +1450,12 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             and not session.in_pre_exercise_phase()
             and "Current task: step " not in cached
         )
+        step_live = bool(session.exercise_id) and not session.in_pre_exercise_phase()
+        stale_listen = step_live and "simply listen and invite reflection" in cached
+        stale_step_rules = (
+            step_live and "Done when lists what this step needs." not in cached
+        )
+        stale_exercise_description = step_live and "Clinical background only." in cached
         if not any((
             stale_placeholders,
             stale_click,
@@ -1464,6 +1475,9 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_closed_list,
             stale_offer_memory,
             stale_step_focus,
+            stale_listen,
+            stale_step_rules,
+            stale_exercise_description,
         )):
             return cached
         session.cached_prompt = None
@@ -1540,7 +1554,6 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                 if ordered_steps and only_index < len(ordered_steps):
                     live_step = ordered_steps[only_index]
                     live_step_no = step_no
-                description = DESCRIPTION_PREFIX + description
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(
@@ -1608,6 +1621,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     )
     if not up_technique_rule.strip():
         programming_instructions = programming_instructions.replace("        - \n", "", 1)
+    if exercise and not session.in_pre_exercise_phase():
+        programming_instructions = "\n".join(
+            line
+            for line in programming_instructions.splitlines()
+            if "If no clear therapeutic intervention applies, simply listen and invite reflection."
+            not in line
+        ) + "\n"
     if retrieval_on:
         programming_instructions = (
             programming_instructions.rstrip()
@@ -1719,12 +1739,13 @@ def _current_task_line(step, step_no, token_context) -> str:
 def _focus_live_step(prompt: str, step, step_no, token_context) -> str:
     """Put background first and the live step last, then the date and one restatement.
 
-    Check-in and general chat never call this. The step's own title and
-    description are repeated after the date. No other wording is added.
+    Check-in and general chat never call this. The exercise-level description
+    is left out. The step's own title and description are repeated after the date.
     """
     prompt, live = _cut_first(prompt, _LIVE_STEP_BLOCK)
+    prompt, _exercise_description = _cut_first(prompt, _TAG_BLOCK["DESCRIPTION"])
     background = []
-    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE", "DESCRIPTION"):
+    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE"):
         prompt, block = _cut_first(prompt, _TAG_BLOCK[tag])
         if block:
             background.append(block)
