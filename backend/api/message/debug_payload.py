@@ -169,6 +169,31 @@ def hint_ladder(user_prompt: str) -> dict:
     return {"winner": winner, "candidates": candidates}
 
 
+def step_guide_decision(*, flag: bool, missing: str, next_instruction: str, used: bool) -> dict:
+    """One Decisions row for the step guide on this turn."""
+    if used:
+        what = "The step guide was added to the turn hint."
+        why = "A stored guide was waiting for this live step."
+    elif flag:
+        what = "The step guide was not added."
+        why = "No stored guide applied on this turn."
+    else:
+        what = "The step guide was off."
+        why = "The step guide flag was off."
+    return {
+        "type": "step_guide",
+        "fired": bool(used),
+        "what": what,
+        "why": why,
+        "inputs": {
+            "flag": bool(flag),
+            "missing": missing or "",
+            "next_instruction": next_instruction or "",
+            "used": bool(used),
+        },
+    }
+
+
 def step_hold_decision(step_decision) -> dict:
     """One decisions entry from the step_decision already stored on the message."""
     if not isinstance(step_decision, dict):

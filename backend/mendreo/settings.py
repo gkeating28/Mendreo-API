@@ -299,6 +299,11 @@ AI_ASYNC_MESSAGES = os.environ.get('AI_ASYNC_MESSAGES', _ai_async_default).lower
 EXERCISE_RESTATE_STEP_INSTRUCTIONS = os.environ.get(
     'EXERCISE_RESTATE_STEP_INSTRUCTIONS', ''
 ).lower() in ('true', '1', 'yes')
+# When true, a live step gets a per-turn guide from its instructions and done-when.
+# The call runs after the reply is stored. Off makes no extra call.
+EXERCISE_STEP_GUIDE = os.environ.get(
+    'EXERCISE_STEP_GUIDE', ''
+).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.

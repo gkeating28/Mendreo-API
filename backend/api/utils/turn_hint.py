@@ -220,6 +220,41 @@ SUMMARY_CONFIRM_HINT = (
 )
 
 
+_STEP_GUIDE_NEXT = "Next, do this from the step's instructions:"
+_STEP_GUIDE_MISSING = "Still to cover:"
+_STEP_GUIDE_TAIL = (
+    "Ask about one part at a time. "
+    "If the instructions call for a summary, do it last. "
+    "If the user's latest message already covers this, continue with the next instruction."
+)
+
+
+def _ended(text: str) -> str:
+    body = text.rstrip()
+    if body[-1:] not in ".!?":
+        return f"{body}."
+    return body
+
+
+def merge_goal_and_step_guide(goal: str | None, missing: str, next_instruction: str) -> str | None:
+    """Rejection wording stays intact. Empty guide clauses are left out."""
+    goal_text = (goal or "").strip()
+    folded = " ".join(goal_text.split()).lower()
+    nxt = " ".join((next_instruction or "").split())
+    gap = " ".join((missing or "").split())
+    clauses = []
+    if nxt and nxt.lower() not in folded:
+        clauses.append(f"{_STEP_GUIDE_NEXT} {_ended(nxt)}")
+    if gap and gap.lower() not in folded:
+        clauses.append(f"{_STEP_GUIDE_MISSING} {_ended(gap)}")
+    if (nxt or gap) and _STEP_GUIDE_TAIL.lower() not in folded:
+        clauses.append(_STEP_GUIDE_TAIL)
+    guide = " ".join(clauses)
+    if goal_text and guide:
+        return f"{goal_text}\n{guide}"
+    return goal_text or guide or None
+
+
 def goal_hint_text(missing: str) -> str:
     gap = (missing or "").strip() or "what this step still requires"
     return (
@@ -394,6 +429,9 @@ def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
+    guide_waiting = _stored_step_guide(session)
+    if guide_waiting is not None:
+        _note_step_guide(session, guide_waiting, used=False)
     winner = None
     decline = _consume_offer_decline_hint(session)
     if decline:
@@ -415,9 +453,17 @@ def _hinted_user_prompt(session, user_message) -> str:
             body = f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
         else:
             goal = _consume_goal_hint(session)
-            if goal:
-                winner = "goal"
-                body = f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
+            guide = _consume_step_guide(session)
+            merged = merge_goal_and_step_guide(
+                goal,
+                (guide or {}).get("missing") or "",
+                (guide or {}).get("next_instruction") or "",
+            )
+            if guide is not None and merged and merged != (goal or "").strip():
+                _note_step_guide(session, guide, used=True)
+            if merged:
+                winner = "goal" if goal else "step_guide"
+                body = f"{text}\n\n<TURN_HINT>\n{merged}\n</TURN_HINT>"
             else:
                 depth = _consume_depth_hint(session)
                 if depth:
@@ -509,6 +555,10 @@ def _note_hint(session, user_message, prompted: str) -> None:
     ladder = hint_ladder(prompted)
     winner = ladder.get("winner")
     sequence = "The next part is:" in (prompted or "")
+    guide = (
+        "Next, do this from the step's instructions:" in (prompted or "")
+        or "Still to cover:" in (prompted or "")
+    )
     if winner and sequence:
         what = "A priority hint was added, then the next step line."
         why = "The ladder chose a hint, and the step still had a next instruction."
@@ -521,6 +571,9 @@ def _note_hint(session, user_message, prompted: str) -> None:
     elif sequence:
         what = "The next step line was added."
         why = "No ladder hint applied, and the step still had a next instruction."
+    elif guide:
+        what = "The step guide was added."
+        why = "A stored guide was waiting for this live step."
     else:
         what = "No turn hint was added."
         why = "None of the ladder hints applied."
@@ -528,7 +581,7 @@ def _note_hint(session, user_message, prompted: str) -> None:
         session,
         {
             "type": "hint",
-            "fired": bool(winner or sequence),
+            "fired": bool(winner or sequence or guide),
             "what": what,
             "why": why,
             "inputs": {"winner": winner, "sequence": sequence},
@@ -633,6 +686,52 @@ def _nudge_blocked_by_risk(session, text: str) -> bool:
     from .risk import risk_prescreen
 
     return risk_prescreen(text) != Constants.LIVE_RISK_LEVEL_NONE
+
+
+def _live_for_step_guide(session) -> bool:
+    from .extraction import live_exercise_step, step_guide_enabled
+
+    return step_guide_enabled() and live_exercise_step(session) is not None
+
+
+def _stored_step_guide(session) -> dict | None:
+    """The stored guide, or an empty one. None when the flag is off or this is not a live step."""
+    if not _live_for_step_guide(session):
+        return None
+    stored = (getattr(session, "cached_prompt_meta", None) or {}).get("step_guide")
+    if not isinstance(stored, dict):
+        return {"missing": "", "next_instruction": "", "step_no": None}
+    return stored
+
+
+def _note_step_guide(session, stored: dict | None, *, used: bool) -> None:
+    from ..message.debug_payload import step_guide_decision
+    from ..message.turn_prompt import note_turn_decision
+
+    row = stored if isinstance(stored, dict) else {}
+    note_turn_decision(
+        session,
+        step_guide_decision(
+            flag=True,
+            missing=row.get("missing") or "",
+            next_instruction=row.get("next_instruction") or "",
+            used=used,
+        ),
+    )
+
+
+def _consume_step_guide(session) -> dict | None:
+    """Pop a guide that belongs to this step. Empty and foreign guides stay unused."""
+    if not _live_for_step_guide(session):
+        return None
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    stored = meta.get("step_guide")
+    if not isinstance(stored, dict) or stored.get("step_no") != session.current_step_no:
+        return None
+    meta.pop("step_guide", None)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return stored
 
 
 def _consume_goal_hint(session) -> str | None:

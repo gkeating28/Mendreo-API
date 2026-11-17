@@ -294,6 +294,9 @@ class Agent(SmartModel):
             apply_midstep_yes_no_chips(agent_message)
 
         record_step_decision(agent_message)
+        from ..utils.extraction import schedule_step_guide
+
+        schedule_step_guide(session)
 
         if followup.decline_after_agent:
             from ..knowledge.followup import decline_onboarding_followup
