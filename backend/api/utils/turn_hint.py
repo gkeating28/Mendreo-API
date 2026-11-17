@@ -376,12 +376,59 @@ def _with_step_sequence(session, body: str) -> str:
     return body
 
 
+_INSTRUCTIONS_LEAD = "Follow this step's instructions on this reply:"
+
+
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     hinted = _hinted_user_prompt(session, user_message)
     final = _with_step_sequence(session, hinted)
+    final = _with_live_step_instructions(session, final)
     _note_hint(session, user_message, final)
     return final
+
+
+def _hint_restates_instructions() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "EXERCISE_HINT_RESTATES_INSTRUCTIONS", False))
+
+
+def _live_step_instruction_lines(session) -> list[str]:
+    """Resolved instruction lines for a live step. Empty unless the flag is on."""
+    if not _hint_restates_instructions():
+        return []
+    from .extraction import instruction_lines, live_exercise_step
+    from .prompt_blocks import build_token_context, resolve_tokens
+
+    session_step = live_exercise_step(session)
+    if session_step is None:
+        return []
+    context = build_token_context(
+        getattr(session, "consumer", None),
+        getattr(session, "exercise", None),
+        session,
+    )
+    resolved = resolve_tokens(getattr(session_step.step, "instructions", "") or "", context or {})
+    return instruction_lines(resolved)
+
+
+def _with_live_step_instructions(session, body: str) -> str:
+    """Add the live step's instructions to the one turn-hint block."""
+    lines = _live_step_instruction_lines(session)
+    if not lines:
+        return body
+    folded = " ".join((body or "").split()).lower()
+    fresh = [
+        line for line in lines
+        if " ".join(line.split()).lower() not in folded
+    ]
+    if not fresh or _INSTRUCTIONS_LEAD.lower() in folded:
+        return body
+    block = _INSTRUCTIONS_LEAD + "\n" + "\n".join(fresh)
+    if "</TURN_HINT>" in body:
+        return body.replace("</TURN_HINT>", f"{block}\n</TURN_HINT>", 1)
+    return f"{body}\n\n<TURN_HINT>\n{block}\n</TURN_HINT>"
 
 
 def _consume_not_ready_hint(session) -> str | None:
@@ -564,6 +611,7 @@ def _note_hint(session, user_message, prompted: str) -> None:
         "Next, do this from the step's instructions:" in (prompted or "")
         or "Still to cover:" in (prompted or "")
     )
+    restated = _INSTRUCTIONS_LEAD in (prompted or "")
     if winner and sequence:
         what = "A priority hint was added, then the next step line."
         why = "The ladder chose a hint, and the step still had a next instruction."
@@ -582,11 +630,17 @@ def _note_hint(session, user_message, prompted: str) -> None:
     else:
         what = "No turn hint was added."
         why = "None of the ladder hints applied."
+    if restated:
+        if winner or sequence or guide:
+            what = f"{what} The step instructions were added to the hint."
+        else:
+            what = "The step instructions were added to the hint."
+            why = "The live step has instructions and this hint is on."
     note_turn_decision(
         session,
         {
             "type": "hint",
-            "fired": bool(winner or sequence or guide),
+            "fired": bool(winner or sequence or guide or restated),
             "what": what,
             "why": why,
             "inputs": {"winner": winner, "sequence": sequence},

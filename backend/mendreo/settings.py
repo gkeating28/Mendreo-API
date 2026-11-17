@@ -309,6 +309,11 @@ EXERCISE_STEP_GUIDE = os.environ.get(
 EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION = os.environ.get(
     'EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION', 'true'
 ).lower() in ('true', '1', 'yes')
+# When true, a live step's turn hint also includes that step's instructions.
+# Off leaves the turn hint unchanged. Independent of the other exercise flags.
+EXERCISE_HINT_RESTATES_INSTRUCTIONS = os.environ.get(
+    'EXERCISE_HINT_RESTATES_INSTRUCTIONS', ''
+).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.

@@ -189,6 +189,11 @@ class StepGuideTextTests(SimpleTestCase):
         ) as checker:
             check_done_when(None, type("Step", (), {"done_when": "A named worry and a plan."})())
         self.assertIn(_DONE_WHEN_COVERAGE.strip(), checker.call_args.args[0])
+        self.assertIn(
+            "missing must name only parts of DONE_WHEN that are not yet covered, and must never "
+            "name an item from ITEMS, a rule about tone or wording, or anything that is not a part of DONE_WHEN.",
+            prompt,
+        )
 
     def test_next_instruction_is_omitted_when_that_flag_is_off(self):
         with override_settings(
@@ -453,6 +458,87 @@ class StepGuideTests(TestCase):
         on = prompted(True)
         self.assertIn("Next, do this from the step's instructions: Ask when it started.", on)
         self.assertIn("Still to cover: a time.", on)
+
+    def test_live_step_instructions_are_added_to_the_turn_hint_only_when_the_flag_is_on(self):
+        from ...utils.turn_hint import _INSTRUCTIONS_LEAD
+
+        instructions = "Ask {{user.first_name}} where it shows up. Ask when it started."
+        session, _step, user = self._live(instructions=instructions)
+        message = self._user_message(session, user)
+        with override_settings(EXERCISE_HINT_RESTATES_INSTRUCTIONS=False):
+            off = user_prompt_with_hint(session, message)
+        self.assertEqual(off, message.text)
+        self.assertNotIn(_INSTRUCTIONS_LEAD, off)
+
+        capture = Setting.get_or_create_store_turn_prompts()
+        capture.value = "true"
+        capture.save()
+        name = (session.consumer.user.first_name or "").strip()
+        with override_settings(EXERCISE_HINT_RESTATES_INSTRUCTIONS=True):
+            alone = user_prompt_with_hint(session, message)
+        self.assertEqual(alone.count("<TURN_HINT>"), 1)
+        self.assertIn(_INSTRUCTIONS_LEAD, alone)
+        self.assertIn("Ask when it started.", alone)
+        self.assertNotIn("{{user.first_name}}", alone)
+        if name:
+            self.assertIn(name, alone)
+        noted = getattr(session, "_pending_turn_decisions")
+        hint = next(row for row in noted if row["type"] == "hint")
+        self.assertTrue(hint["fired"])
+        self.assertIn("The step instructions were added to the hint.", hint["what"])
+
+        goal_session, _goal_step, goal_user = self._live(instructions=instructions)
+        goal_session.cached_prompt_meta = {"goal_hint": goal_hint_text("a time")}
+        goal_session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        goal_message = self._user_message(goal_session, goal_user)
+        with override_settings(EXERCISE_HINT_RESTATES_INSTRUCTIONS=True):
+            combined = user_prompt_with_hint(goal_session, goal_message)
+        self.assertEqual(combined.count("<TURN_HINT>"), 1)
+        self.assertIn(goal_hint_text("a time"), combined)
+        self.assertIn(_INSTRUCTIONS_LEAD, combined)
+        self.assertEqual(combined.count(_INSTRUCTIONS_LEAD), 1)
+
+        guide_session, _guide_step, guide_user = self._live(
+            instructions="Ask where it shows up. Ask when it started.",
+        )
+        guide_session.cached_prompt_meta = {
+            "step_guide": {
+                "missing": "a time",
+                "next_instruction": "Ask where it shows up.",
+                "step_no": 1,
+            }
+        }
+        guide_session.save(update_fields=["cached_prompt_meta", "updated_at"])
+        guide_message = self._user_message(guide_session, guide_user)
+        with override_settings(
+            EXERCISE_STEP_GUIDE=True,
+            EXERCISE_HINT_RESTATES_INSTRUCTIONS=True,
+        ):
+            guided = user_prompt_with_hint(guide_session, guide_message)
+        self.assertEqual(guided.count("<TURN_HINT>"), 1)
+        self.assertIn("Still to cover: a time.", guided)
+        self.assertEqual(guided.count("Ask where it shows up."), 1)
+        self.assertIn("Ask when it started.", guided)
+        self.assertIn(_INSTRUCTIONS_LEAD, guided)
+
+        empty_session, empty_step, empty_user = self._live()
+        empty_step.instructions = ""
+        empty_step.save(update_fields=["instructions", "updated_at"])
+        empty_message = self._user_message(empty_session, empty_user)
+        with override_settings(EXERCISE_HINT_RESTATES_INSTRUCTIONS=True):
+            empty = user_prompt_with_hint(empty_session, empty_message)
+        self.assertEqual(empty, empty_message.text)
+        self.assertNotIn(_INSTRUCTIONS_LEAD, empty)
+
+        check_in, _check_step, check_user = self._live(step_no=0, instructions=instructions)
+        check_message = self._user_message(check_in, check_user)
+        general, _none, general_user = self._live(exercise=False)
+        general_message = self._user_message(general, general_user)
+        with override_settings(EXERCISE_HINT_RESTATES_INSTRUCTIONS=True):
+            check_prompt = user_prompt_with_hint(check_in, check_message)
+            general_prompt = user_prompt_with_hint(general, general_message)
+        self.assertNotIn(_INSTRUCTIONS_LEAD, check_prompt)
+        self.assertNotIn(_INSTRUCTIONS_LEAD, general_prompt)
 
     def test_check_in_and_general_chat_are_left_alone(self):
         check_in, _step, check_user = self._live(step_no=0)

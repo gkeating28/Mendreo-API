@@ -290,6 +290,8 @@ def check_step_guide(session, step) -> dict | None:
                 "DONE_WHEN is what still needs to be covered from the user's own words.\n"
                 "missing names which parts of DONE_WHEN are not yet covered, in the user's context. "
                 f"{_DONE_WHEN_COVERAGE}"
+                "missing must name only parts of DONE_WHEN that are not yet covered, and must never "
+                "name an item from ITEMS, a rule about tone or wording, or anything that is not a part of DONE_WHEN. "
                 "Leave missing empty when every part is covered.\n"
                 f"{next_guidance}\n"
                 f"ITEMS:\n{listed}\n\n"
