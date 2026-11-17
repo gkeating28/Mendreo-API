@@ -1,5 +1,6 @@
 import re
 
+from django.test import override_settings
 from django.utils import timezone
 from freezegun import freeze_time
 
@@ -228,6 +229,7 @@ class PromptBlockTests(TestCase):
         step = exercise.steps.order_by("order").first()
         self.assertTrue(task.startswith(f"Current task: step 1, {step.title}."))
         self.assertIn(" ".join(step.description.split())[:40], task)
+        self.assertNotIn("Follow these instructions on this turn:", task)
         self.assertLess(exercise_a.index("</DATE>"), exercise_a.rindex("Current task:"))
 
         self.assertNotIn("<DESCRIPTION>\n", exercise_a)
@@ -435,3 +437,45 @@ class PromptBlockTests(TestCase):
         finished_prompt = _prepare_prompt(finished)
         self.assertNotIn("exact <NAME>", finished_prompt)
         self.assertEqual(_prepare_prompt(finished), finished_prompt)
+
+    def test_current_task_restates_instructions_only_when_the_flag_is_on(self):
+        from ...message.debug_payload import prompt_layers
+
+        exercise = General.create_exercise()
+        step = exercise.steps.order_by("order").first()
+        step.instructions = "Name one worry, then wait."
+        step.save(update_fields=["instructions", "updated_at"])
+        session = Session.objects.create(
+            consumer=self.consumer,
+            exercise=exercise,
+            current_step_no=1,
+            completed=False,
+            total_steps_no=exercise.steps_no or 1,
+        )
+        lead = "Follow these instructions on this turn: Name one worry, then wait."
+
+        off = _prepare_prompt(session)
+        off_line = off.rstrip().splitlines()[-1]
+        self.assertTrue(off_line.startswith(f"Current task: step 1, {step.title}."))
+        self.assertNotIn(lead, off)
+        self.assertIn("<INSTRUCTIONS>Name one worry, then wait.</INSTRUCTIONS>", off)
+
+        session.cached_prompt = None
+        session.cached_prompt_meta = {}
+        session.save(update_fields=["cached_prompt", "cached_prompt_meta", "updated_at"])
+        with override_settings(EXERCISE_RESTATE_STEP_INSTRUCTIONS=True):
+            on = _prepare_prompt(session)
+        on_line = on.rstrip().splitlines()[-1]
+        self.assertTrue(on_line.startswith(f"Current task: step 1, {step.title}."))
+        self.assertTrue(on_line.endswith(lead))
+        self.assertLess(on.index("</DATE>"), on.rindex("Current task:"))
+        self.assertEqual(on.rstrip().splitlines()[-1], on_line)
+        other = next(layer for layer in prompt_layers(on, "") if layer["label"] == "Other")
+        self.assertIn(lead, other["text"])
+
+        with override_settings(EXERCISE_RESTATE_STEP_INSTRUCTIONS=False):
+            rebuilt = _prepare_prompt(session)
+        self.assertNotIn(lead, rebuilt)
+        self.assertTrue(
+            rebuilt.rstrip().splitlines()[-1].startswith(f"Current task: step 1, {step.title}.")
+        )

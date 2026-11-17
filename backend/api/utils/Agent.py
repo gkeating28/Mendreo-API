@@ -30,6 +30,7 @@ from .reply_style import normalise_reply, reply_ends_mid_sentence, reply_leaves_
 from .completion import is_usable_completion_result, pick_completion_result_from_texts
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
+_RESTATE_INSTRUCTIONS_LEAD = "Follow these instructions on this turn:"
 STATIC_FILES_DIR = 'api/utils/files'
 SUMMARY_RESPONSE_SCHEMA = SummaryAiResponse
 SESSION_RESPONSE_SCHEMA = SessionAiResponse
@@ -1473,6 +1474,10 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         )
         stale_exercise_description = step_live and "Clinical background only." in cached
         stale_pending_outline = step_live and "<STATUS>pending</STATUS>" in cached
+        stale_restate = step_live and (
+            bool(meta.get("restate_step_instructions"))
+            != _restate_step_instructions_enabled()
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -1497,6 +1502,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_exercise_description,
             stale_pending_outline,
             stale_first_message,
+            stale_restate,
         )):
             return cached
         session.cached_prompt = None
@@ -1684,6 +1690,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["state_machine"] = _state_machine_enabled()
     meta["retrieval_instruction"] = retrieval_on
     meta["bare_opening"] = bare_opening
+    meta["restate_step_instructions"] = _restate_step_instructions_enabled()
     meta["source_run_block"] = source_block
     if _general_chat_offers_enabled(session):
         meta["exercise_offers_block"] = offer_block
@@ -1747,6 +1754,12 @@ def _one_line(text: str) -> str:
     return " ".join((text or "").split())
 
 
+def _restate_step_instructions_enabled() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "EXERCISE_RESTATE_STEP_INSTRUCTIONS", False))
+
+
 def _current_task_line(step, step_no, token_context) -> str:
     from .prompt_blocks import resolve_tokens
 
@@ -1755,6 +1768,11 @@ def _current_task_line(step, step_no, token_context) -> str:
     line = f"Current task: step {step_no}, {name}."
     if description:
         line = f"{line} {description}"
+    instructions = _one_line(
+        resolve_tokens(getattr(step, "instructions", "") or "", token_context or {})
+    )
+    if _restate_step_instructions_enabled() and instructions:
+        line = f"{line} {_RESTATE_INSTRUCTIONS_LEAD} {instructions}"
     return line
 
 
@@ -1763,6 +1781,8 @@ def _focus_live_step(prompt: str, step, step_no, token_context) -> str:
 
     Check-in and general chat never call this. The exercise-level description
     is left out. The step's own title and description are repeated after the date.
+    The step's instructions are repeated on that same line only when the
+    restatement flag is on.
     """
     prompt, live = _cut_first(prompt, _LIVE_STEP_BLOCK)
     prompt, _exercise_description = _cut_first(prompt, _TAG_BLOCK["DESCRIPTION"])
