@@ -376,7 +376,12 @@ def _with_step_sequence(session, body: str) -> str:
     return body
 
 
-_INSTRUCTIONS_LEAD = "Follow this step's instructions on this reply:"
+_INSTRUCTIONS_LEAD = (
+    "Follow this step's instructions on this reply. "
+    "An instruction that applies only if the user says or does something in particular "
+    "(for example one that says if, when, or when asked) is to be done only when that happens, "
+    "not on every reply:"
+)
 
 
 def user_prompt_with_hint(session, user_message) -> str:

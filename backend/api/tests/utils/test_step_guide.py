@@ -462,6 +462,13 @@ class StepGuideTests(TestCase):
     def test_live_step_instructions_are_added_to_the_turn_hint_only_when_the_flag_is_on(self):
         from ...utils.turn_hint import _INSTRUCTIONS_LEAD
 
+        self.assertEqual(
+            _INSTRUCTIONS_LEAD,
+            "Follow this step's instructions on this reply. "
+            "An instruction that applies only if the user says or does something in particular "
+            "(for example one that says if, when, or when asked) is to be done only when that happens, "
+            "not on every reply:",
+        )
         instructions = "Ask {{user.first_name}} where it shows up. Ask when it started."
         session, _step, user = self._live(instructions=instructions)
         message = self._user_message(session, user)
