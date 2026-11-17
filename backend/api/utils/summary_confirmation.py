@@ -66,27 +66,96 @@ def is_summary_confirmation(text: str) -> bool:
     return bool(_ASK.search(_final_sentence(raw)))
 
 
+def _affirm_text(text: str) -> str:
+    return " ".join(
+        (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
+    ).rstrip(".!")
+
+
 def matches_summary_affirmation(text: str) -> bool:
     """The fixed agreement words. Editing ready phrases does not change this."""
-    normalized = " ".join(
-        (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
-    )
-    return normalized.rstrip(".!") in Constants.SUMMARY_AFFIRMATIONS
+    return _affirm_text(text) in Constants.SUMMARY_AFFIRMATIONS
 
 
 def is_summary_affirmation(text: str) -> bool:
-    """A short agreement after a summary. Used only by summary_was_confirmed."""
+    """A short agreement after a summary."""
     if matches_summary_affirmation(text):
         return True
-    raw = " ".join(
-        (text or "").strip().lower().replace("\u2019", "'").replace("\u2018", "'").split()
-    ).rstrip(".!")
+    raw = _affirm_text(text)
     words = raw.split()
     if not words or len(words) > 10:
         return False
     if _SUMMARY_AFFIRM_BLOCK.search(raw):
         return False
     return bool(_SUMMARY_AFFIRM_START.match(raw))
+
+
+def summary_reply_declines(text: str) -> bool:
+    """The existing block: a reply that says no, not, but, except, change, or wrong."""
+    return bool(_SUMMARY_AFFIRM_BLOCK.search(_affirm_text(text)))
+
+
+SUMMARY_CONFIRM_EXPECT_STEP = "summary_confirm_expect_step"
+SUMMARY_CONFIRM_MESSAGE_ID = "summary_confirm_message_id"
+SUMMARY_CONFIRM_STEP_NO = "summary_confirm_step_no"
+
+
+def note_held_summary(session, meta: dict, agent_message, *, met: bool) -> None:
+    """Mark this question when the hold is a summary. Otherwise wait for the next one."""
+    text = (getattr(agent_message, "text", None) or "").strip()
+    step_no = session.current_step_no or 1
+    if met and getattr(agent_message, "id", None) and text.endswith("?"):
+        meta[SUMMARY_CONFIRM_MESSAGE_ID] = str(agent_message.id)
+        meta[SUMMARY_CONFIRM_STEP_NO] = step_no
+        meta.pop(SUMMARY_CONFIRM_EXPECT_STEP, None)
+        return
+    meta[SUMMARY_CONFIRM_EXPECT_STEP] = step_no
+
+
+def mark_expected_summary_question(session, agent_message) -> None:
+    """If the reply expected after a non-question hold ends with ?, remember its id."""
+    meta = dict(session.cached_prompt_meta or {})
+    if SUMMARY_CONFIRM_EXPECT_STEP not in meta:
+        return
+    expected = meta.pop(SUMMARY_CONFIRM_EXPECT_STEP, None)
+    step_no = session.current_step_no or 1
+    try:
+        expected_no = int(expected)
+    except (TypeError, ValueError):
+        expected_no = None
+    text = (getattr(agent_message, "text", None) or "").strip()
+    if (
+        expected_no == step_no
+        and getattr(agent_message, "id", None)
+        and text.endswith("?")
+    ):
+        meta[SUMMARY_CONFIRM_MESSAGE_ID] = str(agent_message.id)
+        meta[SUMMARY_CONFIRM_STEP_NO] = step_no
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+
+
+def is_recorded_summary_confirmation(session, message) -> bool:
+    if message is None or not getattr(message, "id", None):
+        return False
+    meta = session.cached_prompt_meta or {}
+    if str(meta.get(SUMMARY_CONFIRM_MESSAGE_ID) or "") != str(message.id):
+        return False
+    try:
+        marked_step = int(meta.get(SUMMARY_CONFIRM_STEP_NO) or 0)
+    except (TypeError, ValueError):
+        return False
+    return marked_step == (session.current_step_no or 1)
+
+
+def structural_summary_reply_confirms(text: str) -> bool:
+    """A typed reply or a tapped chip. Both have to be a short agreement.
+
+    The decline words (no, not, but, except, change, wrong) still refuse it.
+    """
+    if summary_reply_declines(text):
+        return False
+    return is_summary_affirmation(text)
 
 
 def summary_was_confirmed(session, step) -> bool:
