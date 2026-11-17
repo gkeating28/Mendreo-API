@@ -14,6 +14,7 @@ from ...utils.SessionStateMachine import confirm_summary_if_done, on_model_turn
 from ...utils.summary_confirmation import (
     SUMMARY_CONFIRM_EXPECT_STEP,
     SUMMARY_CONFIRM_MESSAGE_ID,
+    is_summary_confirmation,
     summary_was_confirmed,
 )
 from ...utils.turn_hint import SUMMARY_CONFIRM_HINT
@@ -28,6 +29,11 @@ _SUMMARY = (
 _PHRASE_SUMMARY = (
     "So, to recap, you worry about missing deadlines and losing your job, "
     "and it comes up at night when you are alone. Did I capture that accurately?"
+)
+_GOT_IT = (
+    "You are worried about losing your job because of layoffs, "
+    "which makes it hard to switch off at night. "
+    "Have I got that right, indeed?"
 )
 
 
@@ -102,6 +108,16 @@ class _SummaryFixture(BaseTest):
         )
         self.assertNotIn(SUMMARY_CONFIRM_EXPECT_STEP, session.cached_prompt_meta)
         return message
+
+    def _unmarked_summary(self, session, text=_GOT_IT):
+        """A summary question the model did not claim was done, so nothing is marked."""
+        self.assertTrue(is_summary_confirmation(text))
+        return Message.objects.create(
+            session=session,
+            sender=self._agent(session),
+            text=text,
+            reasoning="test",
+        )
 
     def _user(self, session, text):
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
@@ -219,6 +235,49 @@ class StructuralSummaryConfirmTests(_SummaryFixture):
             outcome = confirm_summary_if_done(self._user(session, "yes"))
         self.assertIsNotNone(outcome)
         self._assert_advanced(session)
+
+    def test_an_unmarked_summary_accepts_yes_that_is_right(self):
+        for reply in ("Yes, that is right", "yes"):
+            session = self._session()
+            with self._quiet():
+                self._unmarked_summary(session)
+                self.assertNotIn(
+                    SUMMARY_CONFIRM_MESSAGE_ID, session.cached_prompt_meta or {}
+                )
+                outcome = confirm_summary_if_done(self._user(session, reply))
+            self.assertIsNotNone(outcome, reply)
+            self._assert_advanced(session)
+
+    def test_an_unmarked_summary_refuses_a_correction(self):
+        for reply in ("no, it's also about money", "yes but change the second part"):
+            session = self._session()
+            with self._quiet():
+                self._unmarked_summary(session)
+                outcome = confirm_summary_if_done(self._user(session, reply))
+            self.assertIsNone(outcome, reply)
+            self._assert_open(session)
+
+    def test_an_unmarked_summary_stays_open_when_done_when_is_not_met(self):
+        session = self._session()
+        with self._quiet():
+            self._unmarked_summary(session)
+            with patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": False, "missing": "a time"},
+            ) as checker:
+                outcome = confirm_summary_if_done(self._user(session, "Yes, that is right"))
+        checker.assert_called_once()
+        self.assertIsNone(outcome)
+        self._assert_open(session)
+
+    def test_an_unmarked_summary_does_not_complete_the_last_step(self):
+        session = self._session(steps=1)
+        with self._quiet() as (greeting, _chat, _queued):
+            self._unmarked_summary(session)
+            outcome = confirm_summary_if_done(self._user(session, "Yes, that is right"))
+        self.assertIsNone(outcome)
+        greeting.assert_not_called()
+        self._assert_open(session)
 
     def test_last_step_stays_open(self):
         session = self._session(steps=1)

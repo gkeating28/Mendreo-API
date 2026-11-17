@@ -454,6 +454,7 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
         return None
     from .summary_confirmation import (
         is_recorded_summary_confirmation,
+        is_summary_confirmation,
         structural_summary_reply_confirms,
     )
 
@@ -463,19 +464,13 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
             return None
         return _complete_recorded_summary(session, user_message)
 
-    from .summary_confirmation import matches_summary_affirmation
-
-    if not matches_summary_affirmation(user_message.text or ""):
+    if not structural_summary_reply_confirms(user_message.text or ""):
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
         return None
     if not (getattr(session_step.step, "done_when", None) or "").strip():
         return None
-
-    from .summary_confirmation import is_summary_confirmation
-
-    previous = _last_agent_message(session, before=user_message)
     if previous is None or not is_summary_confirmation(previous.text or ""):
         return None
 
