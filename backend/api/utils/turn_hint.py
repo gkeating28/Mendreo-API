@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from . import Constants
+
+logger = logging.getLogger(__name__)
 
 _TRAILING_ELLIPSIS = re.compile(r"(?:\s*(?:\.{3}|…))+\s*$")
 
@@ -53,8 +56,20 @@ ABOUT_THE_USER_HINT = (
     "plus anything {user_name} has told you earlier in this chat. Use only that. "
     "Do not guess or add anything else, such as age, hobbies, routines or feelings "
     "that are not written there. Answer in two sentences, naming one or two specific "
-    "things from it. Do not say you have no information. Then ask one simple question."
+    "things from it. Do not say you have no information. Then ask one simple question. "
+    "Answer in the same voice and style as the rest of this chat."
 )
+EXERCISE_NUDGE_HINT = (
+    "If a suitable exercise fits what the person has shared, offer one now: "
+    "call get_exercise first, then offer it in your own words and ask if they "
+    "would like to try it. If nothing fits yet, carry on and end with a gentle "
+    "question. Use the same voice you have been using in this chat, including "
+    "any style the person has asked for."
+)
+_EXERCISE_NUDGE_LIMIT = 2
+_EXERCISE_NUDGE_GAP = 3
+_NUDGES_SENT_KEY = "exercise_nudges_sent"
+_NUDGE_LAST_AT_KEY = "exercise_nudge_last_at"
 
 
 def normalize_question_kind(value) -> str:
@@ -165,8 +180,14 @@ def thin_answer_catalogue_text() -> str:
     )
 
 
-def turn_hint_text(previous, user_text: str) -> str | None:
-    """Hint for this model call only. None unless the previous question was open."""
+def turn_hint_text(previous, user_text: str, session=None) -> str | None:
+    """Hint for this model call only. None unless the previous question was open.
+
+    General chat has no live step, so the thin-answer hints stay off there.
+    ``thin_answer_hint_enabled`` still defaults to on for exercise sessions.
+    """
+    if session is not None and not getattr(session, "exercise_id", None):
+        return None
     from ..setting.models import Setting
 
     if not Setting.get_thin_answer_hint_enabled():
@@ -199,11 +220,48 @@ SUMMARY_CONFIRM_HINT = (
 )
 
 
+_STEP_GUIDE_NEXT = "Next, do this from the step's instructions:"
+_STEP_GUIDE_MISSING = "Still to cover:"
+_STEP_GUIDE_TAIL = (
+    "Ask about one part at a time. "
+    "If the instructions call for a summary, do it last. "
+    "If the user's latest message already covers this, continue with the next instruction."
+)
+
+
+def _ended(text: str) -> str:
+    body = text.rstrip()
+    if body[-1:] not in ".!?":
+        return f"{body}."
+    return body
+
+
+def merge_goal_and_step_guide(goal: str | None, missing: str, next_instruction: str) -> str | None:
+    """Rejection wording stays intact. Empty guide clauses are left out."""
+    goal_text = (goal or "").strip()
+    folded = " ".join(goal_text.split()).lower()
+    nxt = " ".join((next_instruction or "").split())
+    gap = " ".join((missing or "").split())
+    clauses = []
+    if nxt and nxt.lower() not in folded:
+        clauses.append(f"{_STEP_GUIDE_NEXT} {_ended(nxt)}")
+    if gap and gap.lower() not in folded:
+        clauses.append(f"{_STEP_GUIDE_MISSING} {_ended(gap)}")
+    if (nxt or gap) and _STEP_GUIDE_TAIL.lower() not in folded:
+        clauses.append(_STEP_GUIDE_TAIL)
+    guide = " ".join(clauses)
+    if goal_text and guide:
+        return f"{goal_text}\n{guide}"
+    return goal_text or guide or None
+
+
 def goal_hint_text(missing: str) -> str:
     gap = (missing or "").strip() or "what this step still requires"
     return (
         "This step is not done yet. "
-        f"Ask one question that would supply what is still missing: {gap}"
+        f"What is still missing: {gap}. "
+        "Continue with this step's own instructions for that part. "
+        "Do not ask a question those instructions do not name."
     )
 
 
@@ -314,41 +372,68 @@ def finish_after_confirmed_summary_hint(session) -> str | None:
 
 
 def _with_step_sequence(session, body: str) -> str:
-    """Keep an exercise turn on the next written instruction."""
-    if not getattr(session, "exercise_id", None):
-        return body
-    try:
-        in_check_in = session.in_pre_exercise_phase()
-    except Exception:
-        in_check_in = False
-    if in_check_in:
-        return body
-    from .Agent import _current_step_instructions
-    from .step_script import sequence_hint
-    from ..message.models import Message
+    """No guessed next-instruction line is added to the turn hint."""
+    return body
 
-    instructions = _current_step_instructions(session)
-    if not instructions:
-        return body
-    prior = list(
-        Message.objects.filter(session=session, sender__agent__isnull=False)
-        .order_by("created_at")
-        .values_list("text", flat=True)
-    )
-    hint = sequence_hint(instructions, prior)
-    if not hint:
-        return body
-    if "</TURN_HINT>" in body:
-        return body.replace("</TURN_HINT>", f"\n{hint}\n</TURN_HINT>", 1)
-    return f"{body}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
+
+_INSTRUCTIONS_LEAD = (
+    "Follow this step's instructions on this reply. "
+    "An instruction that applies only if the user says or does something in particular "
+    "(for example one that says if, when, or when asked) is to be done only when that happens, "
+    "not on every reply:"
+)
 
 
 def user_prompt_with_hint(session, user_message) -> str:
     """User text plus a turn hint that is not stored on the message."""
     hinted = _hinted_user_prompt(session, user_message)
     final = _with_step_sequence(session, hinted)
+    final = _with_live_step_instructions(session, final)
     _note_hint(session, user_message, final)
     return final
+
+
+def _hint_restates_instructions() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "EXERCISE_HINT_RESTATES_INSTRUCTIONS", False))
+
+
+def _live_step_instruction_lines(session) -> list[str]:
+    """Resolved instruction lines for a live step. Empty unless the flag is on."""
+    if not _hint_restates_instructions():
+        return []
+    from .extraction import instruction_lines, live_exercise_step
+    from .prompt_blocks import build_token_context, resolve_tokens
+
+    session_step = live_exercise_step(session)
+    if session_step is None:
+        return []
+    context = build_token_context(
+        getattr(session, "consumer", None),
+        getattr(session, "exercise", None),
+        session,
+    )
+    resolved = resolve_tokens(getattr(session_step.step, "instructions", "") or "", context or {})
+    return instruction_lines(resolved)
+
+
+def _with_live_step_instructions(session, body: str) -> str:
+    """Add the live step's instructions to the one turn-hint block."""
+    lines = _live_step_instruction_lines(session)
+    if not lines:
+        return body
+    folded = " ".join((body or "").split()).lower()
+    fresh = [
+        line for line in lines
+        if " ".join(line.split()).lower() not in folded
+    ]
+    if not fresh or _INSTRUCTIONS_LEAD.lower() in folded:
+        return body
+    block = _INSTRUCTIONS_LEAD + "\n" + "\n".join(fresh)
+    if "</TURN_HINT>" in body:
+        return body.replace("</TURN_HINT>", f"{block}\n</TURN_HINT>", 1)
+    return f"{body}\n\n<TURN_HINT>\n{block}\n</TURN_HINT>"
 
 
 def _consume_not_ready_hint(session) -> str | None:
@@ -376,11 +461,34 @@ def _consume_not_ready_hint(session) -> str | None:
     return hint
 
 
+def _consume_offer_decline_hint(session) -> str | None:
+    """One-shot hint for a tapped No. Wins over every other hint this turn."""
+    from .ExerciseOffer import OFFER_DECLINE_HINT_KEY, OFFER_DECLINE_TITLE_KEY
+
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if OFFER_DECLINE_HINT_KEY not in meta:
+        return None
+    hint = (meta.pop(OFFER_DECLINE_HINT_KEY) or "").strip()
+    title = meta.get(OFFER_DECLINE_TITLE_KEY)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    if title:
+        session._offer_decline_title = title
+    return hint or None
+
+
 def _hinted_user_prompt(session, user_message) -> str:
     from ..message.models import Message
 
     text = user_message.text or ""
+    guide_waiting = _stored_step_guide(session)
+    if guide_waiting is not None:
+        _note_step_guide(session, guide_waiting, used=False)
     winner = None
+    decline = _consume_offer_decline_hint(session)
+    if decline:
+        _note_thin_answer(session, user_message, "offer_decline")
+        return f"{text}\n\n<TURN_HINT>\n{decline}\n</TURN_HINT>"
     not_ready = _consume_not_ready_hint(session)
     about = None if not_ready else about_the_user_hint(session, text)
     if not_ready:
@@ -397,9 +505,22 @@ def _hinted_user_prompt(session, user_message) -> str:
             body = f"{text}\n\n<TURN_HINT>\n{finish}\n</TURN_HINT>"
         else:
             goal = _consume_goal_hint(session)
-            if goal:
-                winner = "goal"
-                body = f"{text}\n\n<TURN_HINT>\n{goal}\n</TURN_HINT>"
+            guide = _consume_step_guide(session)
+            from .extraction import step_guide_next_instruction_enabled
+
+            next_instruction = (guide or {}).get("next_instruction") or ""
+            if not step_guide_next_instruction_enabled():
+                next_instruction = ""
+            merged = merge_goal_and_step_guide(
+                goal,
+                (guide or {}).get("missing") or "",
+                next_instruction,
+            )
+            if guide is not None and merged and merged != (goal or "").strip():
+                _note_step_guide(session, guide, used=True)
+            if merged:
+                winner = "goal" if goal else "step_guide"
+                body = f"{text}\n\n<TURN_HINT>\n{merged}\n</TURN_HINT>"
             else:
                 depth = _consume_depth_hint(session)
                 if depth:
@@ -411,12 +532,17 @@ def _hinted_user_prompt(session, user_message) -> str:
                         .order_by("-created_at")
                         .first()
                     )
-                    hint = turn_hint_text(previous, text)
+                    hint = turn_hint_text(previous, text, session)
                     if hint:
                         winner = "thin_answer"
                         body = f"{text}\n\n<TURN_HINT>\n{hint}\n</TURN_HINT>"
                     else:
-                        body = text
+                        nudge = _exercise_nudge_hint(session, user_message)
+                        if nudge:
+                            winner = "exercise_nudge"
+                            body = f"{text}\n\n<TURN_HINT>\n{nudge}\n</TURN_HINT>"
+                        else:
+                            body = text
     _note_thin_answer(session, user_message, winner)
     return body
 
@@ -486,6 +612,11 @@ def _note_hint(session, user_message, prompted: str) -> None:
     ladder = hint_ladder(prompted)
     winner = ladder.get("winner")
     sequence = "The next part is:" in (prompted or "")
+    guide = (
+        "Next, do this from the step's instructions:" in (prompted or "")
+        or "Still to cover:" in (prompted or "")
+    )
+    restated = _INSTRUCTIONS_LEAD in (prompted or "")
     if winner and sequence:
         what = "A priority hint was added, then the next step line."
         why = "The ladder chose a hint, and the step still had a next instruction."
@@ -498,19 +629,173 @@ def _note_hint(session, user_message, prompted: str) -> None:
     elif sequence:
         what = "The next step line was added."
         why = "No ladder hint applied, and the step still had a next instruction."
+    elif guide:
+        what = "The step guide was added."
+        why = "A stored guide was waiting for this live step."
     else:
         what = "No turn hint was added."
         why = "None of the ladder hints applied."
+    if restated:
+        if winner or sequence or guide:
+            what = f"{what} The step instructions were added to the hint."
+        else:
+            what = "The step instructions were added to the hint."
+            why = "The live step has instructions and this hint is on."
     note_turn_decision(
         session,
         {
             "type": "hint",
-            "fired": bool(winner or sequence),
+            "fired": bool(winner or sequence or guide or restated),
             "what": what,
             "why": why,
             "inputs": {"winner": winner, "sequence": sequence},
         },
     )
+
+
+def _exercise_nudge_hint(session, user_message) -> str | None:
+    """One general-chat nudge after N person messages, then one more, then stop."""
+    if getattr(session, "exercise_id", None):
+        return None
+    from ..setting.models import Setting
+
+    if not Setting.get_exercise_nudge_enabled():
+        return None
+    from .ExerciseOffer import OFFER_DECLINE_HINT_KEY, OFFER_DECLINE_TITLE_KEY
+
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    if OFFER_DECLINE_HINT_KEY in meta or OFFER_DECLINE_TITLE_KEY in meta:
+        return None
+    if getattr(session, "_offer_decline_title", None):
+        return None
+    if _nudge_blocked_by_risk(session, getattr(user_message, "text", None) or ""):
+        return None
+    if _offer_already_recorded(session):
+        return None
+    try:
+        sent = int(meta.get(_NUDGES_SENT_KEY) or 0)
+    except (TypeError, ValueError):
+        sent = 0
+    if sent >= _EXERCISE_NUDGE_LIMIT:
+        return None
+    count = _person_message_count(session, user_message)
+    if sent == 0:
+        if count < Setting.get_exercise_nudge_after_messages():
+            return None
+    else:
+        try:
+            last_at = int(meta.get(_NUDGE_LAST_AT_KEY) or 0)
+        except (TypeError, ValueError):
+            last_at = 0
+        if count < last_at + _EXERCISE_NUDGE_GAP:
+            return None
+    sent += 1
+    meta[_NUDGES_SENT_KEY] = sent
+    meta[_NUDGE_LAST_AT_KEY] = count
+    session.cached_prompt_meta = meta
+    if getattr(session, "pk", None):
+        session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    logger.info(
+        "general-chat exercise nudge session=%s message=%s count=%s",
+        getattr(session, "id", None),
+        getattr(user_message, "id", None),
+        sent,
+    )
+    return EXERCISE_NUDGE_HINT
+
+
+def _person_message_count(session, user_message) -> int:
+    """This person's saved messages in the session, including the one just sent."""
+    from ..message.models import Message
+
+    count = Message.objects.filter(
+        session=session,
+        sender__consumer__isnull=False,
+    ).count()
+    if not getattr(user_message, "pk", None):
+        return count + 1
+    if not Message.objects.filter(pk=user_message.pk).exists():
+        return count + 1
+    return count
+
+
+def _offer_already_recorded(session) -> bool:
+    """True when this session has offered, declined, or accepted an exercise.
+
+    Offer memory keeps the last five rows and does not drop them when the
+    six-turn prompt window passes. A message that still points at an exercise
+    counts too, including one that has aged out of that list.
+    """
+    for row in (getattr(session, "cached_prompt_meta", None) or {}).get("exercise_offers") or []:
+        if isinstance(row, dict) and row.get("outcome") in {"offered", "declined", "accepted"}:
+            return True
+    from ..message.models import Message
+
+    return Message.objects.filter(session=session, exercise__isnull=False).exists()
+
+
+def _nudge_blocked_by_risk(session, text: str) -> bool:
+    if getattr(session, "closed_at", None):
+        return True
+    live = (getattr(session, "live_risk_level", None) or "").strip().lower()
+    if live and live != Constants.LIVE_RISK_LEVEL_NONE:
+        return True
+    nightly = (getattr(session, "risk_level", None) or "").strip().lower()
+    if nightly in (
+        Constants.RISK_LEVEL_MODERATE,
+        Constants.RISK_LEVEL_HIGH,
+        Constants.RISK_LEVEL_CRITICAL,
+    ):
+        return True
+    from .risk import risk_prescreen
+
+    return risk_prescreen(text) != Constants.LIVE_RISK_LEVEL_NONE
+
+
+def _live_for_step_guide(session) -> bool:
+    from .extraction import live_exercise_step, step_guide_enabled
+
+    return step_guide_enabled() and live_exercise_step(session) is not None
+
+
+def _stored_step_guide(session) -> dict | None:
+    """The stored guide, or an empty one. None when the flag is off or this is not a live step."""
+    if not _live_for_step_guide(session):
+        return None
+    stored = (getattr(session, "cached_prompt_meta", None) or {}).get("step_guide")
+    if not isinstance(stored, dict):
+        return {"missing": "", "next_instruction": "", "step_no": None}
+    return stored
+
+
+def _note_step_guide(session, stored: dict | None, *, used: bool) -> None:
+    from ..message.debug_payload import step_guide_decision
+    from ..message.turn_prompt import note_turn_decision
+
+    row = stored if isinstance(stored, dict) else {}
+    note_turn_decision(
+        session,
+        step_guide_decision(
+            flag=True,
+            missing=row.get("missing") or "",
+            next_instruction=row.get("next_instruction") or "",
+            used=used,
+        ),
+    )
+
+
+def _consume_step_guide(session) -> dict | None:
+    """Pop a guide that belongs to this step. Empty and foreign guides stay unused."""
+    if not _live_for_step_guide(session):
+        return None
+    meta = dict(getattr(session, "cached_prompt_meta", None) or {})
+    stored = meta.get("step_guide")
+    if not isinstance(stored, dict) or stored.get("step_no") != session.current_step_no:
+        return None
+    meta.pop("step_guide", None)
+    session.cached_prompt_meta = meta
+    session.save(update_fields=["cached_prompt_meta", "updated_at"])
+    return stored
 
 
 def _consume_goal_hint(session) -> str | None:

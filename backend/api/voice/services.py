@@ -159,6 +159,18 @@ def require_general_session(session: Session) -> None:
         raise ValidationError({"detail": "This session is no longer active."})
 
 
+def session_closed_for_high_risk(session_id) -> bool:
+    """True after a high-risk close. Completions must not call Gemini again."""
+    from ..utils import Constants
+
+    if not session_id:
+        return False
+    return Session.objects.filter(
+        pk=session_id,
+        close_reason=Constants.CLOSE_REASON_HIGH_RISK,
+    ).exists()
+
+
 def resolve_general_session(consumer, session_id: str | None) -> Session:
     if session_id:
         session = Session.objects.filter(id=session_id, consumer=consumer).first()
@@ -376,6 +388,8 @@ def _generate_agent_reply(grant: VoiceGrant, user_message: Message) -> Message |
     row landed, while generation was in flight. The model reply is dropped
     so it is neither kept nor spoken.
     """
+    if session_closed_for_high_risk(grant.session_id):
+        return None
     source_text = _normalize_voice_text(user_message.text or "")
     session = Session.objects.select_related("consumer", "consumer__agent").get(pk=grant.session_id)
     user_message.session = session
@@ -691,6 +705,10 @@ def iter_completion_sse(grant: VoiceGrant, user_text: str) -> Iterable[bytes]:
     user row changed. A daemon thread + cache lock caused earlier regressions,
     so the wait stays on this request.
     """
+    if session_closed_for_high_risk(grant.session_id):
+        yield from iter_silent_completion_sse()
+        return
+
     created = int(time.time())
     chunk_id = f"chatcmpl-{grant.id}"
     model = "mendreo-toni"

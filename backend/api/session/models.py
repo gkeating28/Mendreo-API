@@ -175,7 +175,7 @@ class Session(SmartModel):
                 completed=False,
                 abandoned=False,
                 authoring_test=False,
-            )
+            ).exclude(close_reason=Constants.CLOSE_REASON_HIGH_RISK)
             if force_new:
                 paused.update(abandoned=True)
             else:
@@ -190,6 +190,8 @@ class Session(SmartModel):
                 created_at__gte=start,
                 created_at__lt=end,
                 authoring_test=False,
+            ).exclude(
+                close_reason=Constants.CLOSE_REASON_HIGH_RISK
             ).order_by("-created_at").first()
 
             if session and not session.completed:
@@ -249,25 +251,36 @@ class Session(SmartModel):
         return session
 
     @staticmethod
-    def create_general(consumer, *, assign_opener=True):
-        """Always create a fresh general chat. Does not reuse today's session."""
+    def create_general(consumer, *, assign_opener=True, defer_first_message=False):
+        """Always create a fresh general chat. Does not reuse today's session.
+
+        ``defer_first_message`` still stores ``session.opener`` for a first
+        general chat, and leaves the assistant row for a later call.
+        """
+        from django.db import transaction
+
         from ..participant.models import Participant
 
-        session = Session.objects.create(
-            consumer=consumer,
-            risk_level=None,
-            exercise=None,
-            completed=None,
-        )
-        from ..grounding.retrieval import stamp_retrieval_enabled
+        with transaction.atomic():
+            session = Session.objects.create(
+                consumer=consumer,
+                risk_level=None,
+                exercise=None,
+                completed=None,
+            )
+            from ..grounding.retrieval import stamp_retrieval_enabled
 
-        stamp_retrieval_enabled(session)
-        Participant.create_participants(session=session)
-        from ..knowledge.followup import maybe_start_onboarding_followup
-        maybe_start_onboarding_followup(session)
-        if assign_opener:
-            _assign_chat_opener(session, consumer)
-        return session
+            stamp_retrieval_enabled(session)
+            Participant.create_participants(session=session)
+            from ..knowledge.followup import maybe_start_onboarding_followup
+            maybe_start_onboarding_followup(session)
+            if assign_opener:
+                _assign_chat_opener(
+                    session,
+                    consumer,
+                    defer_first_message=defer_first_message,
+                )
+            return session
 
     @staticmethod
     def get_with_messages(date, consumer, exercise):
@@ -367,11 +380,42 @@ class SessionMetric(SmartModel):
         ]
 
 
-def _assign_chat_opener(session, consumer) -> None:
+# Stored on the assistant row so a later reader can tell this greeting from a model reply.
+FIRST_CHAT_OPENER_REASONING = "first_chat_opener"
+
+
+def _earlier_general_session(session, consumer) -> bool:
+    """A general chat that already has a message counts. An empty shell does not.
+
+    GET /sessions/today creates a general row with no opener and no messages
+    just to answer "what is today's chat?". That row must not make the next
+    real chat look like a second session.
+    """
+    return (
+        Session.objects.filter(consumer=consumer, exercise__isnull=True)
+        .exclude(pk=session.pk)
+        .exclude(messages_no=0)
+        .exists()
+    )
+
+
+def _assign_chat_opener(session, consumer, *, defer_first_message=False) -> None:
     """Store one rendered opener. An empty list leaves the field null."""
     import random
 
     from ..setting.models import Setting
+
+    user = getattr(consumer, "user", None)
+    first_name = (getattr(user, "first_name", None) or "").strip()
+    first_opener = Setting.get_first_chat_opener()
+    if first_opener and not _earlier_general_session(session, consumer):
+        rendered = _render_chat_opener(first_opener, first_name)
+        session.opener = rendered
+        if defer_first_message:
+            session.save(update_fields=["opener", "updated_at"])
+            return
+        _persist_first_chat_opener(session, rendered)
+        return
 
     templates = []
     for item in Setting.get_chat_openers():
@@ -383,8 +427,6 @@ def _assign_chat_opener(session, consumer) -> None:
     if not templates:
         return
 
-    user = getattr(consumer, "user", None)
-    first_name = (getattr(user, "first_name", None) or "").strip()
     rendered = [_render_chat_opener(template, first_name) for template in templates]
     choices = rendered
     if len(templates) > 1:
@@ -403,6 +445,76 @@ def _assign_chat_opener(session, consumer) -> None:
                 choices = remaining
     session.opener = random.choice(choices)
     session.save(update_fields=["opener", "updated_at"])
+
+
+def _persist_first_chat_opener(session, text: str) -> None:
+    """Save Toni's first line as a real assistant message. No model call.
+
+    ``reasoning`` is the marker. Counters count an agent turn only.
+    """
+    from ..participant.models import Participant
+
+    agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+    if agent is None or not (text or "").strip():
+        session.save(update_fields=["opener", "updated_at"])
+        return
+
+    message = Message.objects.create(
+        session=session,
+        sender=agent,
+        text=text,
+        reasoning=FIRST_CHAT_OPENER_REASONING,
+    )
+    session.last_message = message
+    session.messages_no = 1
+    session.agent_messages_no = 1
+    session.save(
+        update_fields=[
+            "opener",
+            "last_message",
+            "messages_no",
+            "agent_messages_no",
+            "updated_at",
+        ]
+    )
+
+
+def insert_deferred_first_message(session):
+    """Insert the first-chat assistant line once. Returns ``(message, created)``.
+
+    ``(None, False)`` when this session should not receive one. No model call.
+    The caller holds the transaction and the session row lock.
+    """
+    from ..setting.models import Setting
+
+    if session.exercise_id:
+        return None, False
+    existing = (
+        Message.objects.filter(session=session, reasoning=FIRST_CHAT_OPENER_REASONING)
+        .select_related("sender")
+        .first()
+    )
+    if existing is not None:
+        return existing, False
+    if Message.objects.filter(session=session).exists():
+        return None, False
+    template = Setting.get_first_chat_opener()
+    if not template:
+        return None, False
+    user = getattr(session.consumer, "user", None)
+    first_name = (getattr(user, "first_name", None) or "").strip()
+    rendered = _render_chat_opener(template, first_name)
+    if not (session.opener or "").strip():
+        session.opener = rendered
+    _persist_first_chat_opener(session, rendered)
+    message = (
+        Message.objects.filter(session=session, reasoning=FIRST_CHAT_OPENER_REASONING)
+        .select_related("sender")
+        .first()
+    )
+    if message is None:
+        return None, False
+    return message, True
 
 
 def _render_chat_opener(template: str, first_name: str) -> str:

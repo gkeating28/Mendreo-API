@@ -475,7 +475,13 @@ class InviteCodeTests(BaseTest):
         user = User.objects.get(id=redeemed.json["consumer"]["user"]["id"])
         session = Session.objects.create(consumer=user.consumer)
 
-        with patch("api.tasks.notify_trust_and_safety") as notify:
+        with (
+            patch("api.tasks.notify_trust_and_safety") as notify,
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
+            ),
+        ):
             apply_turn_risk(session, "I want to end my life", Constants.LIVE_RISK_LEVEL_HIGH)
 
         notify.delay_on_commit.assert_called_once_with(session.id)

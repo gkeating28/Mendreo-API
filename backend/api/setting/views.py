@@ -42,8 +42,14 @@ class ListCreate(SmartAPIView):
                 Constants.SETTING_KEY_AI_RETRIEVAL_EXERCISE_ENABLED,
                 Constants.SETTING_KEY_THIN_ANSWER_HINT_ENABLED,
                 Constants.SETTING_KEY_REQUIRE_EXACT_YES,
+                "exercise_nudge_enabled",
             ):
                 data[setting.key] = setting.value.lower() == "true"
+            elif setting.key == "exercise_nudge_after_messages":
+                try:
+                    data[setting.key] = int(setting.value)
+                except (TypeError, ValueError):
+                    data[setting.key] = Setting.get_exercise_nudge_after_messages()
             elif setting.key == Constants.SETTING_KEY_KNOWLEDGE_MIN_CONFIDENCE:
                 try:
                     data[setting.key] = float(setting.value)
@@ -72,8 +78,12 @@ class ListCreate(SmartAPIView):
                 data[setting.key] = Setting.get_generic_answers_default()
             elif setting.key == Constants.SETTING_KEY_CHAT_OPENERS:
                 data[setting.key] = Setting.get_chat_openers()
+            elif setting.key == Constants.SETTING_KEY_FIRST_CHAT_OPENER:
+                data[setting.key] = Setting.get_first_chat_opener()
             elif setting.key == Constants.SETTING_KEY_RISK_KEYWORDS:
                 data[setting.key] = Setting.get_risk_keywords()
+            elif setting.key == Constants.SETTING_KEY_HIGH_RISK_COPY:
+                data[setting.key] = Setting.get_high_risk_copy()
             elif setting.key in Constants.ONBOARDING_COPY_SETTING_KEYS:
                 data[setting.key] = Setting.get_onboarding_copy(
                     Constants.ONBOARDING_COPY_SETTING_KEYS[setting.key]
@@ -127,12 +137,16 @@ class ListCreate(SmartAPIView):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "exercise_nudge_enabled": Setting.get_exercise_nudge_enabled(),
+            "exercise_nudge_after_messages": Setting.get_exercise_nudge_after_messages(),
             "require_exact_yes": Setting.get_require_exact_yes(),
             "ready_phrases": Setting.get_ready_phrases(),
             "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
+            "first_chat_opener": Setting.get_first_chat_opener(),
             "risk_keywords": Setting.get_risk_keywords(),
+            "high_risk_copy": Setting.get_high_risk_copy(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
             "chat_debug_enabled": Setting.get_chat_debug_enabled(),

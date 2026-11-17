@@ -30,11 +30,55 @@ from .reply_style import normalise_reply, reply_ends_mid_sentence, reply_leaves_
 from .completion import is_usable_completion_result, pick_completion_result_from_texts
 
 PROMPT_DATE_FORMAT = "%d %B, %Y"
+_RESTATE_INSTRUCTIONS_LEAD = "Follow these instructions on this turn:"
 STATIC_FILES_DIR = 'api/utils/files'
 SUMMARY_RESPONSE_SCHEMA = SummaryAiResponse
 SESSION_RESPONSE_SCHEMA = SessionAiResponse
 
 logger = logging.getLogger(__name__)
+
+_BLANK_REPLY_HINT = (
+    "Reply to the person now in your usual voice. Do not offer an exercise."
+)
+_BLANK_REPLY_FALLBACK = "I'm here with you. Tell me a bit more."
+_OFFER_RETRY_HINT = (
+    "To offer an exercise, first call get_exercise with a valid id, "
+    "then offer it in your own words and ask if they want to try it. "
+    "If no exercise fits, carry on the conversation and end with a gentle question. "
+    "Use the same voice you have been using in this chat, including any style the person has asked for."
+)
+
+
+def _offer_retry_allowed(user_text, response_data) -> bool:
+    """False when this turn already carries any risk signal.
+
+    A blank retry or an unauthorised-offer retry must not run then, so the
+    second call cannot attach an exercise.
+    """
+    from .risk import normalize_risk_level, risk_prescreen
+
+    if risk_prescreen(user_text or "") != Constants.LIVE_RISK_LEVEL_NONE:
+        return False
+    level = normalize_risk_level(getattr(response_data, "risk_level", None))
+    return level == Constants.LIVE_RISK_LEVEL_NONE
+
+
+def _offer_decline_turn(session) -> bool:
+    from .ExerciseOffer import OFFER_DECLINE_TITLE_KEY
+
+    if getattr(session, "_offer_decline_title", None):
+        return True
+    meta = getattr(session, "cached_prompt_meta", None) or {}
+    return bool(meta.get(OFFER_DECLINE_TITLE_KEY))
+
+
+def _offer_decline_canned(session) -> str | None:
+    from .ExerciseOffer import declined_offer_text, take_offer_decline_title
+
+    title = take_offer_decline_title(session)
+    if not title:
+        return None
+    return declined_offer_text(title)
 
 
 @dataclass
@@ -46,6 +90,19 @@ class Dependencies:
     matched_exercise: Optional[Exercise] = None
 
 
+# Shared by GeneralResponse and ExerciseStateResponse (the subclass inherits it).
+OWN_RISK_LEVEL_DESCRIPTION = (
+    "The user's own risk in this message. "
+    "none: no safety concern. This includes ordinary worry, stress, work or money problems, "
+    "sadness, frustration or anxiety about everyday life. "
+    "low: discussing their emotions or general topics, with some distress, but nothing about harming themselves. "
+    "moderate: hinted towards possible self-harm, or saying they do not want to be here or feel hopeless in a way that suggests harming themselves. "
+    "high: clearly stating they want to die, intend to harm or kill themselves, or have a plan. "
+    "Talk about another person, the past, fiction, news, or something they read "
+    "is none, unless they also express their own risk."
+)
+
+
 class GeneralResponse(BaseModel):
     text: str = Field(
       description=(
@@ -53,12 +110,13 @@ class GeneralResponse(BaseModel):
           "Never write facilitator notes, status lines, or third-person copy such as 'User ready for Step 3' or 'the user has…'. "
           "Never use the double-quote character in this text. When repeating the client's words, use single quotes or no quotes. "
           "Always finish the sentence with a full stop or question mark. "
-          "Never open with 'Thanks for sharing', 'Thank you for', or 'It sounds like'."
+          "Never open with 'Thanks for sharing', 'Thank you for', or 'It sounds like'. "
+          "Keep the voice and style set in <GOALS>."
       ),
     )
     risk_level: str = Field(
         default="none",
-        description="One of none, low, moderate, high. none when there is no safety concern.",
+        description=OWN_RISK_LEVEL_DESCRIPTION,
     )
     question_kind: str = Field(
         default="none",
@@ -95,7 +153,12 @@ class GeneralResponse(BaseModel):
 
 
 class ExerciseStateResponse(GeneralResponse):
-    """Exercise schema used when the state machine flag is on."""
+    """Exercise schema used when the state machine flag is on.
+
+    risk_level is the inherited GeneralResponse field: the user's own risk
+    in this message. Talk about someone else, the past, fiction, news, or
+    something they read stays none unless they also express their own risk.
+    """
 
     step_goal_met: bool = Field(
         default=False,
@@ -475,6 +538,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     consumer = consumer_message.sender.consumer
     assert consumer, "Message sender must be a consumer"
 
+    from .ExerciseOffer import note_unresolved_typed_decline
+
+    note_unresolved_typed_decline(session, consumer_message.text or "")
     prompt = _prepare_prompt(session=session)
 
     if session.exercise:
@@ -490,6 +556,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     timer_start = time.perf_counter()
     usage = {}
+    model_failed = False
 
     steer = [None]
     sent_for_result = {}
@@ -497,6 +564,9 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
     debug_result = None
     on_step_retried = False
     on_step_held = False
+    # Retries reuse this prompt and a freshly built copy of the same history.
+    # The hint, when set, is appended to the user message only.
+    repair = {"tools": True, "hint": None}
 
     def _run(provider):
         pydantic_model, model_settings = build_pydantic_model(provider)
@@ -509,7 +579,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             agent_kwargs["model_settings"] = model_settings
 
         agent: Agent[Dependencies, BaseModel] = Agent(pydantic_model, **agent_kwargs)
-        _register_tools(agent, session)
+        if repair["tools"]:
+            _register_tools(agent, session)
 
         from .history import build_history
         from .turn_hint import user_prompt_with_hint
@@ -523,6 +594,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         )
         if steer[0]:
             user_prompt = f"{user_prompt}\n\n<TURN_HINT>\n{steer[0]}\n</TURN_HINT>"
+        if repair["hint"]:
+            user_prompt = f"{user_prompt}\n\n{repair['hint']}"
         history = build_history(
             session, exclude_message_id=getattr(consumer_message, "id", None)
         )
@@ -534,12 +607,46 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             user_prompt=user_prompt,
             history=history,
         )
-        result = agent.run_sync(
-            user_prompt=user_prompt,
-            deps=dependencies,
-            message_history=history,
-            usage_limits=UsageLimits(tool_calls_limit=2)
-        )
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        tool_calls_limit = 2 if session.exercise_id else 3
+        run_kwargs = {
+            "user_prompt": user_prompt,
+            "deps": dependencies,
+            "message_history": history,
+        }
+        if repair["tools"]:
+            run_kwargs["usage_limits"] = UsageLimits(tool_calls_limit=tool_calls_limit)
+        try:
+            result = agent.run_sync(**run_kwargs)
+        except UsageLimitExceeded as exc:
+            # A general-chat run that asks for another tool has no final
+            # reply. Do not replace that with the generic apology. Leave the
+            # exercise unset and continue through the normal return.
+            if session.exercise_id or "tool_calls_limit" not in str(exc):
+                raise
+            dependencies.matched_exercise = None
+            logger.warning(
+                "general-chat tool call limit hit for session=%s message=%s",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+
+            class _ToolLimitResult:
+                def __init__(self, output):
+                    self.output = output
+
+                def usage(self):
+                    return _EmptyUsage()
+
+            class _EmptyUsage:
+                pass
+
+            result = _ToolLimitResult(schema(
+                text="",
+                suggested_responses=[],
+                reasoning=str(exc),
+            ))
         if capture_on():
             from ..grounding.retrieval import session_retrieval_enabled
 
@@ -561,6 +668,40 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         result, _provider = run_with_failover(_run)
         response_data = result.output
         debug_result = result
+        if _offer_decline_turn(session):
+            dependencies.matched_exercise = None
+        blank_reply = (
+            not session.exercise_id
+            and not _offer_decline_turn(session)
+            and not (getattr(response_data, "text", None) or "").strip()
+        )
+        if blank_reply and _offer_retry_allowed(consumer_message.text, response_data):
+            logger.info(
+                "general-chat blank reply retry session=%s message=%s",
+                getattr(session, "id", None),
+                getattr(consumer_message, "id", None),
+            )
+            repair["tools"] = False
+            repair["hint"] = _BLANK_REPLY_HINT
+            try:
+                retry, _provider = run_with_failover(_run)
+                retry_data = retry.output
+                if (getattr(retry_data, "text", None) or "").strip():
+                    result = retry
+                    response_data = retry_data
+                    debug_result = retry
+            except Exception:
+                logger.exception(
+                    "general-chat blank reply retry failed session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+            finally:
+                repair["tools"] = True
+                repair["hint"] = None
+        if blank_reply and not (getattr(response_data, "text", None) or "").strip():
+            response_data.text = _BLANK_REPLY_FALLBACK
+            response_data.suggested_responses = []
         if reply_ends_mid_sentence(getattr(response_data, "text", None)):
             logger.warning(
                 "reply ended mid-sentence for session=%s message=%s; retrying once",
@@ -649,10 +790,51 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             if not stayed:
                 _hold_on_step(response_data)
                 on_step_held = True
+        if (
+            not session.exercise_id
+            and not _offer_decline_turn(session)
+            and dependencies.matched_exercise is None
+            and _offer_retry_allowed(consumer_message.text, response_data)
+        ):
+            from .ExerciseOffer import reply_offers_an_exercise
+
+            user_text = consumer_message.text or ""
+            if reply_offers_an_exercise(getattr(response_data, "text", None), user_text):
+                logger.info(
+                    "general-chat exercise offer retry session=%s message=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                )
+                repair["tools"] = True
+                repair["hint"] = _OFFER_RETRY_HINT
+                try:
+                    retry, _provider = run_with_failover(_run)
+                    retry_data = retry.output
+                    retry_text = (getattr(retry_data, "text", None) or "").strip()
+                    if retry_text:
+                        result = retry
+                        response_data = retry_data
+                        debug_result = retry
+                except Exception:
+                    logger.exception(
+                        "general-chat exercise offer retry failed session=%s message=%s",
+                        getattr(session, "id", None),
+                        getattr(consumer_message, "id", None),
+                    )
+                finally:
+                    repair["tools"] = True
+                    repair["hint"] = None
+                logger.info(
+                    "general-chat exercise offer retry matched session=%s message=%s matched=%s",
+                    getattr(session, "id", None),
+                    getattr(consumer_message, "id", None),
+                    "yes" if dependencies.matched_exercise is not None else "no",
+                )
         usage = result.usage().__dict__
         timer_end = time.perf_counter()
 
     except Exception as e:
+        model_failed = True
         timer_end = time.perf_counter()
         session._pending_retrieval = None
         logger.exception(
@@ -679,6 +861,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
 
     raw_reply = response_data.text
     response_data.text = normalise_reply(response_data.text)
+    if _offer_decline_turn(session):
+        dependencies.matched_exercise = None
+        canned = _offer_decline_canned(session)
+        if canned and (model_failed or not (response_data.text or "").strip()):
+            response_data.text = canned
+            response_data.suggested_responses = []
     _note_reply_decisions(
         session,
         before=raw_reply,
@@ -701,6 +889,12 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
             on_step_retried=on_step_retried,
             on_step_held=on_step_held,
         )
+    if (
+        not session.exercise_id
+        and dependencies.matched_exercise is None
+        and response_data.suggested_responses == list(Constants.EXERCISE_OFFER_SUGGESTED_RESPONSES)
+    ):
+        response_data.suggested_responses = []
     response_data.suggested_responses = sanitize_suggested_responses(
         response_data.suggested_responses,
         response_data.text,
@@ -727,7 +921,7 @@ DESCRIPTION_PREFIX = (
 )
 STEP_SCOPE_RULES = (
     "The step below in <STEP> is the only step you may work on. "
-    "Steps in <STEP_OUTLINE> are context only. Do not start them. "
+    "Completed steps in <STEP_OUTLINE> are context only. "
     "Do only what this step's instructions tell you to do. "
     "Those instructions are the only task for this turn. "
     "Do not offer a technique, strategy, practice, grounding, or breathing exercise "
@@ -745,7 +939,17 @@ STEP_SCOPE_RULES = (
     "- brainstorm solutions, plans, or who can support them\n"
     "Your first message must be the first question in those instructions. "
     "If this step's instructions ask for a longer reply, such as a summary, "
-    "that overrides the reply-length line above.\n\n"
+    "that overrides the reply-length line above. "
+    "Done when lists what this step needs. Once every part is covered, stop asking about it "
+    "and move on to the summary if the instructions call for one. "
+    "Do not ask questions the step's instructions do not name. "
+    "Only ask whether they are ready for the next step when every part of Done when is covered. "
+    "If a part is not covered yet, continue with this step's instructions for it. "
+    "Ask whether they are ready for the next step only once, and make it the only question in that message. "
+    "Once a summary has been confirmed, do not summarise again. "
+    "Do not repeat a question the user has already answered. "
+    "If the user raises something that belongs to a later step, acknowledge it in a few words, "
+    "say you will come to it later, then continue with this step's next instruction.\n\n"
 )
 _FIRST_MESSAGE_SENTENCE = (
     "Your first message must be the first question in those instructions. "
@@ -800,20 +1004,39 @@ def _register_get_exercise(agent: Agent[Dependencies, BaseModel]) -> None:
 
         if exercise:
             ctx.deps.matched_exercise = exercise
-
+            title = (exercise.title or "").replace("\n", " ").strip() or "that exercise"
             return {
                 "status": "ok",
                 "exercise_id": exercise.id,
                 "exercise": {
                     "id": exercise.id,
-                    "context": exercise.description
-                }
+                    "title": title,
+                    "context": exercise.description,
+                },
+                "message": (
+                    f'The exercise is "{title}". '
+                    "In your reply, name it by its exact title, "
+                    "say in one or two sentences in your usual voice why it fits, "
+                    "and end by asking whether they want to try it."
+                ),
             }
 
-        return {
-            "status": "not_found",
-            "message": "Sorry, I couldn't find an appropriate exercise"
-        }
+        from pydantic_ai.exceptions import ModelRetry
+
+        published = Exercise.objects.filter(
+            status=Constants.EXERCISE_STATUS_PUBLISHED,
+            authoring_snapshot=False,
+        ).values_list("id", "title")
+        pairs = [
+            f"{published_id} {title}".strip()
+            for published_id, title in published
+            if published_id
+        ]
+        listed = "; ".join(pairs) if pairs else "(none)"
+        raise ModelRetry(
+            "That exercise id is not a published exercise. "
+            f"Valid exercises: {listed}"
+        )
 
 
 def _register_get_asset(agent: Agent[Dependencies, BaseModel]) -> None:
@@ -1121,6 +1344,21 @@ def _with_source_run_background(session_context: str, source_block: str) -> str:
     return f"{session_context}\n\n{source_block}"
 
 
+# Kept in code so an admin save of the triage card cannot remove it.
+TRIAGE_CLOSED_LIST_RULE = (
+    "The only exercises you may offer are the ones in <EXERCISES>, and you must "
+    "use the exact <NAME>. Call get_exercise with that exercise's <ID> before you "
+    "offer it. Skill names, technique names, and names in <GOALS>, <CLIENT_SUMMARY>, "
+    "or <KNOWLEDGE> are not exercises. After you offer one, or the person declines, "
+    "keep this conversation in the same voice. Never walk through an exercise in "
+    "this chat, and never invent one."
+)
+
+
+def _general_chat_offers_enabled(session) -> bool:
+    return not session.exercise_id and not getattr(session, "source_run_id", None)
+
+
 def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True) -> str:
 
     from ..grounding.retrieval import session_retrieval_enabled
@@ -1130,7 +1368,15 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
     bare_opening = _session_is_bare_opening(session)
+    step_has_reply = _live_step_has_agent_reply(session)
     source_block = _source_run_background(session)
+    from .ExerciseOffer import recent_exercise_offer_block
+
+    offer_block = (
+        recent_exercise_offer_block(session)
+        if _general_chat_offers_enabled(session)
+        else ""
+    )
     from ..setting.models import Setting
 
     consumer = session.consumer
@@ -1198,6 +1444,40 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         ).strip()
         stale_name = bool(first_name) and f"Name: {first_name}" not in cached
         stale_source = (meta.get("source_run_block") or "") != source_block
+        stale_closed_list = (
+            _general_chat_offers_enabled(session)
+            and TRIAGE_CLOSED_LIST_RULE not in cached
+        )
+        stale_offer_memory = (
+            _general_chat_offers_enabled(session)
+            and (meta.get("exercise_offers_block") or "") != offer_block
+        )
+        stale_step_focus = (
+            bool(session.exercise_id)
+            and not session.in_pre_exercise_phase()
+            and "Current task: step " not in cached
+        )
+        step_live = bool(session.exercise_id) and not session.in_pre_exercise_phase()
+        stale_listen = step_live and "simply listen and invite reflection" in cached
+        stale_step_rules = step_live and (
+            "Done when lists what this step needs." not in cached
+            or "Only ask whether they are ready for the next step when every part of Done when is covered."
+            not in cached
+            or "Ask whether they are ready for the next step only once, and make it the only question in that message."
+            not in cached
+            or "Once a summary has been confirmed, do not summarise again." not in cached
+            or "Do not repeat a question the user has already answered." not in cached
+        )
+        wants_first_sentence = step_live and not step_has_reply
+        stale_first_message = step_live and (
+            (_FIRST_MESSAGE_SENTENCE.strip() in cached) != wants_first_sentence
+        )
+        stale_exercise_description = step_live and "Clinical background only." in cached
+        stale_pending_outline = step_live and "<STATUS>pending</STATUS>" in cached
+        stale_restate = step_live and (
+            bool(meta.get("restate_step_instructions"))
+            != _restate_step_instructions_enabled()
+        )
         if not any((
             stale_placeholders,
             stale_click,
@@ -1214,6 +1494,15 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_protocol,
             stale_name,
             stale_source,
+            stale_closed_list,
+            stale_offer_memory,
+            stale_step_focus,
+            stale_listen,
+            stale_step_rules,
+            stale_exercise_description,
+            stale_pending_outline,
+            stale_first_message,
+            stale_restate,
         )):
             return cached
         session.cached_prompt = None
@@ -1240,6 +1529,8 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     exercise_extra = {}
     exercise = session.exercise
+    live_step = None
+    live_step_no = None
 
     if exercise:
         if create_summary and not session.authoring_test:
@@ -1282,14 +1573,22 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             if _state_machine_enabled():
                 only_index = max(0, (session.current_step_no or 1) - 1)
                 step_no = only_index + 1
-                description = DESCRIPTION_PREFIX + description
+                ordered_steps = list(steps) if steps is not None else list(
+                    exercise.steps.order_by("order")
+                )
+                if ordered_steps and only_index < len(ordered_steps):
+                    live_step = ordered_steps[only_index]
+                    live_step_no = step_no
             completed_steps = ""
             if _state_machine_enabled():
                 exercise_steps = _render_state_machine_steps(
                     exercise, session, token_context, only_index, steps=steps
                 )
                 exercise_steps = _step_already_started(
-                    step_no, live_steps_no, bare_opening=bare_opening
+                    step_no,
+                    live_steps_no,
+                    bare_opening=bare_opening,
+                    step_started=step_has_reply,
                 ) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
@@ -1319,7 +1618,11 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             "exercises": render_exercise_catalogue(),
             "onboarding_followup_block": format_onboarding_followup_block(session),
             "goals": bodies.get(Constants.PROMPT_KEY_GOALS, ""),
-            "triage": bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
+            "triage": _triage_with_closed_list(
+                bodies.get(Constants.PROMPT_KEY_TRIAGE, ""),
+                session,
+                offer_block,
+            ),
             "session_context": _with_source_run_background(
                 render_session_context(consumer, session),
                 source_block,
@@ -1346,6 +1649,13 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     )
     if not up_technique_rule.strip():
         programming_instructions = programming_instructions.replace("        - \n", "", 1)
+    if exercise and not session.in_pre_exercise_phase():
+        programming_instructions = "\n".join(
+            line
+            for line in programming_instructions.splitlines()
+            if "If no clear therapeutic intervention applies, simply listen and invite reflection."
+            not in line
+        ) + "\n"
     if retrieval_on:
         programming_instructions = (
             programming_instructions.rstrip()
@@ -1371,14 +1681,19 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
 
     pending = assign_pending_question(session)
     if pending:
-        prompt = f"{prompt}\n\n{pending}"
+        prompt = _insert_pending_question(prompt, pending)
+    if live_step is not None:
+        prompt = _focus_live_step(prompt, live_step, live_step_no, token_context)
 
     meta = dict(session.cached_prompt_meta or {})
     meta["prompt_phase"] = prompt_phase
     meta["state_machine"] = _state_machine_enabled()
     meta["retrieval_instruction"] = retrieval_on
     meta["bare_opening"] = bare_opening
+    meta["restate_step_instructions"] = _restate_step_instructions_enabled()
     meta["source_run_block"] = source_block
+    if _general_chat_offers_enabled(session):
+        meta["exercise_offers_block"] = offer_block
     session.cached_prompt_meta = meta
     session.cached_prompt = prompt
     session.save(
@@ -1391,6 +1706,109 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     )
 
     return prompt
+
+
+def _insert_pending_question(prompt: str, pending: str) -> str:
+    """Place a pending question before the goals block, or the reminder, or the end.
+
+    The closed-list rule mentions the goals tag inside triage, so this matches
+    the block's own line and not that mention.
+    """
+    for tag in ("<GOALS>", "<GOALS_REMINDER>"):
+        match = re.search(rf"(?m)^[ \t]*{re.escape(tag)}[ \t]*$", prompt)
+        if match:
+            return prompt[: match.start()] + pending + "\n\n" + prompt[match.start() :]
+    return f"{prompt}\n\n{pending}"
+
+
+def _triage_with_closed_list(triage: str, session, offer_block: str) -> str:
+    """Admin triage, then the code-held closed list and any recent offers."""
+    if not _general_chat_offers_enabled(session):
+        return triage
+    body = f"{(triage or '').rstrip()}\n\n{TRIAGE_CLOSED_LIST_RULE}"
+    if offer_block:
+        body = f"{body}\n\n{offer_block}"
+    return body
+
+
+_LIVE_STEP_BLOCK = re.compile(
+    r"[ \t]*<STEP>\s*<NO>.*?</STEP>[ \t]*\n?",
+    re.DOTALL,
+)
+# The opening tag must be on its own line. The programming text mentions
+# these names mid-sentence, and that mention is not the block.
+_TAG_BLOCK = {
+    tag: re.compile(rf"(?m)^[ \t]*<{tag}>[ \t]*\n.*?</{tag}>[ \t]*\n?", re.DOTALL)
+    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE", "DESCRIPTION")
+}
+
+
+def _cut_first(text: str, pattern: re.Pattern) -> tuple[str, str]:
+    match = pattern.search(text)
+    if not match:
+        return text, ""
+    return text[: match.start()] + text[match.end() :], match.group(0).strip() + "\n"
+
+
+def _one_line(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _restate_step_instructions_enabled() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "EXERCISE_RESTATE_STEP_INSTRUCTIONS", False))
+
+
+def _current_task_line(step, step_no, token_context) -> str:
+    from .prompt_blocks import resolve_tokens
+
+    name = _one_line(getattr(step, "title", "") or "")
+    description = _one_line(resolve_tokens(getattr(step, "description", "") or "", token_context or {}))
+    line = f"Current task: step {step_no}, {name}."
+    if description:
+        line = f"{line} {description}"
+    instructions = _one_line(
+        resolve_tokens(getattr(step, "instructions", "") or "", token_context or {})
+    )
+    if _restate_step_instructions_enabled() and instructions:
+        line = f"{line} {_RESTATE_INSTRUCTIONS_LEAD} {instructions}"
+    return line
+
+
+def _focus_live_step(prompt: str, step, step_no, token_context) -> str:
+    """Put background first and the live step last, then the date and one restatement.
+
+    Check-in and general chat never call this. The exercise-level description
+    is left out. The step's own title and description are repeated after the date.
+    The step's instructions are repeated on that same line only when the
+    restatement flag is on.
+    """
+    prompt, live = _cut_first(prompt, _LIVE_STEP_BLOCK)
+    prompt, _exercise_description = _cut_first(prompt, _TAG_BLOCK["DESCRIPTION"])
+    background = []
+    for tag in ("CLIENT_SUMMARY", "EXERCISE_SUMMARY", "KNOWLEDGE"):
+        prompt, block = _cut_first(prompt, _TAG_BLOCK[tag])
+        if block:
+            background.append(block)
+    if background:
+        body = "".join(background) + "\n"
+        if prompt.startswith("<DATA>"):
+            rest = prompt[len("<DATA>") :].lstrip("\n")
+            prompt = "<DATA>\n" + body + rest
+        else:
+            prompt = body + prompt
+    if live:
+        # Programming text mentions the <DATE> block by name. Only the tag
+        # on its own line is the block.
+        date_match = re.search(r"(?m)^[ \t]*<DATE>[ \t]*$", prompt)
+        if date_match is None:
+            prompt = prompt.rstrip() + "\n\n" + live
+        else:
+            date_at = date_match.start()
+            prompt = prompt[:date_at] + live + "\n" + prompt[date_at:]
+    line = _current_task_line(step, step_no, token_context)
+    return prompt.rstrip() + "\n\n" + line + "\n"
 
 
 def _prompt_phase(session) -> str:
@@ -1429,10 +1847,31 @@ def _session_is_bare_opening(session) -> bool:
     return is_bare_opening(False, step_no, stored)
 
 
-def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = False) -> str:
+def _live_step_has_agent_reply(session) -> bool:
+    """True once an agent reply is stored on the live step."""
+    if not getattr(session, "exercise_id", None) or session.in_pre_exercise_phase():
+        return False
+    step_no = session.current_step_no or 1
+    from ..message.models import Message
+
+    return Message.objects.filter(
+        session=session,
+        sender__agent__isnull=False,
+        step_no=step_no,
+    ).exists()
+
+
+def _step_already_started(
+    step_no: int,
+    steps_no: int,
+    *,
+    bare_opening: bool = False,
+    step_started: bool = False,
+) -> str:
     scope = STEP_SCOPE_RULES
-    if bare_opening and step_no <= 1:
+    if step_started:
         scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
+    if bare_opening and step_no <= 1:
         return scope
     if step_no <= 1:
         return (
@@ -1449,7 +1888,7 @@ def _step_already_started(step_no: int, steps_no: int, *, bare_opening: bool = F
 
 
 def _render_state_machine_steps(exercise, session, token_context, live_index, steps=None) -> str:
-    """Live step in full. Every other step is a title outline."""
+    """Live step in full. Completed steps are a title outline."""
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
@@ -1460,11 +1899,14 @@ def _render_state_machine_steps(exercise, session, token_context, live_index, st
     for i, step in enumerate(ordered):
         number = i + 1
         if i != live_index:
+            status = statuses.get(step.id, "pending")
+            if status == "pending":
+                continue
             blocks.append(
                 "<STEP_OUTLINE>\n"
                 f"    <NO>{number}</NO>\n"
                 f"    <NAME>{step.title}</NAME>\n"
-                f"    <STATUS>{statuses.get(step.id, 'pending')}</STATUS>\n"
+                f"    <STATUS>{status}</STATUS>\n"
                 "</STEP_OUTLINE>"
             )
             continue

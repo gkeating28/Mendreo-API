@@ -172,6 +172,9 @@ def on_model_turn(session, agent_message, response) -> None:
         return
     if not getattr(session, "exercise_id", None):
         return
+    from .summary_confirmation import mark_expected_summary_question
+
+    mark_expected_summary_question(session, agent_message)
     if _keep_ready_gate(session, agent_message):
         return
 
@@ -198,17 +201,21 @@ def on_model_turn(session, agent_message, response) -> None:
             goal_met = False
 
         accepted_goal = goal_met
-        advisory = (
-            model_goal
-            and _ends_with_readiness_question(text)
-            and not _is_last_step(session)
-        )
         if session_step and goal_met and session_step.goal_met_at is None:
-            if not _accept_goal(session, session_step, agent_message, advisory=advisory):
+            if not _accept_goal(session, session_step, agent_message):
                 asks = False
                 accepted_goal = False
 
+        if (
+            session_step is not None
+            and session_step.goal_met_at is not None
+            and _is_last_step(session)
+        ):
+            _enter_awaiting_ready(session, agent_message, session_step)
+            return
+
         if not asks or session_step is None or session_step.goal_met_at is None:
+            _drop_unaccepted_ready_chips(agent_message, text)
             return
 
         _enter_awaiting_ready(session, agent_message, session_step)
@@ -238,8 +245,10 @@ def consume_chip(user_message, from_suggested_response: bool) -> ChipOutcome | N
     text = (user_message.text or "").strip()
 
     if kind == Constants.SUGGESTED_RESPONSES_KIND_OFFER:
-        from .ExerciseOffer import maybe_handle_offer_response
+        from .ExerciseOffer import maybe_handle_offer_response, prepare_tapped_decline
 
+        if text == Constants.EXERCISE_OFFER_NO and prepare_tapped_decline(user_message):
+            return None
         reply = maybe_handle_offer_response(user_message, True)
         if reply is None:
             return None
@@ -395,10 +404,46 @@ def _confirm_typed_ready(session, user_message, *, last_step, summary_confirmed,
     return _confirm(session, user_message, extracted=extracted)
 
 
-def confirm_summary_if_done(user_message) -> ChipOutcome | None:
-    """An affirmation that meets done_when completes a step that is not the last.
+def previous_message_is_recorded_summary(user_message) -> bool:
+    """True when the previous agent message was marked as the summary question."""
+    from .summary_confirmation import is_recorded_summary_confirmation
 
-    The last step returns here so the chat model can ask whether they are ready to finish.
+    session = user_message.session
+    previous = _last_agent_message(session, before=user_message)
+    return is_recorded_summary_confirmation(session, previous)
+
+
+def _complete_recorded_summary(session, user_message) -> ChipOutcome | None:
+    """Same guards as the phrase path, plus a done-when that requires a summary."""
+    from .summary_confirmation import summary_confirmation_required
+
+    session_step = _live_step(session)
+    if session_step is None or session_step.completed:
+        return None
+    done_when = (getattr(session_step.step, "done_when", None) or "").strip()
+    if not done_when or not summary_confirmation_required(done_when):
+        return None
+
+    from .extraction import check_done_when
+
+    try:
+        result = check_done_when(session, session_step.step)
+    except Exception:
+        logger.exception(
+            "summary confirmation check failed for session=%s",
+            getattr(session, "id", None),
+        )
+        return None
+    if not result or not result.get("met"):
+        return None
+    return _confirm(session, user_message)
+
+
+def confirm_summary_if_done(user_message) -> ChipOutcome | None:
+    """An affirmation after a summary question completes a step that is not the last.
+
+    The previous assistant message has to be that summary question. The last
+    step returns here so the chat model can ask whether they are ready to finish.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -407,23 +452,27 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
-    from .summary_confirmation import matches_summary_affirmation
+    from .summary_confirmation import (
+        is_recorded_summary_confirmation,
+        is_summary_confirmation,
+        structural_summary_reply_confirms,
+    )
 
-    if not matches_summary_affirmation(user_message.text or ""):
+    previous = _last_agent_message(session, before=user_message)
+    if is_recorded_summary_confirmation(session, previous):
+        if not structural_summary_reply_confirms(user_message.text or ""):
+            return None
+        return _complete_recorded_summary(session, user_message)
+
+    if not structural_summary_reply_confirms(user_message.text or ""):
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
         return None
     if not (getattr(session_step.step, "done_when", None) or "").strip():
         return None
-
-    from .summary_confirmation import is_summary_confirmation, summary_confirmation_required
-
-    done_when = session_step.step.done_when or ""
-    if summary_confirmation_required(done_when):
-        previous = _last_agent_message(session, before=user_message)
-        if previous is None or not is_summary_confirmation(previous.text or ""):
-            return None
+    if previous is None or not is_summary_confirmation(previous.text or ""):
+        return None
 
     from .extraction import check_done_when
 
@@ -578,9 +627,10 @@ def _confirm_listed_ready(session, user_message, session_step, *, last_step, sum
 def confirm_readiness_reply(user_message) -> ChipOutcome | None:
     """A yes after Toni asked to move on completes the step.
 
-    A phrase from the lists confirms without a model call. Any other reply is
-    read by the model unless an exact yes is required. A clear no stays on
-    this gate and Toni answers. Anything else stays in the chat.
+    The live step's goal must already have been accepted. A phrase from the
+    lists confirms without a model call. Any other reply is read by the model
+    unless an exact yes is required. A clear no stays on this gate and Toni
+    answers. Anything else stays in the chat.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -615,6 +665,8 @@ def confirm_readiness_reply(user_message) -> ChipOutcome | None:
             return _retreat_outcome(session, user_message)
         if verdict != "yes":
             return None
+    if session_step.goal_met_at is None:
+        return None
     return _confirm_listed_ready(
         session,
         user_message,
@@ -909,9 +961,18 @@ def _confirm(
         session.state = Constants.SESSION_STATE_STEP_ACTIVE
         session.current_step_no = step_no + 1
         meta = dict(session.cached_prompt_meta or {})
+        from .summary_confirmation import (
+            SUMMARY_CONFIRM_EXPECT_STEP,
+            SUMMARY_CONFIRM_MESSAGE_ID,
+            SUMMARY_CONFIRM_STEP_NO,
+        )
+
         meta.pop("goal_hint", None)
         meta.pop("depth_hint_step_id", None)
         meta.pop("done_when_rejections", None)
+        meta.pop(SUMMARY_CONFIRM_EXPECT_STEP, None)
+        meta.pop(SUMMARY_CONFIRM_MESSAGE_ID, None)
+        meta.pop(SUMMARY_CONFIRM_STEP_NO, None)
         session.cached_prompt_meta = meta
         session.save(
             update_fields=[
@@ -948,9 +1009,9 @@ def _confirm(
     return ChipOutcome(display, build_session_state(session, completion_card=card))
 
 
-def _accept_goal(session, session_step, agent_message, *, advisory: bool = False) -> bool:
+def _accept_goal(session, session_step, agent_message) -> bool:
     """Stamp goal_met_at only after done_when, and depth when it is due, both pass."""
-    if not _done_when_passed(session, session_step, agent_message, advisory=advisory):
+    if not _done_when_passed(session, session_step, agent_message):
         return False
     if _depth_check_due(session, session_step) and not _depth_check_passed(session, session_step):
         _downgrade_readiness(agent_message)
@@ -976,6 +1037,18 @@ def _closing_sentence(text: str) -> str:
     raw = (text or "").strip()
     parts = re.split(r"(?<=[.!])\s+", raw)
     return parts[-1] if parts else ""
+
+
+def _drop_unaccepted_ready_chips(agent_message, text: str) -> None:
+    """Clear reply chips when a readiness question was not accepted."""
+    from .StepProgress import is_advance_gate_text
+
+    if not is_advance_gate_text(text) and not _ends_with_readiness_question(text):
+        return
+    if not getattr(agent_message, "suggested_responses", None):
+        return
+    agent_message.suggested_responses = []
+    agent_message.save(update_fields=["suggested_responses", "updated_at"])
 
 
 def _ends_with_readiness_question(text: str) -> bool:
@@ -1014,10 +1087,10 @@ def _note_done_when_rejection(session) -> None:
     session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
 
-def _done_when_passed(session, session_step, agent_message, *, advisory: bool = False) -> bool:
+def _done_when_passed(session, session_step, agent_message) -> bool:
     from .extraction import check_done_when
 
-    if not advisory and _done_when_rejection_count(session) >= 2:
+    if _done_when_rejection_count(session) >= 2:
         result = {"met": True, "missing": "", "forced": True}
     else:
         try:
@@ -1037,10 +1110,14 @@ def _done_when_passed(session, session_step, agent_message, *, advisory: bool = 
         if not summary_was_confirmed(session, session_step.step):
             if not result.get("forced"):
                 _downgrade_readiness(agent_message)
-                _store_summary_hint(session)
+                _store_summary_hint(
+                    session,
+                    agent_message,
+                    met=bool(result and result.get("met")),
+                )
                 _note_done_when_rejection(session)
                 return False
-    if result is None or result.get("met") or advisory:
+    if result is None or result.get("met"):
         return True
     _downgrade_readiness(agent_message)
     _store_goal_hint(session, result.get("missing") or "")
@@ -1048,12 +1125,14 @@ def _done_when_passed(session, session_step, agent_message, *, advisory: bool = 
     return False
 
 
-def _store_summary_hint(session) -> None:
+def _store_summary_hint(session, agent_message, *, met: bool) -> None:
+    from .summary_confirmation import note_held_summary
     from .turn_hint import SUMMARY_CONFIRM_HINT
 
     meta = dict(session.cached_prompt_meta or {})
     meta.pop("depth_hint_step_id", None)
     meta["goal_hint"] = SUMMARY_CONFIRM_HINT
+    note_held_summary(session, meta, agent_message, met=met)
     session._step_goal_hint_written = SUMMARY_CONFIRM_HINT
     session.cached_prompt_meta = meta
     session.save(update_fields=["cached_prompt_meta", "updated_at"])

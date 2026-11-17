@@ -133,6 +133,7 @@ class ConsumerListSerializer(ListModelSerializer):
             "onboarded",
             "date_of_birth",
             "consent_required",
+            "crisis_notice_pending",
         ]
 
     def get_user(self, obj):

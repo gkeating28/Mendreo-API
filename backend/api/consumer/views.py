@@ -1,6 +1,8 @@
 from __future__ import unicode_literals
 
 from django.db.models import Q
+from rest_framework import status
+from rest_framework.response import Response
 
 from .models import Consumer
 
@@ -21,7 +23,7 @@ from ..utils.Permissions import (
 
 from ..utils import QueryParams, Constants, DateUtils, Token, Subscription as SubscriptionUtils
 
-from ..utils.Views import SmartPaginationAPIView, SmartDetailAPIView
+from ..utils.Views import SmartAPIView, SmartPaginationAPIView, SmartDetailAPIView
 
 
 class ListCreate(SmartPaginationAPIView):
@@ -109,3 +111,49 @@ class Detail(SmartDetailAPIView):
         user.save()
 
         return super(Detail, self).handle_delete(instance)
+
+
+def _own_consumer(view, consumer_id):
+    """The signed-in person, or None when the id is someone else."""
+    consumer = view.get_consumer_from_request()
+    if str(consumer.user_id) != str(consumer_id):
+        return None
+    return consumer
+
+
+class CrisisNotice(SmartAPIView):
+    """GET /consumers/<id>/crisis-notice. Modal copy only while the flag is set."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def get(self, request, id):
+        consumer = _own_consumer(self, id)
+        if consumer is None:
+            return self.not_found("Consumer not found")
+        from ..utils.high_risk_copy import crisis_notice_payload
+
+        return Response(
+            crisis_notice_payload(consumer.crisis_notice_pending),
+            status=status.HTTP_200_OK,
+        )
+
+    def has_permission(self, request, method):
+        return method == "GET"
+
+
+class DismissCrisisNotice(SmartAPIView):
+    """POST /consumers/<id>/crisis-notice/dismiss. Clears only that person's flag."""
+
+    permission_classes = [IsConsumerPermission]
+
+    def post(self, request, id):
+        consumer = _own_consumer(self, id)
+        if consumer is None:
+            return self.not_found("Consumer not found")
+        if consumer.crisis_notice_pending:
+            consumer.crisis_notice_pending = False
+            consumer.save(update_fields=["crisis_notice_pending", "updated_at"])
+        return Response({"crisis_notice_pending": False}, status=status.HTTP_200_OK)
+
+    def has_permission(self, request, method):
+        return method == "POST"

@@ -294,6 +294,26 @@ AI_SECRETS_MASTER_KEY = os.environ.get('AI_SECRETS_MASTER_KEY', '')
 # Local/tests keep sync so CreateTest still sees the agent reply in-process.
 _ai_async_default = 'true' if DEPLOYMENT_TARGET == 'vercel' else 'false'
 AI_ASYNC_MESSAGES = os.environ.get('AI_ASYNC_MESSAGES', _ai_async_default).lower() in ('true', '1', 'yes')
+# When true, the live-step "Current task" line also repeats that step's instructions.
+# Off leaves the line as the step number, title, and description only.
+EXERCISE_RESTATE_STEP_INSTRUCTIONS = os.environ.get(
+    'EXERCISE_RESTATE_STEP_INSTRUCTIONS', ''
+).lower() in ('true', '1', 'yes')
+# When true, a live step gets a per-turn guide from its instructions and done-when.
+# The call runs after the reply is stored. Off makes no extra call.
+EXERCISE_STEP_GUIDE = os.environ.get(
+    'EXERCISE_STEP_GUIDE', ''
+).lower() in ('true', '1', 'yes')
+# When false, the step guide still names what is missing but does not ask for
+# or hint the next instruction line. On by default.
+EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION = os.environ.get(
+    'EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION', 'true'
+).lower() in ('true', '1', 'yes')
+# When true, a live step's turn hint also includes that step's instructions.
+# Off leaves the turn hint unchanged. Independent of the other exercise flags.
+EXERCISE_HINT_RESTATES_INSTRUCTIONS = os.environ.get(
+    'EXERCISE_HINT_RESTATES_INSTRUCTIONS', ''
+).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.

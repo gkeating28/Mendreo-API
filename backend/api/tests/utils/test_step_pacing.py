@@ -346,6 +346,16 @@ class GoalGateTests(BaseTest):
         )
         session.total_steps_no = 2
         session.save(update_fields=["total_steps_no", "updated_at"])
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text=(
+                "So, to recap, you worry about missing deadlines and losing your job, "
+                "and it comes up at night when you are alone. Did I capture that accurately?"
+            ),
+            reasoning="test",
+        )
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="Yep")
         with (
@@ -479,6 +489,78 @@ class GoalGateTests(BaseTest):
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
 
+    def _summary_question(self):
+        return (
+            "So, to recap, you worry about missing deadlines and losing your job, "
+            "and it comes up at night when you are alone. Did I capture that accurately?"
+        )
+
+    def test_yes_after_a_polar_question_does_not_complete_a_non_last_step(self):
+        for reply in ("yes", "yep"):
+            session = self._plain_two_steps()
+            self._ask(session, "Would you be willing to look at that a bit more?")
+            user_message = self._user_reply(session, reply)
+            with patch("api.utils.extraction.check_done_when") as checker:
+                outcome = confirm_summary_if_done(user_message)
+            checker.assert_not_called()
+            self.assertIsNone(outcome, reply)
+            session.refresh_from_db()
+            self.assertEqual(session.current_step_no, 1, reply)
+            self.assertFalse(session.session_steps.get(order=0).completed, reply)
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE, reply)
+
+    def test_yes_after_a_held_readiness_question_does_not_complete_a_non_last_step(self):
+        for reply in ("yes", "yep"):
+            session = self._plain_two_steps()
+            message, response = self._claimed_without_flag(
+                session, "Are you ready to continue?"
+            )
+            with patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": False, "missing": "the location"},
+            ):
+                on_model_turn(session, message, response)
+            user_message = self._user_reply(session, reply)
+            with patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": True, "missing": ""},
+            ) as checker:
+                summary = confirm_summary_if_done(user_message)
+                ready = confirm_readiness_reply(user_message)
+            checker.assert_not_called()
+            self.assertIsNone(summary, reply)
+            self.assertIsNone(ready, reply)
+            session.refresh_from_db()
+            self.assertEqual(session.current_step_no, 1, reply)
+            self.assertFalse(session.session_steps.get(order=0).completed, reply)
+            self.assertIsNone(session.session_steps.get(order=0).goal_met_at, reply)
+
+    def test_yes_after_a_summary_question_follows_the_check(self):
+        for met in (True, False):
+            session = self._plain_two_steps()
+            self._ask(session, self._summary_question())
+            user_message = self._user_reply(session, "yes")
+            with (
+                patch(
+                    "api.utils.extraction.check_done_when",
+                    return_value={"met": met, "missing": "" if met else "the location"},
+                ) as checker,
+                patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+            ):
+                outcome = confirm_summary_if_done(user_message)
+            checker.assert_called_once()
+            session.refresh_from_db()
+            step = session.session_steps.get(order=0)
+            if met:
+                self.assertIsNotNone(outcome)
+                self.assertTrue(step.completed)
+                self.assertEqual(session.current_step_no, 2)
+            else:
+                self.assertIsNone(outcome)
+                self.assertFalse(step.completed)
+                self.assertEqual(session.current_step_no, 1)
+                self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
     def _two_steps(self):
         session = self._session(
             done_when=(
@@ -514,6 +596,15 @@ class GoalGateTests(BaseTest):
             text=text,
             reasoning="test",
         )
+
+    def _stamp_goal_met(self, session):
+        from django.utils import timezone
+
+        number = session.current_step_no or 1
+        step = session.session_steps.get(order=number - 1)
+        step.goal_met_at = timezone.now()
+        step.save(update_fields=["goal_met_at", "updated_at"])
+        return step
 
     def _plain_two_steps(self):
         session = self._session()
@@ -638,13 +729,13 @@ class GoalGateTests(BaseTest):
             message.usage["step_decision"]["check_done_when"],
             {"met": False, "missing": "the location"},
         )
-        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
-        self.assertEqual(
-            message.suggested_responses,
-            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
-        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
 
-    def test_two_user_replies_show_the_chip_when_done_when_fails(self):
+    def test_two_user_replies_still_reject_a_failed_readiness_claim(self):
         session = self._plain_two_steps()
         self._user_reply(session, "The worry is the deadline.")
         self._user_reply(session, "It happens before presentations.")
@@ -663,13 +754,12 @@ class GoalGateTests(BaseTest):
             message.usage["step_decision"]["check_done_when"],
             {"met": False, "missing": "the location"},
         )
-        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
-        self.assertEqual(
-            message.suggested_responses,
-            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
-        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
 
-    def test_readiness_question_keeps_the_chip_when_done_when_fails(self):
+    def test_a_non_last_readiness_question_is_rejected_when_done_when_is_not_met(self):
         session = self._plain_two_steps()
         self._user_reply(session, "The worry is the deadline.")
         self._user_reply(session, "It happens before presentations.")
@@ -686,15 +776,377 @@ class GoalGateTests(BaseTest):
         message.refresh_from_db()
         decision = message.usage["step_decision"]
         self.assertTrue(decision["inferred_asks_readiness"])
-        self.assertTrue(decision["accepted"]["asks_readiness"])
+        self.assertFalse(decision["accepted"]["step_goal_met"])
+        self.assertFalse(decision["accepted"]["asks_readiness"])
         self.assertEqual(decision["check_done_when"], {"met": False, "missing": "the location"})
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertIn("the location", session.cached_prompt_meta["goal_hint"])
+        self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 1})
+
+    def test_the_third_readiness_claim_is_forced_on_a_non_last_step(self):
+        session = self._plain_two_steps()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "Are you ready to continue?",
+                "You named the worry. Are you ready to continue?",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                on_model_turn(session, message, response)
+            session.refresh_from_db()
+            self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 2})
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named. Are you ready to continue?"
+            )
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        session.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(
+            third.usage["step_decision"]["check_done_when"],
+            {"met": True, "missing": "", "forced": True},
+        )
         self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(
+            third.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+
+    def _seed_reply_chips(self, message):
+        message.suggested_responses = ["Yes", "No", "Not sure"]
+        message.save(update_fields=["suggested_responses", "updated_at"])
+        return message
+
+    def test_rejected_readiness_claim_clears_suggested_responses(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "You named the worry. Are you ready to continue?"
+        )
+        self._seed_reply_chips(message)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(message.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+
+    def test_an_ordinary_yes_no_keeps_its_chips(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(session, "Does this show up at work?")
+        self._seed_reply_chips(message)
+        response.step_goal_met = False
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, message, response)
+        checker.assert_not_called()
+        message.refresh_from_db()
+        self.assertEqual(message.suggested_responses, ["Yes", "No", "Not sure"])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_accepted_readiness_claim_writes_the_ready_chips(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(session, "Are you ready to continue?")
+        self._seed_reply_chips(message)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        session.refresh_from_db()
         self.assertEqual(
             message.suggested_responses,
             [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
         )
-        self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
-        self.assertNotIn("done_when_rejections", session.cached_prompt_meta or {})
+        self.assertEqual(
+            message.suggested_responses_kind,
+            Constants.SUGGESTED_RESPONSES_KIND_READY,
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertIsNotNone(session.session_steps.get(order=0).goal_met_at)
+
+    def test_yes_on_a_held_step_does_not_complete(self):
+        session = self._plain_two_steps()
+        message, response = self._claimed_without_flag(
+            session, "Are you ready to continue?"
+        )
+        self._seed_reply_chips(message)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        self.assertEqual(message.suggested_responses, [])
+        for reply in ("yes", "Yes"):
+            outcome = confirm_readiness_reply(self._user_reply(session, reply))
+            self.assertIsNone(outcome, reply)
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 1)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_forced_pass_shows_ready_chips_and_yes_completes_the_step(self):
+        session = self._plain_two_steps()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "Are you ready to continue?",
+                "You named the worry. Are you ready to continue?",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                self._seed_reply_chips(message)
+                on_model_turn(session, message, response)
+                message.refresh_from_db()
+                self.assertEqual(message.suggested_responses, [])
+            session.refresh_from_db()
+            self.assertEqual(session.cached_prompt_meta["done_when_rejections"], {"1": 2})
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named. Are you ready to continue?"
+            )
+            self._seed_reply_chips(third)
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        session.refresh_from_db()
+        third.refresh_from_db()
+        self.assertEqual(
+            third.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        user_message = self._user_reply(session, "yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = handle_typed_while_awaiting(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 2)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+
+    def test_last_step_rejected_readiness_clears_chips_and_yes_does_not_finish(self):
+        session = self._session()
+        message, response = self._claimed_without_flag(session, "Are you ready to finish?")
+        self._seed_reply_chips(message)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(message.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        outcome = confirm_readiness_reply(self._user_reply(session, "Yes"))
+        self.assertIsNone(outcome)
+        session.refresh_from_db()
+        self.assertFalse(session.completed)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 1)
+
+    def test_last_step_accepted_readiness_shows_finish_chips_and_yes_finishes(self):
+        session = self._session()
+        message, response = self._claimed_without_flag(session, "Are you ready to finish?")
+        self._seed_reply_chips(message)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(
+            message.suggested_responses_kind,
+            Constants.SUGGESTED_RESPONSES_KIND_FINISH,
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        user_message = self._user_reply(session, "yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = handle_typed_while_awaiting(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+        self.assertTrue(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED)
+
+    def test_last_step_forced_pass_shows_finish_chips_and_yes_finishes(self):
+        session = self._session()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "Are you ready to finish?",
+                "You named the worry. Are you ready to finish?",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                self._seed_reply_chips(message)
+                on_model_turn(session, message, response)
+                message.refresh_from_db()
+                self.assertEqual(message.suggested_responses, [])
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named. Are you ready to finish?"
+            )
+            self._seed_reply_chips(third)
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        third.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            third.suggested_responses,
+            [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        user_message = self._user_reply(session, "yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = handle_typed_while_awaiting(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+        self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED)
+
+    def test_last_step_forced_pass_without_a_readiness_ask_opens_finish(self):
+        session = self._session()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "The first part is named.",
+                "The second part is still open.",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                on_model_turn(session, message, response)
+            session.refresh_from_db()
+            self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named now."
+            )
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        third.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            third.usage["step_decision"]["check_done_when"],
+            {"met": True, "missing": "", "forced": True},
+        )
+        self.assertTrue(third.usage["step_decision"]["accepted"]["step_goal_met"])
+        self.assertFalse(third.usage["step_decision"]["accepted"]["asks_readiness"])
+        self.assertEqual(
+            third.suggested_responses,
+            [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(
+            third.suggested_responses_kind,
+            Constants.SUGGESTED_RESPONSES_KIND_FINISH,
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertIsNotNone(session.session_steps.get(order=0).goal_met_at)
+        user_message = self._user_reply(session, "yes")
+        with (
+            patch(
+                "api.utils.extraction.extract_step_result",
+                return_value={"value": "the worry", "confidence": 0.8},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = handle_typed_while_awaiting(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.completed)
+        self.assertEqual(session.state, Constants.SESSION_STATE_COMPLETED)
+
+    def test_a_non_last_forced_pass_without_a_readiness_ask_stays_on_the_step(self):
+        session = self._plain_two_steps()
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the location"},
+        ) as checker:
+            for text in (
+                "The first part is named.",
+                "The second part is still open.",
+            ):
+                message, response = self._claimed_without_flag(session, text)
+                on_model_turn(session, message, response)
+            third, third_response = self._claimed_without_flag(
+                session, "Both parts are named now."
+            )
+            on_model_turn(session, third, third_response)
+        self.assertEqual(checker.call_count, 2)
+        third.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            third.usage["step_decision"]["check_done_when"],
+            {"met": True, "missing": "", "forced": True},
+        )
+        self.assertEqual(third.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNotNone(session.session_steps.get(order=0).goal_met_at)
+        user_message = self._user_reply(session, "yes")
+        self.assertIsNone(confirm_readiness_reply(user_message))
+        self.assertIsNone(confirm_summary_if_done(user_message))
+        session.refresh_from_db()
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+
+    def test_summary_yes_still_completes_when_the_goal_is_not_accepted(self):
+        session = self._plain_two_steps()
+        step = session.session_steps.get(order=0).step
+        step.done_when = "The user confirmed the summary is accurate."
+        step.save(update_fields=["done_when", "updated_at"])
+        self._ask(
+            session,
+            "So, to recap, you worry about missing deadlines and losing your job, "
+            "and it comes up at night. Did I capture that accurately?",
+        )
+        user_message = self._user_reply(session, "Yep")
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        self.assertIsNone(confirm_readiness_reply(user_message))
+        with (
+            patch(
+                "api.utils.extraction.check_done_when",
+                return_value={"met": True, "missing": ""},
+            ),
+            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
+        ):
+            outcome = confirm_summary_if_done(user_message)
+        self.assertIsNotNone(outcome)
+        session.refresh_from_db()
+        self.assertTrue(session.session_steps.get(order=0).completed)
+        self.assertEqual(session.current_step_no, 2)
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
 
     def test_third_done_when_check_is_forced_after_two_rejections(self):
         session = self._plain_two_steps()
@@ -830,6 +1282,7 @@ class GoalGateTests(BaseTest):
             session,
             "Now that you have that tool ready, are you ready to continue?",
         )
+        self._stamp_goal_met(session)
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="yes")
         with (
@@ -875,6 +1328,7 @@ class GoalGateTests(BaseTest):
         }
         session.save(update_fields=["cached_prompt_meta", "updated_at"])
         self._ask(session, "Are you ready to continue?")
+        self._stamp_goal_met(session)
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="yes")
         prompts = []
@@ -897,8 +1351,7 @@ class GoalGateTests(BaseTest):
         self.assertEqual(len(prompts), 1)
         self.assertNotIn("the location", prompts[0])
         self.assertNotIn(hint, prompts[0])
-        if "<TURN_HINT>" in prompts[0]:
-            self.assertIn("The next part is: Ask for a plan.", prompts[0])
+        self.assertNotIn("The next part is", prompts[0])
 
     def test_goal_hint_is_still_consumed_inside_the_same_step(self):
         session = self._session()
@@ -910,9 +1363,30 @@ class GoalGateTests(BaseTest):
         prompted = user_prompt_with_hint(session, user_message)
         self.assertIn("<TURN_HINT>", prompted)
         self.assertIn("the situation", prompted)
+        self.assertNotIn("The next part is", prompted)
         session.refresh_from_db()
         self.assertNotIn("goal_hint", session.cached_prompt_meta or {})
         self.assertEqual(session.current_step_no, 1)
+
+    def test_an_exercise_turn_with_no_other_hint_has_no_turn_hint(self):
+        session = self._session()
+        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
+        Message.objects.create(
+            session=session,
+            sender=agent,
+            text="What is the worry?",
+            question_kind=Constants.QUESTION_KIND_READINESS,
+        )
+        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
+        user_message = Message.objects.create(
+            session=session,
+            sender=user,
+            text="The worry is the presentation deadline and the bills that follow it.",
+        )
+        prompted = user_prompt_with_hint(session, user_message)
+        self.assertNotIn("The next part is", prompted)
+        self.assertNotIn("<TURN_HINT>", prompted)
+        self.assertEqual(prompted, user_message.text)
 
     def test_ready_chip_drops_the_previous_steps_goal_hint(self):
         session = self._two_steps()
@@ -950,12 +1424,12 @@ class GoalGateTests(BaseTest):
         self.assertEqual(len(prompts), 1)
         self.assertNotIn("the plan", prompts[0])
         self.assertNotIn(hint, prompts[0])
-        if "<TURN_HINT>" in prompts[0]:
-            self.assertIn("The next part is: Ask for a plan.", prompts[0])
+        self.assertNotIn("The next part is", prompts[0])
 
     def test_yes_completes_when_the_completion_prompt_fails(self):
         session = self._two_steps()
         self._ask(session, "Are you ready to continue?")
+        self._stamp_goal_met(session)
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
         user_message = Message.objects.create(session=session, sender=user, text="Yes")
         with (
@@ -1119,6 +1593,7 @@ class GoalGateTests(BaseTest):
             session,
             "Now that you have that tool ready, are you ready to continue?",
         )
+        self._stamp_goal_met(session)
         with (
             patch(
                 "api.utils.extraction.extract_step_result",
@@ -1419,6 +1894,7 @@ class GoalGateTests(BaseTest):
         for phrase in self._NEXT_PHRASES:
             session = self._plain_two_steps()
             self._ask(session, "Are you ready to continue?")
+            self._stamp_goal_met(session)
             user_message = self._user_reply(session, phrase)
             with self._patches() as mocks:
                 outcome = confirm_readiness_reply(user_message)
@@ -1509,6 +1985,7 @@ class GoalGateTests(BaseTest):
         session = self._session(done_when="The user confirmed the summary is accurate.")
         self._agree_after_summary(session, "Yes, that covers it")
         self._ask(session, "Are you ready to finish?")
+        self._stamp_goal_met(session)
         user_message = self._user_reply(session, "I'm ready to finish")
         with self._patches():
             with patch("api.utils.SessionStateMachine._confirm", wraps=_confirm) as confirm:
@@ -1570,6 +2047,7 @@ class GoalGateTests(BaseTest):
         self.assertTrue(is_advance_gate_text(text))
         session = self._session(done_when="The user confirmed the summary is accurate.")
         self._ask(session, text)
+        self._stamp_goal_met(session)
         user_message = self._user_reply(session, "yes")
         with self._patches() as mocks:
             outcome = confirm_readiness_reply(user_message)
@@ -1587,6 +2065,7 @@ class GoalGateTests(BaseTest):
             summary_was_confirmed(session, session.session_steps.get(order=0).step)
         )
         self._ask(session, "Are you ready to finish?")
+        self._stamp_goal_met(session)
         user_message = self._user_reply(session, "I'm ready to finish")
         with self._patches():
             with patch("api.utils.SessionStateMachine._confirm", wraps=_confirm) as confirm:
@@ -2152,6 +2631,10 @@ class GoalGateTests(BaseTest):
             patch("api.utils.extraction.judge_ready_reply", return_value="other") as judge,
             patch("api.utils.Agent.get_response", return_value=self._chat_reply()),
             patch("api.tasks.notify_trust_and_safety.delay_on_commit"),
+            patch(
+                "api.utils.risk_check.check_whose_risk",
+                return_value={"about": "self_now", "reason": "Checked in test."},
+            ),
         ):
             response = self._post(
                 "/messages",

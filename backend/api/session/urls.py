@@ -4,6 +4,7 @@ from .views import (
     CompletePreExercise,
     Detail,
     Finish,
+    FirstMessage,
     List,
     Ready,
     Start,
@@ -25,6 +26,7 @@ urlpatterns = [
     path('/<str:id>/close', CloseSession.as_view()),
     path('/<str:id>/dismiss-resume', DismissResume.as_view()),
     path('/<str:id>/form-answers', FormAnswers.as_view()),
+    path('/<str:id>/first-message', FirstMessage.as_view()),
     path('/<str:id>', Detail.as_view()),
     path('/<str:id>/summary', Summary.as_view())
 ]

@@ -103,8 +103,8 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertEqual(rows["step_scope_rules"]["text"], STEP_SCOPE_RULES)
         self.assertEqual(
             rows["step_scope_rules"]["applies"],
-            "exercise only; the first-message sentence is omitted "
-            "on the no-check-in opening turn",
+            "exercise only; the first-message sentence is included "
+            "only on the first turn of a step",
         )
         self.assertNotIn("virtual AI Therapist", programming["text"])
         self.assertNotIn("Maintain a calm, warm, and professional tone.", programming["text"])
@@ -340,7 +340,7 @@ class PromptDebugUnitTests(SimpleTestCase):
         later = _step_already_started(1, 3, bare_opening=False)
         step_two = _step_already_started(2, 3, bare_opening=False)
         self.assertNotIn("Do not write a welcome", opening)
-        self.assertNotIn("Your first message must be the first question", opening)
+        self.assertIn("Your first message must be the first question", opening)
         self.assertIn("Do only what this step's instructions tell you to do", opening)
         self.assertIn(_LENGTH_OVERRIDE, opening)
         self.assertIn("Do not write a welcome", later)
@@ -348,6 +348,10 @@ class PromptDebugUnitTests(SimpleTestCase):
         self.assertIn("Do not introduce the exercise", step_two)
         self.assertIn("Your first message must be the first question", step_two)
         self.assertNotIn("Do not write a welcome", step_two)
+        started = _step_already_started(2, 3, step_started=True)
+        self.assertNotIn("Your first message must be the first question", started)
+        self.assertIn("Do not introduce the exercise", started)
+        self.assertIn("Do only what this step's instructions tell you to do", started)
 
         fresh = SimpleNamespace(
             in_pre_exercise_phase=lambda: False,

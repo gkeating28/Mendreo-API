@@ -193,6 +193,9 @@ class Agent(SmartModel):
             shape_chips,
         )
 
+        prior_offers = list(
+            (session.cached_prompt_meta or {}).get("exercise_offers") or []
+        )
         suggested_responses, text = format_agent_offer(response, exercise, session)
         if followup.suggested_responses is not None:
             suggested_responses = list(followup.suggested_responses)
@@ -226,6 +229,24 @@ class Agent(SmartModel):
             user_message.text or "",
             getattr(response, "risk_level", None),
         )
+        high_turn = (
+            getattr(session, "_turn_risk_level", None) == Constants.LIVE_RISK_LEVEL_HIGH
+            and not getattr(session, "authoring_test", False)
+        )
+        if high_turn:
+            from ..utils.high_risk_copy import high_risk_chat_message
+
+            text = high_risk_chat_message()
+            suggested_responses = []
+            suggested_responses_kind = Constants.SUGGESTED_RESPONSES_KIND_FREE
+            question_kind = Constants.QUESTION_KIND_NONE
+            probe_count = 0
+            exercise = None
+            meta = dict(session.cached_prompt_meta or {})
+            if meta.get("exercise_offers") != prior_offers:
+                meta["exercise_offers"] = prior_offers
+                session.cached_prompt_meta = meta
+                session.save(update_fields=["cached_prompt_meta", "updated_at"])
 
         participant = Participant.objects.filter(session=session, agent=consumer.agent).first()
         skipped = getattr(session, "_retrieval_skipped", "") or ""
@@ -238,6 +259,13 @@ class Agent(SmartModel):
             del session._pending_retrieval
         if hasattr(session, "_retrieval_skipped"):
             del session._retrieval_skipped
+        risk_check = getattr(session, "_risk_check", None)
+        if isinstance(risk_check, dict) and risk_check.get("about"):
+            usage = dict(usage or {})
+            usage["risk_check"] = {
+                "about": risk_check["about"],
+                "reason": risk_check.get("reason") or "",
+            }
         agent_message = Message.objects.create(
             usage=usage,
             asset=asset,
@@ -258,7 +286,7 @@ class Agent(SmartModel):
 
         save_pending_turn_prompt(session, agent_message)
 
-        if session.exercise_id:
+        if session.exercise_id and not high_turn:
             from ..utils.SessionStateMachine import on_model_turn
             from ..utils.SuggestedResponses import apply_midstep_yes_no_chips
 
@@ -266,6 +294,9 @@ class Agent(SmartModel):
             apply_midstep_yes_no_chips(agent_message)
 
         record_step_decision(agent_message)
+        from ..utils.extraction import schedule_step_guide
+
+        schedule_step_guide(session)
 
         if followup.decline_after_agent:
             from ..knowledge.followup import decline_onboarding_followup

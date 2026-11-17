@@ -42,18 +42,23 @@ class AI:
         schema: Type[BaseModel],
         model: str | None = None,
         temperature: float = 0.3,
+        timeout_ms: int | None = None,
     ) -> dict:
         """
         Send a prompt to the configured default AI provider (with failover)
         and return structured output as a dict.
 
         ``model`` is ignored. The provider that handles the call uses its
-        own ``default_model``.
+        own ``default_model``. ``timeout_ms`` overrides the Google HTTP
+        timeout for this call only.
         """
 
         def _run(provider) -> dict:
             pydantic_model, model_settings = build_pydantic_model(
-                provider, model, restore_part_spacing=True
+                provider,
+                model,
+                restore_part_spacing=True,
+                timeout_ms=timeout_ms,
             )
             agent_kwargs = {"output_type": schema}
             merged = dict(model_settings or {})

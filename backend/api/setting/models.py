@@ -61,12 +61,16 @@ class Setting(SmartModel):
         Setting.get_or_create_history_max_turns()
         Setting.get_or_create_thin_answer_min_words()
         Setting.get_or_create_thin_answer_hint_enabled()
+        Setting.get_or_create_exercise_nudge_enabled()
+        Setting.get_or_create_exercise_nudge_after_messages()
         Setting.get_or_create_require_exact_yes()
         Setting.get_or_create_ready_phrases()
         Setting.get_or_create_finish_phrases()
         Setting.get_or_create_generic_answers_default()
         Setting.get_or_create_chat_openers()
+        Setting.get_or_create_first_chat_opener()
         Setting.get_or_create_risk_keywords()
+        Setting.get_or_create_high_risk_copy()
         Setting.get_or_create_trust_and_safety_email()
         Setting.get_or_create_ai_retrieval_enabled()
         Setting.get_or_create_ai_retrieval_exercise_enabled()
@@ -96,6 +100,7 @@ class Setting(SmartModel):
             Constants.KNOWLEDGE_FLOW_REFRESH,
         ):
             Setting.get_or_create_onboarding_copy(variant)
+        Setting.get_or_create_app_tour()
 
     @staticmethod
     def get_or_create_survey_enabled():
@@ -329,6 +334,41 @@ class Setting(SmartModel):
         return str(raw).strip().lower() in {"1", "true", "yes"}
 
     @staticmethod
+    def get_or_create_exercise_nudge_enabled():
+        setting, _ = Setting.objects.get_or_create(
+            key="exercise_nudge_enabled",
+            defaults={"value": "true"},
+        )
+        return setting
+
+    @staticmethod
+    def get_exercise_nudge_enabled() -> bool:
+        raw = Setting._cached_value(
+            "exercise_nudge_enabled",
+            Setting.get_or_create_exercise_nudge_enabled,
+        )
+        return str(raw).strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def get_or_create_exercise_nudge_after_messages():
+        setting, _ = Setting.objects.get_or_create(
+            key="exercise_nudge_after_messages",
+            defaults={"value": "3"},
+        )
+        return setting
+
+    @staticmethod
+    def get_exercise_nudge_after_messages() -> int:
+        raw = Setting._cached_value(
+            "exercise_nudge_after_messages",
+            Setting.get_or_create_exercise_nudge_after_messages,
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 3
+
+    @staticmethod
     def get_or_create_require_exact_yes():
         setting, _ = Setting.objects.get_or_create(
             key=Constants.SETTING_KEY_REQUIRE_EXACT_YES,
@@ -409,6 +449,23 @@ class Setting(SmartModel):
         return _json_list(raw, Constants.DEFAULT_CHAT_OPENERS)
 
     @staticmethod
+    def get_or_create_first_chat_opener():
+        setting, _ = Setting.objects.get_or_create(
+            key=Constants.SETTING_KEY_FIRST_CHAT_OPENER,
+            defaults={"value": Constants.DEFAULT_FIRST_CHAT_OPENER},
+        )
+        return setting
+
+    @staticmethod
+    def get_first_chat_opener() -> str:
+        """Stored first-chat line. Blank means the random opener list is used."""
+        raw = Setting._cached_value(
+            Constants.SETTING_KEY_FIRST_CHAT_OPENER,
+            Setting.get_or_create_first_chat_opener,
+        )
+        return (raw or "").strip()
+
+    @staticmethod
     def get_or_create_risk_keywords():
         setting, _ = Setting.objects.get_or_create(
             key=Constants.SETTING_KEY_RISK_KEYWORDS,
@@ -429,6 +486,18 @@ class Setting(SmartModel):
         if not isinstance(parsed, dict):
             return dict(Constants.DEFAULT_RISK_KEYWORDS)
         return parsed
+
+    @staticmethod
+    def get_or_create_high_risk_copy():
+        from ..utils.high_risk_copy import get_or_create_high_risk_copy
+
+        return get_or_create_high_risk_copy()
+
+    @staticmethod
+    def get_high_risk_copy() -> dict:
+        from ..utils.high_risk_copy import get_high_risk_copy
+
+        return get_high_risk_copy()
 
     @staticmethod
     def get_or_create_trust_and_safety_email():
@@ -979,6 +1048,12 @@ class Setting(SmartModel):
         from ..onboarding.copy import get_onboarding_copy
 
         return get_onboarding_copy(variant)
+
+    @staticmethod
+    def get_or_create_app_tour():
+        from ..tour.services import get_or_create_app_tour
+
+        return get_or_create_app_tour()
 
     @staticmethod
     def _cached_value(key: str, loader):

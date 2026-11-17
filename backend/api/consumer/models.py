@@ -20,6 +20,11 @@ class Consumer(SmartModel):
 
     onboarded = models.BooleanField(default=False)
 
+    # Set when a turn closes for the person's own high risk. The apps read
+    # this on the consumer payload and show the support modal until dismiss.
+    # Database default so older inserts that omit the column still succeed.
+    crisis_notice_pending = models.BooleanField(default=False, db_default=False)
+
     # How the account was created. Nullable with a database default so the
     # current main branch, which does not know this column, can still insert
     # consumers on the shared dev database.

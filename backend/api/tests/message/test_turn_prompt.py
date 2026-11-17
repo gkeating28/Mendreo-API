@@ -144,7 +144,16 @@ class TurnPromptTests(TestCase):
         )
         self.assertIn(self.text, stored.user_prompt)
         self.assertIn("<SESSION_CONTEXT>", stored.system_prompt)
-        self.assertEqual(stored.history, [])
+        self.assertEqual(
+            stored.history,
+            [
+                {
+                    "role": "user",
+                    "text": "The client has just opened this conversation.",
+                },
+                {"role": "assistant", "text": self.session.opener},
+            ],
+        )
 
         listed = MessageListSerializer(agent_message).data
         self.assertNotIn("system_prompt", listed)

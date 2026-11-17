@@ -9,6 +9,7 @@ from ..message.models import Message
 from ..participant.models import Participant
 from ..participant.serializers import ParticipantListSerializer
 
+from ..utils import Constants
 from ..utils.ExerciseOffer import exercise_session_payload_for_message
 from ..utils.Serializers import CreateModelSerializer, ListModelSerializer
 
@@ -38,7 +39,15 @@ class MessageCreateSerializer(CreateModelSerializer):
             )
 
         attrs['sender'] = participant
-            
+
+        if session.close_reason == Constants.CLOSE_REASON_HIGH_RISK:
+            raise serializers.ValidationError(
+                {
+                    "code": Constants.HIGH_RISK_CLOSED_CODE,
+                    "session": "This chat is closed.",
+                }
+            )
+
         if session.completed:
             self.raise_validation_error(
                 key="session",

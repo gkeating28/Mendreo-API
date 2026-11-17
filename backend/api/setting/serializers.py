@@ -89,6 +89,8 @@ class SettingCreateSerializer(serializers.Serializer):
     session_inactivity_minutes = serializers.IntegerField(required=False, min_value=1)
     thin_answer_min_words = serializers.IntegerField(required=False, min_value=1)
     thin_answer_hint_enabled = serializers.BooleanField(required=False)
+    exercise_nudge_enabled = serializers.BooleanField(required=False)
+    exercise_nudge_after_messages = serializers.IntegerField(required=False, min_value=1)
     require_exact_yes = serializers.BooleanField(required=False)
     ready_phrases = serializers.ListField(
         child=serializers.CharField(min_length=1, max_length=60),
@@ -112,11 +114,17 @@ class SettingCreateSerializer(serializers.Serializer):
         allow_empty=True,
         max_length=20,
     )
+    first_chat_opener = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=Constants.FIRST_CHAT_OPENER_MAX_LENGTH,
+    )
     onboarding_copy_welcome = serializers.JSONField(required=False)
     onboarding_copy_initial = serializers.JSONField(required=False)
     onboarding_copy_return = serializers.JSONField(required=False)
     onboarding_copy_refresh = serializers.JSONField(required=False)
     risk_keywords = serializers.JSONField(required=False)
+    high_risk_copy = serializers.JSONField(required=False)
     trust_and_safety_email = serializers.EmailField(required=False, allow_blank=True)
     store_turn_prompts = serializers.BooleanField(required=False)
     chat_debug_enabled = serializers.BooleanField(required=False)
@@ -207,6 +215,9 @@ class SettingCreateSerializer(serializers.Serializer):
             seen.add(text)
         return value
 
+    def validate_first_chat_opener(self, value):
+        return (value or "").strip()
+
     def _validate_onboarding_copy(self, value):
         from ..onboarding.copy import validate_copy_payload
 
@@ -223,6 +234,11 @@ class SettingCreateSerializer(serializers.Serializer):
 
     def validate_onboarding_copy_refresh(self, value):
         return self._validate_onboarding_copy(value)
+
+    def validate_high_risk_copy(self, value):
+        from ..utils.high_risk_copy import validate_high_risk_copy
+
+        return validate_high_risk_copy(value)
 
     def _insights_number(self, attrs, name, getter):
         incoming = getattr(self, "initial_data", {}) or {}
@@ -316,6 +332,16 @@ class SettingCreateSerializer(serializers.Serializer):
             hint.value = str(validated_data["thin_answer_hint_enabled"]).lower()
             hint.save()
 
+        if "exercise_nudge_enabled" in validated_data:
+            nudge = Setting.get_or_create_exercise_nudge_enabled()
+            nudge.value = str(validated_data["exercise_nudge_enabled"]).lower()
+            nudge.save()
+
+        if "exercise_nudge_after_messages" in validated_data:
+            after = Setting.get_or_create_exercise_nudge_after_messages()
+            after.value = str(validated_data["exercise_nudge_after_messages"])
+            after.save()
+
         if "require_exact_yes" in validated_data:
             exact = Setting.get_or_create_require_exact_yes()
             exact.value = str(validated_data["require_exact_yes"]).lower()
@@ -341,10 +367,20 @@ class SettingCreateSerializer(serializers.Serializer):
             openers.value = json.dumps(validated_data["chat_openers"])
             openers.save()
 
+        if "first_chat_opener" in incoming:
+            first_opener = Setting.get_or_create_first_chat_opener()
+            first_opener.value = validated_data.get("first_chat_opener") or ""
+            first_opener.save()
+
         if "risk_keywords" in validated_data:
             keywords = Setting.get_or_create_risk_keywords()
             keywords.value = json.dumps(validated_data["risk_keywords"])
             keywords.save()
+
+        if "high_risk_copy" in validated_data:
+            copy = Setting.get_or_create_high_risk_copy()
+            copy.value = json.dumps(validated_data["high_risk_copy"])
+            copy.save()
 
         if "trust_and_safety_email" in validated_data:
             address = Setting.get_or_create_trust_and_safety_email()
@@ -465,12 +501,16 @@ class SettingCreateSerializer(serializers.Serializer):
             "session_inactivity_minutes": Setting.get_session_inactivity_minutes(),
             "thin_answer_min_words": Setting.get_thin_answer_min_words(),
             "thin_answer_hint_enabled": Setting.get_thin_answer_hint_enabled(),
+            "exercise_nudge_enabled": Setting.get_exercise_nudge_enabled(),
+            "exercise_nudge_after_messages": Setting.get_exercise_nudge_after_messages(),
             "require_exact_yes": Setting.get_require_exact_yes(),
             "ready_phrases": Setting.get_ready_phrases(),
             "finish_phrases": Setting.get_finish_phrases(),
             "generic_answers_default": Setting.get_generic_answers_default(),
             "chat_openers": Setting.get_chat_openers(),
+            "first_chat_opener": Setting.get_first_chat_opener(),
             "risk_keywords": Setting.get_risk_keywords(),
+            "high_risk_copy": Setting.get_high_risk_copy(),
             "trust_and_safety_email": Setting.get_trust_and_safety_email(),
             "store_turn_prompts": Setting.get_store_turn_prompts(),
             "chat_debug_enabled": Setting.get_chat_debug_enabled(),
