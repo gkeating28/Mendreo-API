@@ -291,18 +291,72 @@ def _called_name_missing(text: str, allowed: str) -> bool:
     return False
 
 
-_BANNED_OPENING = re.compile(
-    r"^(?:thanks for sharing|thank you for sharing|thank you for|it sounds like)\b[^.?!]*[.?!]\s*",
+# Longer forms first, so "thank you for sharing" is not cut back to "thank you for".
+_OPENER_PHRASE = re.compile(
+    r"^(?:thank you for sharing|thanks for sharing|thank you for|it sounds like)(?:\s+that)?",
     re.IGNORECASE,
 )
 
 
+def _word_count(text: str) -> int:
+    return len((text or "").split())
+
+
+def _sentences(text: str) -> list[str]:
+    return [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+", (text or "").strip())
+        if part.strip()
+    ]
+
+
+def _is_only_a_question(text: str) -> bool:
+    sentences = _sentences(text)
+    return len(sentences) == 1 and sentences[0].endswith("?")
+
+
+def _capitalize_first(text: str) -> str:
+    chars = list(text)
+    for index, char in enumerate(chars):
+        if char.isalpha():
+            chars[index] = char.upper()
+            return "".join(chars)
+    return text
+
+
+def _strip_would_gut(original: str, candidate: str) -> bool:
+    """A strip that leaves almost nothing, or only the closing question, is refused."""
+    if _word_count(candidate) < 12:
+        return True
+    if len(_sentences(original)) >= 2 and _is_only_a_question(candidate):
+        return True
+    return False
+
+
 def _strip_banned_openings(text: str) -> str:
+    """Drop a leading filler sentence, or only the filler phrase when the sentence has more in it.
+
+    A phrase cut that would leave fewer than 12 words, or a single question when the
+    reply had two or more sentences, is not applied.
+    """
     cleaned = text.strip()
     previous = None
     while cleaned and cleaned != previous:
         previous = cleaned
-        cleaned = _BANNED_OPENING.sub("", cleaned, count=1).strip()
+        match = _OPENER_PHRASE.match(cleaned)
+        if not match:
+            break
+        rest = cleaned[match.end():].lstrip(" \t,:")
+        if rest[:1] in ".?!":
+            nxt = re.sub(r"^[.?!]+\s*", "", rest).strip()
+            if not nxt:
+                break
+            cleaned = nxt
+            continue
+        candidate = _capitalize_first(rest)
+        if _strip_would_gut(cleaned, candidate):
+            break
+        cleaned = candidate
     return cleaned
 
 

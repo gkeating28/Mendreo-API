@@ -16,6 +16,7 @@ from ...utils.Agent import (
     _reply_offers_to_move_on,
     get_response,
 )
+from ...utils.prompt_debug import reply_style_report
 from ...utils.reply_style import (
     normalise_reply,
     reply_ends_mid_sentence,
@@ -317,7 +318,7 @@ class ReplyStyleTests(SimpleTestCase):
             normalise_reply(
                 "Thanks for sharing. It sounds like meetings are hard. What happens next?"
             ),
-            "What happens next?",
+            "It sounds like meetings are hard. What happens next?",
         )
         self.assertEqual(
             normalise_reply("Thank you for sharing that. Name one worry."),
@@ -327,6 +328,34 @@ class ReplyStyleTests(SimpleTestCase):
         self.assertEqual(
             normalise_reply("You said it sounds like a lot. What is one part of it?"),
             "You said it sounds like a lot. What is one part of it?",
+        )
+        self.assertEqual(
+            normalise_reply("Have I captured that accurately, indeed?"),
+            "Have I captured that accurately, indeed?",
+        )
+
+    def test_a_summary_after_a_banned_opener_is_kept(self):
+        raw = (
+            "It sounds like you are worried about losing your job because of layoffs, "
+            "which makes it hard to switch off at night. "
+            "Have I captured that accurately, indeed?"
+        )
+        cleaned = normalise_reply(raw)
+        self.assertIn("worried about losing your job", cleaned)
+        self.assertIn("Have I captured that accurately, indeed?", cleaned)
+        self.assertFalse(cleaned.lower().startswith("it sounds like"))
+        self.assertEqual(
+            reply_style_report(raw, cleaned)["rules"],
+            ["opening strip"],
+        )
+
+        short = (
+            "It sounds like the worry is work. Have I captured that accurately, indeed?"
+        )
+        self.assertEqual(normalise_reply(short), short)
+        self.assertEqual(
+            reply_style_report(short, short),
+            {"changed": False, "rules": []},
         )
 
 
