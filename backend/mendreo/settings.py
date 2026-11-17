@@ -304,6 +304,11 @@ EXERCISE_RESTATE_STEP_INSTRUCTIONS = os.environ.get(
 EXERCISE_STEP_GUIDE = os.environ.get(
     'EXERCISE_STEP_GUIDE', ''
 ).lower() in ('true', '1', 'yes')
+# When false, the step guide still names what is missing but does not ask for
+# or hint the next instruction line. On by default.
+EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION = os.environ.get(
+    'EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION', 'true'
+).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.

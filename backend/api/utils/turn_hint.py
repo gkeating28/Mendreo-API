@@ -454,10 +454,15 @@ def _hinted_user_prompt(session, user_message) -> str:
         else:
             goal = _consume_goal_hint(session)
             guide = _consume_step_guide(session)
+            from .extraction import step_guide_next_instruction_enabled
+
+            next_instruction = (guide or {}).get("next_instruction") or ""
+            if not step_guide_next_instruction_enabled():
+                next_instruction = ""
             merged = merge_goal_and_step_guide(
                 goal,
                 (guide or {}).get("missing") or "",
-                (guide or {}).get("next_instruction") or "",
+                next_instruction,
             )
             if guide is not None and merged and merged != (goal or "").strip():
                 _note_step_guide(session, guide, used=True)

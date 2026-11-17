@@ -12,6 +12,10 @@ from ...setting.models import Setting
 from ...utils import Constants
 from ...utils.Agent import ExerciseStateResponse
 from ...utils.extraction import (
+    _DONE_WHEN_COVERAGE,
+    _StepGuide,
+    _StepGuideMissing,
+    check_done_when,
     check_step_guide,
     instruction_lines,
     run_step_guide,
@@ -141,6 +145,78 @@ class StepGuideTextTests(SimpleTestCase):
         self.assertIn("tone, empathy, what not to discuss", prompt)
         self.assertIn("must not be returned as next_instruction", prompt)
         self.assertEqual(result, {"missing": "what happened", "next_instruction": ""})
+
+    def _guide_call(self, *, next_instruction="Ask what happened."):
+        step = type(
+            "Step",
+            (),
+            {"instructions": "Ask what happened.", "done_when": "What happened."},
+        )()
+        with patch(
+            "api.utils.extraction._step_transcript",
+            return_value="User: nothing yet.",
+        ), patch(
+            "api.utils.extraction.AI.ask",
+            return_value={"missing": "what happened", "next_instruction": next_instruction},
+        ) as ask:
+            result = check_step_guide(None, step)
+        return ask, result
+
+    def test_the_guide_prompt_uses_the_done_when_coverage_wording(self):
+        with override_settings(EXERCISE_STEP_GUIDE=True):
+            ask, _result = self._guide_call()
+        prompt = ask.call_args.args[0]
+        self.assertIn(_DONE_WHEN_COVERAGE.strip(), prompt)
+        self.assertIn(
+            "Judge every part of Done when against the transcript and require all parts.",
+            prompt,
+        )
+        self.assertIn(
+            "When Done when asks for a count or a length, count literally and do not round up.",
+            prompt,
+        )
+        self.assertIn(
+            "A bare yes, no, or one-word reply to a question is not by itself a description "
+            "or a rich answer unless Done when says otherwise.",
+            prompt,
+        )
+        with patch(
+            "api.utils.extraction._step_transcript",
+            return_value="User: a named worry.",
+        ), patch(
+            "api.utils.extraction.AI.ask",
+            return_value={"met": False, "missing": "the plan"},
+        ) as checker:
+            check_done_when(None, type("Step", (), {"done_when": "A named worry and a plan."})())
+        self.assertIn(_DONE_WHEN_COVERAGE.strip(), checker.call_args.args[0])
+
+    def test_next_instruction_is_omitted_when_that_flag_is_off(self):
+        with override_settings(
+            EXERCISE_STEP_GUIDE=True,
+            EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION=False,
+        ):
+            ask, result = self._guide_call()
+        prompt = ask.call_args.args[0]
+        self.assertIn(_DONE_WHEN_COVERAGE.strip(), prompt)
+        self.assertNotIn("next_instruction", prompt)
+        self.assertIs(ask.call_args.args[1], _StepGuideMissing)
+        self.assertEqual(result, {"missing": "what happened", "next_instruction": ""})
+
+    def test_next_instruction_flag_on_still_asks_for_it(self):
+        with override_settings(
+            EXERCISE_STEP_GUIDE=True,
+            EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION=True,
+        ):
+            ask, result = self._guide_call()
+        prompt = ask.call_args.args[0]
+        self.assertIs(ask.call_args.args[1], _StepGuide)
+        self.assertIn("next_instruction must be the first item", prompt)
+        self.assertIn(
+            "An item is conditional when it applies only if the user says or does something in particular.",
+            prompt,
+        )
+        self.assertIn("is not conditional", prompt)
+        self.assertEqual(result["next_instruction"], "Ask what happened.")
 
     def test_if_in_the_middle_of_an_item_is_kept(self):
         kept = (
@@ -352,6 +428,31 @@ class StepGuideTests(TestCase):
         self.assertIn("Ask where it shows up.", prompted)
         self.assertNotIn("Still to cover:", prompted)
         self.assertEqual(prompted.count("<TURN_HINT>"), 1)
+
+    def test_the_next_instruction_clause_follows_its_own_flag(self):
+        def prompted(flag):
+            session, _step, user = self._live()
+            session.cached_prompt_meta = {
+                "step_guide": {
+                    "missing": "a time",
+                    "next_instruction": "Ask when it started.",
+                    "step_no": 1,
+                }
+            }
+            session.save(update_fields=["cached_prompt_meta", "updated_at"])
+            message = self._user_message(session, user)
+            with override_settings(
+                EXERCISE_STEP_GUIDE=True,
+                EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION=flag,
+            ):
+                return user_prompt_with_hint(session, message)
+
+        off = prompted(False)
+        self.assertNotIn("Next, do this from the step's instructions:", off)
+        self.assertIn("Still to cover: a time.", off)
+        on = prompted(True)
+        self.assertIn("Next, do this from the step's instructions: Ask when it started.", on)
+        self.assertIn("Still to cover: a time.", on)
 
     def test_check_in_and_general_chat_are_left_alone(self):
         check_in, _step, check_user = self._live(step_no=0)
