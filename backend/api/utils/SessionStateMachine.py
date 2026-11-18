@@ -439,37 +439,6 @@ def _complete_recorded_summary(session, user_message) -> ChipOutcome | None:
     return _confirm(session, user_message)
 
 
-def _judge_summary_reply(session, previous, user_message) -> dict | None:
-    """None when today's phrase path should decide. Otherwise the judge verdict.
-
-    A bare yes or ok skips the call when the previous message already matches
-    the summary phrase list. A timeout or error comes back as not confirmed.
-    """
-    from .summary_confirmation import (
-        is_summary_confirmation,
-        structural_summary_reply_confirms,
-        summary_confirm_judge_enabled,
-        summary_confirmation_required,
-        summary_exchange_verdict,
-    )
-
-    if not summary_confirm_judge_enabled():
-        return None
-    if previous is None or not (previous.text or "").strip().endswith("?"):
-        return None
-    if structural_summary_reply_confirms(user_message.text or "") and is_summary_confirmation(
-        previous.text or ""
-    ):
-        return None
-    session_step = _live_step(session)
-    if session_step is None or session_step.completed:
-        return None
-    done_when = (getattr(session_step.step, "done_when", None) or "").strip()
-    if not summary_confirmation_required(done_when):
-        return None
-    return summary_exchange_verdict(session, previous, user_message)
-
-
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
     """An affirmation after a summary question completes a step that is not the last.
 
@@ -495,18 +464,14 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
             return None
         return _complete_recorded_summary(session, user_message)
 
-    judged = _judge_summary_reply(session, previous, user_message)
-    if judged is not None and not judged.get("confirmed"):
-        return None
-
-    if judged is None and not structural_summary_reply_confirms(user_message.text or ""):
+    if not structural_summary_reply_confirms(user_message.text or ""):
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
         return None
     if not (getattr(session_step.step, "done_when", None) or "").strip():
         return None
-    if judged is None and (previous is None or not is_summary_confirmation(previous.text or "")):
+    if previous is None or not is_summary_confirmation(previous.text or ""):
         return None
 
     from .extraction import check_done_when
