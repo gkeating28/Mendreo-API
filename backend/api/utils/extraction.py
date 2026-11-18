@@ -61,6 +61,60 @@ def _as_bool(value) -> bool:
     return str(value or "").strip().lower() in {"true", "yes", "y", "1"}
 
 
+class _SummaryConfirmVerdict(BaseModel):
+    accepted: bool = Field(
+        description=(
+            "True only when the assistant asked the user to confirm a summary "
+            "of what they said and the user accepted that summary."
+        )
+    )
+
+
+SUMMARY_JUDGE_TIMEOUT_MS = 8000
+
+
+def _summary_judge_timeout(exc: BaseException) -> bool:
+    for cls in type(exc).__mro__:
+        if "timeout" in cls.__name__.lower():
+            return True
+    text = str(exc).lower()
+    return "timeout" in text or "timed out" in text
+
+
+def judge_summary_exchange(*, question: str, reply: str) -> dict:
+    """Did Toni ask the user to confirm a summary, and did the user accept it?
+
+    confirmed is false when the call errors or times out. result is yes, no,
+    error, or timeout.
+    """
+    try:
+        data = AI.ask(
+            (
+                "You are judging one reply in an exercise.\n"
+                "Answer accepted true only when both are true: the assistant "
+                "asked the user to confirm a summary of what they said, and "
+                "the user accepted that summary.\n"
+                "Accepting \"That is accurate\" is yes. "
+                "\"It is mostly right\" is no. "
+                "\"Most of the day\" after \"How often do you worry?\" is no.\n"
+                "When unsure, accepted is false.\n\n"
+                "Assistant message:\n"
+                f"{question or '(none)'}\n\n"
+                "User reply:\n"
+                f"{reply}"
+            ),
+            _SummaryConfirmVerdict,
+            temperature=0.1,
+            timeout_ms=SUMMARY_JUDGE_TIMEOUT_MS,
+        )
+    except Exception as exc:
+        logger.exception("summary confirmation judgement failed")
+        result = "timeout" if _summary_judge_timeout(exc) else "error"
+        return {"confirmed": False, "result": result}
+    accepted = _as_bool((data or {}).get("accepted"))
+    return {"confirmed": accepted, "result": "yes" if accepted else "no"}
+
+
 def judge_ready_reply(*, question: str, reply: str, earlier: str) -> str:
     """yes, no, or other. Errors and invalid answers are other."""
     try:
