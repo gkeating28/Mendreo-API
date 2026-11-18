@@ -93,7 +93,6 @@ class ListCreate(SmartPaginationAPIView):
             confirm_summary_if_done,
             consume_chip,
             handle_typed_while_awaiting,
-            previous_message_is_recorded_summary,
         )
 
         outcome = consume_chip(instance, from_suggested_response)
@@ -101,10 +100,7 @@ class ListCreate(SmartPaginationAPIView):
             outcome = handle_typed_while_awaiting(instance)
         if outcome is None:
             outcome = confirm_readiness_reply(instance)
-        if outcome is None and (
-            not from_suggested_response
-            or previous_message_is_recorded_summary(instance)
-        ):
+        if outcome is None:
             outcome = confirm_summary_if_done(instance)
         if outcome is not None:
             instance = outcome.message
