@@ -314,6 +314,11 @@ EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION = os.environ.get(
 EXERCISE_HINT_RESTATES_INSTRUCTIONS = os.environ.get(
     'EXERCISE_HINT_RESTATES_INSTRUCTIONS', ''
 ).lower() in ('true', '1', 'yes')
+# When true, a summary-required step can accept a confirmation the phrase list
+# missed, by one short model call. Off leaves that path unchanged.
+EXERCISE_SUMMARY_CONFIRM_JUDGE = os.environ.get(
+    'EXERCISE_SUMMARY_CONFIRM_JUDGE', ''
+).lower() in ('true', '1', 'yes')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.
