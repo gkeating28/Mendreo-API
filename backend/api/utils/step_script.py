@@ -81,10 +81,43 @@ def _covered(item: str, assistant_texts: list[str]) -> bool:
     return False
 
 
+_CONDITIONAL = re.compile(r"^\s*(?:if|when|should)\b|\bwhen asked\b", re.IGNORECASE)
+_ASK_WHETHER = re.compile(
+    r"\bask\s+(?:them|him|her|the user|the person|the client)?\s*if\b",
+    re.IGNORECASE,
+)
+_ACTION = re.compile(
+    r"\b(?:ask|explain|summarise|summarize|help|guide|invite|show|walk|offer)\b",
+    re.IGNORECASE,
+)
+_WRITING_RULE = re.compile(
+    r"\byour (?:first |next )?message\b|"
+    r"\bsuggested responses\b|"
+    r"\bmust be a question\b|"
+    r"\bdo not\b|"
+    r"\bdon['\u2019]t\b|"
+    r"^\s*be\b",
+    re.IGNORECASE,
+)
+
+
+def _turn_task(item: str) -> bool:
+    """True when this sentence tells Toni to ask or do something now."""
+    if _CONDITIONAL.search(item):
+        return False
+    if re.search(r"\bif they\b|\bif an\b", item, re.IGNORECASE) and not _ASK_WHETHER.search(item):
+        return False
+    if _WRITING_RULE.search(item):
+        return False
+    return bool(_ACTION.search(item))
+
+
 def next_instruction(instructions: str, assistant_texts: list[str] | None = None) -> str | None:
-    """The first instruction sentence this conversation has not already asked."""
+    """The first ask-or-do sentence this conversation has not already carried out."""
     asked = list(assistant_texts or [])
     for item in instruction_items(instructions):
+        if not _turn_task(item):
+            continue
         if not _covered(item, asked):
             return item
     return None
