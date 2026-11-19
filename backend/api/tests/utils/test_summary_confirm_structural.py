@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from rest_framework import status
 
 from ...message.models import Message
@@ -26,15 +26,13 @@ _SUMMARY = (
     "You are worried about losing your job because of layoffs. "
     "Have I captured that accurately?"
 )
-_PHRASE_SUMMARY = (
-    "So, to recap, you worry about missing deadlines and losing your job, "
-    "and it comes up at night when you are alone. Did I capture that accurately?"
-)
 _GOT_IT = (
     "You are worried about losing your job because of layoffs, "
     "which makes it hard to switch off at night. "
     "Have I got that right, indeed?"
 )
+_JUDGE = "api.utils.extraction.judge_summary_exchange"
+_JUDGE_YES = {"confirmed": True, "result": "yes"}
 
 
 class _SummaryFixture(BaseTest):
@@ -145,7 +143,7 @@ class _SummaryFixture(BaseTest):
 class StructuralSummaryConfirmTests(_SummaryFixture):
     def test_held_summary_then_typed_yes_completes_on_the_first_yes(self):
         session = self._session()
-        with self._quiet():
+        with self._quiet(), patch(_JUDGE, return_value=_JUDGE_YES):
             self._hold_summary(session)
             outcome = confirm_summary_if_done(self._user(session, "yes"))
         self.assertIsNotNone(outcome)
@@ -153,7 +151,7 @@ class StructuralSummaryConfirmTests(_SummaryFixture):
 
     def test_tapped_yes_thats_right_completes_the_held_summary(self):
         session = self._session()
-        with self._quiet() as (greeting, chat, queued):
+        with self._quiet() as (greeting, chat, queued), patch(_JUDGE, return_value=_JUDGE_YES):
             self._hold_summary(session, chips=["Yes, that's right"])
             response = self._post(
                 "/messages",
@@ -214,7 +212,7 @@ class StructuralSummaryConfirmTests(_SummaryFixture):
 
     def test_a_non_question_hold_marks_the_next_question(self):
         session = self._session()
-        with self._quiet():
+        with self._quiet(), patch(_JUDGE, return_value=_JUDGE_YES):
             self._turn(session, "We have covered what this step asked for.", goal=True)
             self.assertEqual(session.cached_prompt_meta[SUMMARY_CONFIRM_EXPECT_STEP], 1)
             self.assertNotIn(SUMMARY_CONFIRM_MESSAGE_ID, session.cached_prompt_meta)
@@ -227,19 +225,10 @@ class StructuralSummaryConfirmTests(_SummaryFixture):
         self.assertIsNotNone(outcome)
         self._assert_advanced(session)
 
-    def test_phrase_fallback_still_completes_on_an_exact_yes(self):
-        session = self._session()
-        with self._quiet():
-            self._turn(session, _PHRASE_SUMMARY)
-            self.assertNotIn(SUMMARY_CONFIRM_MESSAGE_ID, session.cached_prompt_meta or {})
-            outcome = confirm_summary_if_done(self._user(session, "yes"))
-        self.assertIsNotNone(outcome)
-        self._assert_advanced(session)
-
     def test_an_unmarked_summary_accepts_yes_that_is_right(self):
         for reply in ("Yes, that is right", "yes"):
             session = self._session()
-            with self._quiet():
+            with self._quiet(), patch(_JUDGE, return_value=_JUDGE_YES):
                 self._unmarked_summary(session)
                 self.assertNotIn(
                     SUMMARY_CONFIRM_MESSAGE_ID, session.cached_prompt_meta or {}
@@ -261,10 +250,13 @@ class StructuralSummaryConfirmTests(_SummaryFixture):
         session = self._session()
         with self._quiet():
             self._unmarked_summary(session)
-            with patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": False, "missing": "a time"},
-            ) as checker:
+            with (
+                patch(_JUDGE, return_value=_JUDGE_YES),
+                patch(
+                    "api.utils.extraction.check_done_when",
+                    return_value={"met": False, "missing": "a time"},
+                ) as checker,
+            ):
                 outcome = confirm_summary_if_done(self._user(session, "Yes, that is right"))
         checker.assert_called_once()
         self.assertIsNone(outcome)
@@ -322,3 +314,93 @@ def _quiet_models():
         patch("api.utils.extraction.judge_ready_reply", return_value="other"),
     ):
         yield greeting, chat, queued
+
+
+@override_settings(AI_ASYNC_MESSAGES=False)
+class SummaryJudgeGateTests(_SummaryFixture):
+    def test_a_rejected_judgement_does_not_check_done_when(self):
+        session = self._session()
+        with self._quiet():
+            self._hold_summary(session)
+            with (
+                patch(_JUDGE, return_value={"confirmed": False, "result": "no"}),
+                patch("api.utils.extraction.check_done_when") as checker,
+            ):
+                outcome = confirm_summary_if_done(self._user(session, "yes"))
+        checker.assert_not_called()
+        self.assertIsNone(outcome)
+        self._assert_open(session)
+
+    def test_a_confirmed_judgement_completes_when_done_when_is_met(self):
+        session = self._session()
+        with self._quiet(), patch(_JUDGE, return_value=_JUDGE_YES):
+            self._hold_summary(session)
+            outcome = confirm_summary_if_done(self._user(session, "yes"))
+        self.assertIsNotNone(outcome)
+        self._assert_advanced(session)
+
+    def test_a_confirmed_judgement_stays_open_when_done_when_is_not_met(self):
+        session = self._session()
+        with self._quiet():
+            self._hold_summary(session)
+            with (
+                patch(_JUDGE, return_value=_JUDGE_YES),
+                patch(
+                    "api.utils.extraction.check_done_when",
+                    return_value={"met": False, "missing": "a time"},
+                ),
+            ):
+                outcome = confirm_summary_if_done(self._user(session, "yes"))
+        self.assertIsNone(outcome)
+        self._assert_open(session)
+
+    def test_a_timeout_verdict_returns_none(self):
+        session = self._session()
+        with self._quiet():
+            self._hold_summary(session)
+            with patch(_JUDGE, return_value={"confirmed": False, "result": "timeout"}):
+                outcome = confirm_summary_if_done(self._user(session, "yes"))
+        self.assertIsNone(outcome)
+        self._assert_open(session)
+
+    def test_the_last_step_does_not_call_the_judge(self):
+        session = self._session(steps=1)
+        with self._quiet(), patch(_JUDGE) as judge:
+            self._hold_summary(session)
+            outcome = confirm_summary_if_done(self._user(session, "yes"))
+        self.assertIsNone(outcome)
+        judge.assert_not_called()
+        self._assert_open(session)
+
+
+class SummaryJudgeExchangeTests(SimpleTestCase):
+    def test_accepted_true_is_confirmed(self):
+        from ...utils.extraction import judge_summary_exchange
+
+        with patch("api.utils.extraction.AI.ask", return_value={"accepted": True}):
+            verdict = judge_summary_exchange(question="Did I get that?", reply="yes")
+        self.assertEqual(verdict, {"confirmed": True, "result": "yes"})
+
+    def test_accepted_false_is_not_confirmed(self):
+        from ...utils.extraction import judge_summary_exchange
+
+        with patch("api.utils.extraction.AI.ask", return_value={"accepted": False}):
+            verdict = judge_summary_exchange(question="Did I get that?", reply="no")
+        self.assertEqual(verdict, {"confirmed": False, "result": "no"})
+
+    def test_a_timed_out_call_is_a_timeout(self):
+        from ...utils.extraction import judge_summary_exchange
+
+        with patch(
+            "api.utils.extraction.AI.ask",
+            side_effect=RuntimeError("the request timed out"),
+        ):
+            verdict = judge_summary_exchange(question="Did I get that?", reply="yes")
+        self.assertEqual(verdict, {"confirmed": False, "result": "timeout"})
+
+    def test_a_value_error_is_an_error(self):
+        from ...utils.extraction import judge_summary_exchange
+
+        with patch("api.utils.extraction.AI.ask", side_effect=ValueError("bad")):
+            verdict = judge_summary_exchange(question="Did I get that?", reply="yes")
+        self.assertEqual(verdict, {"confirmed": False, "result": "error"})

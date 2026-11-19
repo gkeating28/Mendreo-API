@@ -326,52 +326,6 @@ class GoalGateTests(BaseTest):
         self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
         self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
 
-    def test_yep_completes_the_step_when_done_when_is_met(self):
-        session = self._session()
-        exercise = session.exercise
-        exercise.steps_no = 2
-        exercise.save(update_fields=["steps_no", "updated_at"])
-        next_step = Step.objects.create(
-            exercise=exercise,
-            title="Next",
-            description="Next",
-            instructions="Ask for a plan.",
-            order=1,
-        )
-        SessionStep.objects.create(
-            session=session,
-            step=next_step,
-            order=1,
-            completed=False,
-        )
-        session.total_steps_no = 2
-        session.save(update_fields=["total_steps_no", "updated_at"])
-        agent = Participant.objects.filter(session=session, agent__isnull=False).first()
-        Message.objects.create(
-            session=session,
-            sender=agent,
-            text=(
-                "So, to recap, you worry about missing deadlines and losing your job, "
-                "and it comes up at night when you are alone. Did I capture that accurately?"
-            ),
-            reasoning="test",
-        )
-        user = Participant.objects.filter(session=session, consumer__isnull=False).first()
-        user_message = Message.objects.create(session=session, sender=user, text="Yep")
-        with (
-            patch(
-                "api.utils.extraction.check_done_when",
-                return_value={"met": True, "missing": ""},
-            ),
-            patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
-        ):
-            outcome = confirm_summary_if_done(user_message)
-        self.assertIsNotNone(outcome)
-        session.refresh_from_db()
-        self.assertTrue(session.session_steps.get(order=0).completed)
-        self.assertEqual(session.current_step_no, 2)
-        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
-
     def test_yep_stays_in_chat_when_done_when_is_not_met(self):
         session = self._session()
         user = Participant.objects.filter(session=session, consumer__isnull=False).first()
@@ -456,6 +410,10 @@ class GoalGateTests(BaseTest):
         user_message = Message.objects.create(session=session, sender=user, text="Yep")
         with (
             patch(
+                "api.utils.extraction.judge_summary_exchange",
+                return_value={"confirmed": True, "result": "yes"},
+            ),
+            patch(
                 "api.utils.extraction.check_done_when",
                 return_value={"met": True, "missing": ""},
             ),
@@ -488,12 +446,6 @@ class GoalGateTests(BaseTest):
         check.assert_not_called()
         session.refresh_from_db()
         self.assertFalse(session.session_steps.get(order=0).completed)
-
-    def _summary_question(self):
-        return (
-            "So, to recap, you worry about missing deadlines and losing your job, "
-            "and it comes up at night when you are alone. Did I capture that accurately?"
-        )
 
     def test_yes_after_a_polar_question_does_not_complete_a_non_last_step(self):
         for reply in ("yes", "yep"):
@@ -534,32 +486,6 @@ class GoalGateTests(BaseTest):
             self.assertEqual(session.current_step_no, 1, reply)
             self.assertFalse(session.session_steps.get(order=0).completed, reply)
             self.assertIsNone(session.session_steps.get(order=0).goal_met_at, reply)
-
-    def test_yes_after_a_summary_question_follows_the_check(self):
-        for met in (True, False):
-            session = self._plain_two_steps()
-            self._ask(session, self._summary_question())
-            user_message = self._user_reply(session, "yes")
-            with (
-                patch(
-                    "api.utils.extraction.check_done_when",
-                    return_value={"met": met, "missing": "" if met else "the location"},
-                ) as checker,
-                patch("api.utils.AIWorkerClient.request_session_greeting", return_value=None),
-            ):
-                outcome = confirm_summary_if_done(user_message)
-            checker.assert_called_once()
-            session.refresh_from_db()
-            step = session.session_steps.get(order=0)
-            if met:
-                self.assertIsNotNone(outcome)
-                self.assertTrue(step.completed)
-                self.assertEqual(session.current_step_no, 2)
-            else:
-                self.assertIsNone(outcome)
-                self.assertFalse(step.completed)
-                self.assertEqual(session.current_step_no, 1)
-                self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
 
     def _two_steps(self):
         session = self._session(
@@ -1135,6 +1061,10 @@ class GoalGateTests(BaseTest):
         self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
         self.assertIsNone(confirm_readiness_reply(user_message))
         with (
+            patch(
+                "api.utils.extraction.judge_summary_exchange",
+                return_value={"confirmed": True, "result": "yes"},
+            ),
             patch(
                 "api.utils.extraction.check_done_when",
                 return_value={"met": True, "missing": ""},

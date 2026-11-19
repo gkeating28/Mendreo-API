@@ -440,10 +440,10 @@ def _complete_recorded_summary(session, user_message) -> ChipOutcome | None:
 
 
 def confirm_summary_if_done(user_message) -> ChipOutcome | None:
-    """An affirmation after a summary question completes a step that is not the last.
+    """A judged acceptance of a summary completes a step that is not the last.
 
-    The previous assistant message has to be that summary question. The last
-    step returns here so the chat model can ask whether they are ready to finish.
+    The last step returns here so the chat model can ask whether they are ready
+    to finish.
     """
     session = user_message.session
     if not session.exercise_id or session.in_pre_exercise_phase():
@@ -452,30 +452,25 @@ def confirm_summary_if_done(user_message) -> ChipOutcome | None:
         return None
     if session.state != Constants.SESSION_STATE_STEP_ACTIVE:
         return None
-    from .summary_confirmation import (
-        is_recorded_summary_confirmation,
-        is_summary_confirmation,
-        structural_summary_reply_confirms,
-    )
-
     previous = _last_agent_message(session, before=user_message)
-    if is_recorded_summary_confirmation(session, previous):
-        if not structural_summary_reply_confirms(user_message.text or ""):
-            return None
-        return _complete_recorded_summary(session, user_message)
-
-    if not structural_summary_reply_confirms(user_message.text or ""):
+    if previous is None or not (previous.text or "").strip():
         return None
     session_step = _live_step(session)
     if session_step is None or session_step.completed:
         return None
-    if not (getattr(session_step.step, "done_when", None) or "").strip():
-        return None
-    if previous is None or not is_summary_confirmation(previous.text or ""):
-        return None
+    from .summary_confirmation import summary_confirmation_required
 
-    from .extraction import check_done_when
+    done_when = (getattr(session_step.step, "done_when", None) or "").strip()
+    if not done_when or not summary_confirmation_required(done_when):
+        return None
+    from .extraction import check_done_when, judge_summary_exchange
 
+    verdict = judge_summary_exchange(
+        question=previous.text or "",
+        reply=user_message.text or "",
+    )
+    if not verdict.get("confirmed"):
+        return None
     try:
         result = check_done_when(session, session_step.step)
     except Exception:

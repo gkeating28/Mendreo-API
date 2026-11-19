@@ -255,6 +255,33 @@ class ReplyStyleTests(SimpleTestCase):
         )
         self.assertIn("time", nxt)
 
+    def test_next_instruction_skips_conditionals_prohibitions_and_writing_rules(self):
+        instructions = (
+            "If the user goes quiet, ask what happened today. "
+            "When they seem ready, summarise what they said. "
+            "Should the user want more detail, offer another example. "
+            "Ask what they notice when asked about the worry. "
+            "Do not ask them to move on yet. "
+            "Don't ask them if they are ready. "
+            "Don\u2019t ask them to start another exercise. "
+            "Your next message must be a question only. "
+            "Offer suggested responses that are short and clear. "
+            "Be warm and ask one clear question. "
+            "Ask what the worry is about today. "
+            "Help them schedule a specific time to work on the plan."
+        )
+        self.assertEqual(
+            next_instruction(instructions, []),
+            "Ask what the worry is about today.",
+        )
+        self.assertEqual(
+            next_instruction(
+                instructions,
+                ["What is the worry that has been on your mind today?"],
+            ),
+            "Help them schedule a specific time to work on the plan.",
+        )
+
     def test_into_practice_is_not_an_extra_technique(self):
         instructions = "Summarise their strategy and ask if they are ready to try it."
         self.assertFalse(
