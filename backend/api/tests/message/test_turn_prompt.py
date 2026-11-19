@@ -298,6 +298,23 @@ class ChatDebugTests(TestCase):
         self.assertIn("<KNOWLEDGE>", response.json["system_prompt"])
         self.assertIn("<RETRIEVED>", response.json["user_prompt"])
 
+    def test_reasoning_is_returned(self):
+        self._debug(True)
+        message, _source = self._assistant()
+        message.reasoning = "because the user named the deadline"
+        message.save(update_fields=["reasoning", "updated_at"])
+        response = self._get(f"/messages/{message.id}/debug", access_token=self.token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["reasoning"], "because the user named the deadline")
+
+    def test_missing_reasoning_is_an_empty_string(self):
+        self._debug(True)
+        message, _source = self._assistant()
+        self.assertIsNone(message.reasoning)
+        response = self._get(f"/messages/{message.id}/debug", access_token=self.token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.json)
+        self.assertEqual(response.json["reasoning"], "")
+
     def test_someone_elses_message_is_not_returned(self):
         self._debug(True)
         message, _source = self._assistant()

@@ -210,6 +210,7 @@ class MessageDebug(SmartAPIView):
             {
                 "message_id": message.id,
                 "model_name": prompt.model_name,
+                "reasoning": message.reasoning or "",
                 "retrieval_enabled": bool(meta.get("retrieval_enabled")),
                 "sections": _tags_present(prompt.system_prompt, _DEBUG_SECTIONS),
                 "user_prompt_sections": {
