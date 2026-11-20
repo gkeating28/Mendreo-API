@@ -49,7 +49,7 @@ def phase_of(session) -> str:
 
 
 def build_session_state(session, completion_card=None) -> dict:
-    from .session_progress import session_progress
+    from .session_progress import prefetched_session_steps, session_progress
 
     progress = session_progress(session)
     phase = phase_of(session)
@@ -69,7 +69,12 @@ def build_session_state(session, completion_card=None) -> dict:
 
     steps = []
     current = 0 if progress.current_step_no is None else progress.current_step_no
-    for session_step in session.session_steps.select_related("step").order_by("order"):
+    # A prefetched list already joined step. Anything else, including a chat
+    # turn, keeps the fresh query.
+    session_steps = prefetched_session_steps(session)
+    if session_steps is None:
+        session_steps = session.session_steps.select_related("step").order_by("order")
+    for session_step in session_steps:
         number = session_step.order + 1
         if session_step.completed:
             status = "completed"
