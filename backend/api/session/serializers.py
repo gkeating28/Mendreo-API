@@ -1,3 +1,4 @@
+from django.db.models import Prefetch
 from rest_framework import serializers
 
 from .models import Session, SessionStep
@@ -88,8 +89,14 @@ class SessionListSerializer(ListModelSerializer):
     @classmethod
     def get_prefetch_related_fields(cls):
         # List uses ExerciseListSerializer (no steps/questions) — do not prefetch them.
-        # session_steps feeds session_progress without a query per row.
-        return ["session_steps"]
+        # One steps query for the page, with step joined and ordered. Readers
+        # use this cache; a session loaded without it still queries.
+        return [
+            Prefetch(
+                "session_steps",
+                queryset=SessionStep.objects.select_related("step").order_by("order"),
+            )
+        ]
 
     def get_exercise(self, session):
 

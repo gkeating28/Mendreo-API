@@ -12,6 +12,20 @@ class SessionProgress:
     current_step_no: int | None
 
 
+def prefetched_session_steps(session):
+    """Steps already loaded on this instance, in ``order``.
+
+    Returns None when ``session_steps`` was not prefetched. Callers then run
+    their own query, so a chat turn or a freshly loaded session still sees
+    the current rows. The returned list is a copy; the prefetch cache is left
+    as it was loaded for this request.
+    """
+    cache = getattr(session, "_prefetched_objects_cache", None)
+    if not cache or "session_steps" not in cache:
+        return None
+    return sorted(cache["session_steps"], key=lambda step: step.order)
+
+
 def session_progress(session) -> SessionProgress:
     """Progress for one session, from its SessionStep rows.
 
@@ -21,7 +35,9 @@ def session_progress(session) -> SessionProgress:
     1-based open step after that, and total_steps + 1 when the run is
     finished. A general chat keeps the stored current_step_no (null).
     """
-    steps = list(session.session_steps.all())
+    steps = prefetched_session_steps(session)
+    if steps is None:
+        steps = list(session.session_steps.all())
     completed_steps = sum(1 for step in steps if step.completed)
     if steps:
         total_steps = len(steps)
