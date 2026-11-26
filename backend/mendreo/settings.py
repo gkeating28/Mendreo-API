@@ -314,6 +314,16 @@ EXERCISE_STEP_GUIDE_NEXT_INSTRUCTION = os.environ.get(
 EXERCISE_HINT_RESTATES_INSTRUCTIONS = os.environ.get(
     'EXERCISE_HINT_RESTATES_INSTRUCTIONS', ''
 ).lower() in ('true', '1', 'yes')
+# When true, the app asks the end-of-step readiness question after the done-when
+# check accepts the step. Off leaves the model free to ask that question itself.
+EXERCISE_CODE_OWNS_READINESS = os.environ.get(
+    'EXERCISE_CODE_OWNS_READINESS', ''
+).lower() in ('true', '1', 'yes')
+# Comma-separated exercise ids. Used only when EXERCISE_CODE_OWNS_READINESS is
+# off, so one exercise can pilot the code-owned question. Empty means none.
+EXERCISE_CODE_OWNS_READINESS_EXERCISE_IDS = os.environ.get(
+    'EXERCISE_CODE_OWNS_READINESS_EXERCISE_IDS', ''
+)
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
 
 # ElevenLabs Conversational AI (Custom LLM). Server-only — never ship to clients.
