@@ -172,7 +172,10 @@ def _transcript_entry(message: Message) -> dict | None:
     if not text:
         return None
     role = "user" if not _is_guide(message) else "guide"
-    return {"role": role, "text": text}
+    entry = {"role": role, "text": text}
+    if role == "guide":
+        entry["id"] = message.id
+    return entry
 
 
 def iter_placed_transcript_steps(messages, *, check_in_completed_at=None):

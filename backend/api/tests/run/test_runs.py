@@ -19,9 +19,10 @@ def _at(minute: int):
     return datetime(2026, 9, 25, 11, minute, tzinfo=dt_timezone.utc)
 
 
-def _chat(text, *, minute, guide=True, label=""):
+def _chat(text, *, minute, guide=True, label="", id="msg_guide"):
     sender = SimpleNamespace(consumer_id=None if guide else "user")
     return SimpleNamespace(
+        id=id,
         text=text,
         created_at=_at(minute),
         sender=sender,
@@ -39,14 +40,19 @@ class RunServicesImportTests(SimpleTestCase):
         check_in = _chat("Welcome back.", minute=0)
         thread = [
             check_in,
-            _chat("What is the worry?", minute=2),
-            _chat("Getting fired", minute=3, guide=False),
-            _chat("Are you ready to continue?", minute=5, label="You have described it"),
-            _chat("Yes, I'm ready", minute=6, guide=False),
-            _chat("What time of day?", minute=7),
-            _chat("Mornings", minute=8, guide=False),
-            _chat("Ready to finish?", minute=9, label="The plan is set"),
-            _chat("Finish exercise", minute=10, guide=False),
+            _chat("What is the worry?", minute=2, id="msg_worry"),
+            _chat("Getting fired", minute=3, guide=False, id="msg_fired"),
+            _chat(
+                "Are you ready to continue?",
+                minute=5,
+                label="You have described it",
+                id="msg_ready",
+            ),
+            _chat("Yes, I'm ready", minute=6, guide=False, id="msg_yes"),
+            _chat("What time of day?", minute=7, id="msg_time"),
+            _chat("Mornings", minute=8, guide=False, id="msg_mornings"),
+            _chat("Ready to finish?", minute=9, label="The plan is set", id="msg_finish"),
+            _chat("Finish exercise", minute=10, guide=False, id="msg_done"),
         ]
         buckets = run_services._transcript_buckets(
             thread,
@@ -72,6 +78,21 @@ class RunServicesImportTests(SimpleTestCase):
         )
         self.assertNotIn(3, buckets)
         self.assertNotIn("Welcome back.", [item["text"] for item in buckets[1]])
+        self.assertEqual(
+            [item["id"] for item in buckets[1] if item["role"] == "guide"],
+            ["msg_worry", "msg_ready"],
+        )
+        self.assertEqual(
+            [item["id"] for item in buckets[2] if item["role"] == "guide"],
+            ["msg_time", "msg_finish"],
+        )
+        for bucket in buckets.values():
+            for item in bucket:
+                self.assertEqual(set(item) - {"id"}, {"role", "text"})
+                if item["role"] == "user":
+                    self.assertNotIn("id", item)
+                else:
+                    self.assertIn("id", item)
 
 
 class ReflectRunApiTests(BaseTest):
@@ -126,7 +147,15 @@ class ReflectRunApiTests(BaseTest):
             access_token=self.consumer_one_access_token,
         )
         self.assertEqual(detail.status_code, status.HTTP_200_OK, detail.json)
-        self.assertGreaterEqual(len(detail.json["steps"][0]["transcript"]), 1)
+        transcript = detail.json["steps"][0]["transcript"]
+        self.assertGreaterEqual(len(transcript), 1)
+        guide_message = Message.objects.get(session=session, text="What's the worry?")
+        guide = next(item for item in transcript if item["role"] == "guide")
+        user = next(item for item in transcript if item["role"] == "user")
+        self.assertEqual(guide["id"], guide_message.id)
+        self.assertEqual(guide["text"], "What's the worry?")
+        self.assertEqual(set(guide), {"role", "text", "id"})
+        self.assertEqual(set(user), {"role", "text"})
 
         step_id = detail.json["steps"][0]["stepId"]
         saved = TestCase._put(
