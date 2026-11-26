@@ -24,7 +24,7 @@ from ..utils.Serializers import (
 
 from ..utils import Constants
 from ..utils import Duplicate
-from ..utils.authoring import published_use_when_error
+from ..utils.authoring import published_use_when_error, step_field_errors
 
 
 class ExerciseCreateSerializer(CreateModelSerializer):
@@ -171,6 +171,7 @@ class ExerciseEditSerializer(EditModelSerializer):
         attrs = steps_validation(self, attrs)
         attrs = pre_exercise_validation(self, attrs)
         attrs = use_when_validation(self, attrs)
+        attrs = stored_step_wording_validation(self, attrs)
         return attrs
 
     def post_update(self, model, nested_relations):
@@ -267,6 +268,37 @@ def steps_validation(serializer, attrs) -> dict:
 
     attrs["steps_no"] = len(steps)
 
+    return attrs
+
+
+def stored_step_wording_validation(serializer, attrs):
+    """Check stored steps when a publish payload omits steps."""
+    initial = getattr(serializer, "initial_data", None) or {}
+    if "steps" in initial:
+        return attrs
+    status_ = _resolved_pre_exercise_value(serializer, attrs, "status")
+    published = Constants.EXERCISE_STATUS_PUBLISHED
+    if status_ != published or serializer.instance is None:
+        return attrs
+
+    errors = []
+    found = False
+    steps = serializer.instance.steps.all().order_by("order", "id")
+    for step in steps:
+        step_errors = step_field_errors({
+            "instructions": step.instructions or "",
+            "done_when": step.done_when or "",
+            "completion_prompt": step.completion_prompt or "",
+            "result_field": step.result_field_id,
+            "average_duration": step.average_duration,
+        })
+        # Match the list shape nested step validation returns.
+        listed = {field: [message] for field, message in step_errors.items()}
+        if listed:
+            found = True
+        errors.append(listed)
+    if found:
+        raise serializers.ValidationError({"steps": errors})
     return attrs
 
 
