@@ -34,11 +34,22 @@ NOT_THE_LAST_STEP_HINT = (
     "If this step's work is done, ask only whether they are ready for the next step. "
     "Otherwise ask this step's next question."
 )
+NOT_THE_LAST_STEP_HINT_CODE = (
+    "This is not the last step. Do not talk about finishing, wrapping up or ending the exercise. "
+    "If this step's work is done, set step_goal_met. Do not ask whether they are ready for the next step. "
+    "Otherwise ask this step's next question."
+)
 LAST_STEP_HINT = (
     "This is the last step. Do not talk about moving on or a next step. "
     "If {name} has not yet confirmed your summary, summarise their decisions "
     "and their alternative action in their own words and ask if you have it right. "
     "If they have confirmed it, ask only whether they are ready to finish the exercise."
+)
+LAST_STEP_HINT_CODE = (
+    "This is the last step. Do not talk about moving on or a next step. "
+    "If {name} has not yet confirmed your summary, summarise their decisions "
+    "and their alternative action in their own words and ask if you have it right. "
+    "If they have confirmed it, set step_goal_met. Do not ask whether they are ready to finish."
 )
 ON_STEP_FALLBACK = (
     "Let's stay with this step. What else can you tell me about it?"
@@ -335,8 +346,20 @@ def _client_blocks_are_new(session) -> bool:
     return summary_new and knowledge_new and context_new
 
 
+def not_the_last_step_hint(session) -> str:
+    """Retry steer. The code-owned variant does not tell Toni to ask readiness."""
+    from .SessionStateMachine import code_owns_readiness
+
+    if code_owns_readiness(session):
+        return NOT_THE_LAST_STEP_HINT_CODE
+    return NOT_THE_LAST_STEP_HINT
+
+
 def last_step_hint(session) -> str:
-    return LAST_STEP_HINT.format(name=_client_first_name(session))
+    from .SessionStateMachine import code_owns_readiness
+
+    template = LAST_STEP_HINT_CODE if code_owns_readiness(session) else LAST_STEP_HINT
+    return template.format(name=_client_first_name(session))
 
 
 def _client_first_name(session) -> str:

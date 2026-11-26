@@ -738,8 +738,8 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
         )
         if left or ending or moving:
             from .turn_hint import (
-                NOT_THE_LAST_STEP_HINT,
                 last_step_hint,
+                not_the_last_step_hint,
             )
 
             logger.warning(
@@ -748,7 +748,7 @@ def get_response(session: Session, consumer_message: Message) -> (GeneralRespons
                 getattr(consumer_message, "id", None),
             )
             if ending:
-                steer[0] = NOT_THE_LAST_STEP_HINT
+                steer[0] = not_the_last_step_hint(session)
             elif moving:
                 steer[0] = last_step_hint(session)
             else:
@@ -915,6 +915,11 @@ _STATE_MACHINE_PROGRESSION = (
     "message a single question.\n"
     "        - Do not complete the step yourself. The app shows the readiness chips.\n"
 )
+_STATE_MACHINE_PROGRESSION_CODE = (
+    "        - Set step_goal_met when the step's work is done. Do not ask whether they "
+    "are ready. The app asks that question and shows the readiness chips.\n"
+    "        - Do not complete the step yourself.\n"
+)
 DESCRIPTION_PREFIX = (
     "Clinical background only. Do not read this to the user, "
     "and do not turn it into a welcome or a suitability check.\n\n"
@@ -960,12 +965,57 @@ def _state_machine_enabled() -> bool:
     return True
 
 
-def _state_machine_progression(prompt: str) -> str:
+def _state_machine_progression(prompt: str, *, code_owns: bool = False) -> str:
     start = prompt.find(_PROGRESSION_START)
     end = prompt.find("    </PROGRAMMING_INSTRUCTIONS>")
     if start == -1 or end == -1 or end < start:
         return prompt
-    return prompt[:start] + _STATE_MACHINE_PROGRESSION + prompt[end:]
+    block = _STATE_MACHINE_PROGRESSION_CODE if code_owns else _STATE_MACHINE_PROGRESSION
+    return prompt[:start] + block + prompt[end:]
+
+
+def step_scope_rules(*, code_owns: bool) -> str:
+    """Live-step scope. The code-owned variant reports step_goal_met and does not ask."""
+    if not code_owns:
+        return STEP_SCOPE_RULES
+    text = STEP_SCOPE_RULES.replace(
+        "After they confirm, you may ask whether they are ready for the next step. ",
+        "After they confirm, set step_goal_met. Do not ask whether they are ready. "
+        "The app asks that question. ",
+        1,
+    )
+    return text.replace(
+        "Only ask whether they are ready for the next step when every part of Done when is covered. "
+        "If a part is not covered yet, continue with this step's instructions for it. "
+        "Ask whether they are ready for the next step only once, and make it the only question in that message. ",
+        "Once every part of Done when is covered, set step_goal_met. "
+        "Do not ask whether they are ready for the next step or to finish. "
+        "The app asks that question. "
+        "If a part is not covered yet, continue with this step's instructions for it. ",
+        1,
+    )
+
+
+def _readiness_done_when_appendix(*, last_step: bool, code_owns: bool) -> str:
+    if code_owns and last_step:
+        return (
+            "\n\nWhen this step's work is done, set step_goal_met. "
+            "Do not ask whether they are ready to finish. The app asks that question."
+        )
+    if code_owns:
+        return (
+            "\n\nWhen this step's work is done, set step_goal_met. "
+            "Do not ask whether they are ready for the next step. The app asks that question."
+        )
+    if last_step:
+        return (
+            "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+            "on a message whose only question is whether they are ready to finish."
+        )
+    return (
+        "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
+        "on a message whose only question is whether they are ready for the next step."
+    )
 
 
 def _register_tools(agent: Agent[Dependencies, BaseModel], session=None) -> None:
@@ -1367,6 +1417,9 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     cached = session.cached_prompt
     prompt_phase = _prompt_phase(session)
     meta = dict(session.cached_prompt_meta or {})
+    from .SessionStateMachine import code_owns_readiness
+
+    owns_readiness = code_owns_readiness(session)
     bare_opening = _session_is_bare_opening(session)
     step_has_reply = _live_step_has_agent_reply(session)
     source_block = _source_run_background(session)
@@ -1459,14 +1512,25 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         )
         step_live = bool(session.exercise_id) and not session.in_pre_exercise_phase()
         stale_listen = step_live and "simply listen and invite reflection" in cached
-        stale_step_rules = step_live and (
-            "Done when lists what this step needs." not in cached
-            or "Only ask whether they are ready for the next step when every part of Done when is covered."
-            not in cached
-            or "Ask whether they are ready for the next step only once, and make it the only question in that message."
-            not in cached
-            or "Once a summary has been confirmed, do not summarise again." not in cached
-            or "Do not repeat a question the user has already answered." not in cached
+        if owns_readiness:
+            stale_step_rules = step_live and (
+                "Do not ask whether they are ready." not in cached
+                or "The app asks that question." not in cached
+                or "Once a summary has been confirmed, do not summarise again." not in cached
+                or "Do not repeat a question the user has already answered." not in cached
+            )
+        else:
+            stale_step_rules = step_live and (
+                "Done when lists what this step needs." not in cached
+                or "Only ask whether they are ready for the next step when every part of Done when is covered."
+                not in cached
+                or "Ask whether they are ready for the next step only once, and make it the only question in that message."
+                not in cached
+                or "Once a summary has been confirmed, do not summarise again." not in cached
+                or "Do not repeat a question the user has already answered." not in cached
+            )
+        stale_code_readiness = step_live and (
+            bool(meta.get("code_owns_readiness")) != owns_readiness
         )
         wants_first_sentence = step_live and not step_has_reply
         stale_first_message = step_live and (
@@ -1503,6 +1567,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
             stale_pending_outline,
             stale_first_message,
             stale_restate,
+            stale_code_readiness,
         )):
             return cached
         session.cached_prompt = None
@@ -1589,11 +1654,16 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
                     live_steps_no,
                     bare_opening=bare_opening,
                     step_started=step_has_reply,
+                    code_owns=owns_readiness,
                 ) + exercise_steps
                 completed_steps = _completed_steps_block(session)
             else:
                 exercise_steps = _get_formatted_exercise_steps_text(
-                    exercise, token_context, only_index=only_index, steps=steps
+                    exercise,
+                    token_context,
+                    only_index=only_index,
+                    steps=steps,
+                    code_owns=owns_readiness,
                 )
             exercise_extra = {
                 "exercise_id": exercise.id,
@@ -1675,7 +1745,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
         **exercise_extra,
     )
     if exercise and _state_machine_enabled():
-        prompt = _state_machine_progression(prompt)
+        prompt = _state_machine_progression(prompt, code_owns=owns_readiness)
 
     from .pending_question import assign_pending_question
 
@@ -1691,6 +1761,7 @@ def _prepare_prompt(session: Session, *, steps=None, create_summary: bool = True
     meta["retrieval_instruction"] = retrieval_on
     meta["bare_opening"] = bare_opening
     meta["restate_step_instructions"] = _restate_step_instructions_enabled()
+    meta["code_owns_readiness"] = owns_readiness
     meta["source_run_block"] = source_block
     if _general_chat_offers_enabled(session):
         meta["exercise_offers_block"] = offer_block
@@ -1867,8 +1938,9 @@ def _step_already_started(
     *,
     bare_opening: bool = False,
     step_started: bool = False,
+    code_owns: bool = False,
 ) -> str:
-    scope = STEP_SCOPE_RULES
+    scope = step_scope_rules(code_owns=code_owns)
     if step_started:
         scope = scope.replace(_FIRST_MESSAGE_SENTENCE, "", 1)
     if bare_opening and step_no <= 1:
@@ -1911,16 +1983,12 @@ def _render_state_machine_steps(exercise, session, token_context, live_index, st
             )
             continue
         completion = resolve_tokens(step.done_when or "", context)
-        if i < steps_no - 1:
-            completion += (
-                "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
-                "on a message whose only question is whether they are ready for the next step."
-            )
-        else:
-            completion += (
-                "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
-                "on a message whose only question is whether they are ready to finish."
-            )
+        from .SessionStateMachine import code_owns_readiness
+
+        completion += _readiness_done_when_appendix(
+            last_step=i >= steps_no - 1,
+            code_owns=code_owns_readiness(session),
+        )
         from .summary_confirmation import summary_confirmation_rule
 
         completion += summary_confirmation_rule(step.done_when or "")
@@ -1974,7 +2042,9 @@ def _completed_steps_block(session) -> str:
     return "\n".join(parts)
 
 
-def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=None, steps=None):
+def _get_formatted_exercise_steps_text(
+    exercise, token_context=None, only_index=None, steps=None, *, code_owns: bool = False
+):
     from .prompt_blocks import resolve_tokens
 
     context = token_context or {}
@@ -1988,16 +2058,10 @@ def _get_formatted_exercise_steps_text(exercise, token_context=None, only_index=
         description = resolve_tokens(step.description, context)
         instructions = resolve_tokens(step.instructions, context)
         if _state_machine_enabled():
-            if i < steps_no - 1:
-                completion_criteria += (
-                    "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
-                    "on a message whose only question is whether they are ready for the next step."
-                )
-            else:
-                completion_criteria += (
-                    "\n\nWhen this step's work is done, set step_goal_met and asks_readiness "
-                    "on a message whose only question is whether they are ready to finish."
-                )
+            completion_criteria += _readiness_done_when_appendix(
+                last_step=i >= steps_no - 1,
+                code_owns=code_owns,
+            )
         elif i < steps_no - 1:
             completion_criteria += (
                 "\n\nAfter this step's work is finished, send a SEPARATE message whose ONLY "

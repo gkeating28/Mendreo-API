@@ -25,6 +25,44 @@ def enabled() -> bool:
     return True
 
 
+CODE_READY_NEXT_STEP = "Are you ready for the next step?"
+CODE_READY_FINISH = "Are you ready to finish?"
+_STRIPPED_READINESS_FALLBACK = "Let's stay with this step."
+_OWNED_READINESS_EXTRA = re.compile(
+    r"ready for (?:the summary|me to summari[sz]e)\b",
+    re.IGNORECASE,
+)
+
+
+def code_owns_readiness(session) -> bool:
+    """True when this exercise's readiness question is written by the app.
+
+    The main flag covers every exercise. The id list applies only while that
+    flag is off. Both unset keeps the model free to ask.
+    """
+    from django.conf import settings
+
+    if getattr(settings, "EXERCISE_CODE_OWNS_READINESS", False):
+        return True
+    raw = getattr(settings, "EXERCISE_CODE_OWNS_READINESS_EXERCISE_IDS", "") or ""
+    exercise_id = getattr(session, "exercise_id", None)
+    if exercise_id is None or not str(raw).strip():
+        return False
+    allowed = {part.strip().lower() for part in str(raw).split(",") if part.strip()}
+    return str(exercise_id).lower() in allowed
+
+
+def readiness_path(session) -> tuple[str, str]:
+    """Owner and reason for the readiness log line."""
+    from django.conf import settings
+
+    if getattr(settings, "EXERCISE_CODE_OWNS_READINESS", False):
+        return "code", "flag"
+    if code_owns_readiness(session):
+        return "code", "allow_list"
+    return "model", "off"
+
+
 @dataclass
 class ChipOutcome:
     message: object
@@ -181,6 +219,7 @@ def on_model_turn(session, agent_message, response) -> None:
 
     mark_expected_summary_question(session, agent_message)
     if _keep_ready_gate(session, agent_message):
+        _log_readiness_path(session, "left")
         return
 
     model_goal = bool(getattr(response, "step_goal_met", False))
@@ -191,6 +230,8 @@ def on_model_turn(session, agent_message, response) -> None:
     accepted_goal = goal_met
     session._step_check_result = None
     session._step_goal_hint_written = None
+    code_owns = code_owns_readiness(session)
+    readiness_action = "left"
     try:
         if session.state == Constants.SESSION_STATE_CHECK_IN:
             session.state = Constants.SESSION_STATE_STEP_ACTIVE
@@ -211,16 +252,27 @@ def on_model_turn(session, agent_message, response) -> None:
                 asks = False
                 accepted_goal = False
 
-        if (
-            session_step is not None
-            and session_step.goal_met_at is not None
-            and _is_last_step(session)
-        ):
-            _enter_awaiting_ready(session, agent_message, session_step)
+        accepted_now = (
+            session_step is not None and session_step.goal_met_at is not None
+        )
+        if accepted_now and _is_last_step(session):
+            if _enter_awaiting_ready(
+                session, agent_message, session_step, own_sentence=code_owns
+            ):
+                readiness_action = "appended"
+            return
+
+        if code_owns and accepted_now:
+            if _enter_awaiting_ready(
+                session, agent_message, session_step, own_sentence=True
+            ):
+                readiness_action = "appended"
             return
 
         if not asks or session_step is None or session_step.goal_met_at is None:
             _drop_unaccepted_ready_chips(agent_message, text)
+            if code_owns and _strip_unaccepted_readiness(agent_message):
+                readiness_action = "stripped"
             return
 
         _enter_awaiting_ready(session, agent_message, session_step)
@@ -233,6 +285,7 @@ def on_model_turn(session, agent_message, response) -> None:
             inferred_asks=inferred_asks,
             accepted_goal=accepted_goal,
             accepted_asks=asks,
+            readiness_action=readiness_action,
         )
 
 
@@ -1165,6 +1218,18 @@ def _remember_check_result(session, result) -> None:
     session._step_check_result = recorded
 
 
+def _log_readiness_path(session, action: str) -> None:
+    owner, reason = readiness_path(session)
+    logger.info(
+        "readiness_path exercise_id=%s session=%s owner=%s reason=%s action=%s",
+        getattr(session, "exercise_id", None),
+        getattr(session, "id", None),
+        owner,
+        reason,
+        action,
+    )
+
+
 def _record_step_decision(
     session,
     agent_message,
@@ -1174,8 +1239,11 @@ def _record_step_decision(
     inferred_asks: bool,
     accepted_goal: bool,
     accepted_asks: bool,
+    readiness_action: str = "left",
 ) -> None:
     """Store this reply's step outcome on Message.usage. Other usage keys stay put."""
+    owner, reason = readiness_path(session)
+    _log_readiness_path(session, readiness_action)
     if agent_message is None or not getattr(agent_message, "pk", None):
         return
     usage = agent_message.usage if isinstance(agent_message.usage, dict) else {}
@@ -1193,6 +1261,9 @@ def _record_step_decision(
         },
         "check_done_when": getattr(session, "_step_check_result", None),
         "goal_hint": getattr(session, "_step_goal_hint_written", None),
+        "readiness_owner": owner,
+        "readiness_reason": reason,
+        "readiness_action": readiness_action,
     }
     agent_message.usage = usage
     agent_message.save(update_fields=["usage", "updated_at"])
@@ -1275,7 +1346,85 @@ def _keep_ready_gate(session, agent_message) -> bool:
     return True
 
 
-def _enter_awaiting_ready(session, agent_message, session_step) -> None:
+def _sentence_parts(text: str) -> list[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in re.split(r"(?<=[.!])\s+", raw) if part.strip()]
+
+
+def closing_readiness_question(text: str) -> bool:
+    """True when the reply's last sentence is an end-of-step readiness question.
+
+    A summary-confirmation ask stays. "Are you ready to proceed?" stays: that
+    wording is still inside the Think Flexibly step.
+    """
+    from .summary_confirmation import is_summary_confirmation
+
+    if is_summary_confirmation(text or ""):
+        return False
+    parts = _sentence_parts(text)
+    closing = parts[-1] if parts else ""
+    if not closing.endswith("?"):
+        return False
+    from .StepProgress import is_advance_gate_text
+
+    if is_advance_gate_text(closing):
+        return True
+    if _INFERRED_READINESS.search(closing):
+        return True
+    return bool(_OWNED_READINESS_EXTRA.search(closing))
+
+
+def _without_closing_sentence(text: str) -> str:
+    parts = _sentence_parts(text)
+    if len(parts) <= 1:
+        return ""
+    return " ".join(parts[:-1]).strip()
+
+
+def _owned_readiness_sentence(session) -> str:
+    if _is_last_step(session):
+        return CODE_READY_FINISH
+    return CODE_READY_NEXT_STEP
+
+
+def _with_owned_readiness_sentence(session, text: str) -> str:
+    """One fixed question. An accepted readiness question is replaced, not repeated."""
+    sentence = _owned_readiness_sentence(session)
+    body = (text or "").strip()
+    if closing_readiness_question(body):
+        body = _without_closing_sentence(body)
+    if not body:
+        return sentence
+    if body.endswith(sentence):
+        return body
+    if body[-1] not in ".!?":
+        body += "."
+    return f"{body} {sentence}"
+
+
+def _strip_unaccepted_readiness(agent_message) -> bool:
+    """Remove a closing readiness question the check did not accept."""
+    text = agent_message.text or ""
+    if not closing_readiness_question(text):
+        return False
+    body = _without_closing_sentence(text)
+    agent_message.text = body if body else _STRIPPED_READINESS_FALLBACK
+    fields = ["text", "updated_at"]
+    if agent_message.question_kind == Constants.QUESTION_KIND_READINESS:
+        agent_message.question_kind = Constants.QUESTION_KIND_OPEN
+        fields.append("question_kind")
+    if agent_message.suggested_responses:
+        agent_message.suggested_responses = []
+        fields.append("suggested_responses")
+    agent_message.save(update_fields=fields)
+    return True
+
+
+def _enter_awaiting_ready(
+    session, agent_message, session_step, *, own_sentence: bool = False
+) -> str | None:
     last = _is_last_step(session)
     if last:
         chips = [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET]
@@ -1287,16 +1436,23 @@ def _enter_awaiting_ready(session, agent_message, session_step) -> None:
     agent_message.suggested_responses = chips
     agent_message.suggested_responses_kind = kind
     agent_message.question_kind = Constants.QUESTION_KIND_READINESS
-    agent_message.save(
-        update_fields=[
-            "suggested_responses",
-            "suggested_responses_kind",
-            "question_kind",
-            "updated_at",
-        ]
-    )
+    fields = [
+        "suggested_responses",
+        "suggested_responses_kind",
+        "question_kind",
+        "updated_at",
+    ]
+    action = None
+    if own_sentence:
+        agent_message.text = _with_owned_readiness_sentence(
+            session, agent_message.text or ""
+        )
+        fields.append("text")
+        action = "appended"
+    agent_message.save(update_fields=fields)
     session.state = Constants.SESSION_STATE_AWAITING_READY
     session.save(update_fields=["state", "updated_at"])
+    return action
 
 
 def _live_step(session):
