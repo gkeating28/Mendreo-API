@@ -243,7 +243,8 @@ def on_model_turn(session, agent_message, response) -> None:
             asks = True
             inferred_asks = True
         # A question is still waiting for the user's answer, so the goal is not met yet.
-        if text.endswith("?") and not asks:
+        # Code-owned readiness still runs the done-when check. The app appends the question.
+        if text.endswith("?") and not asks and not code_owns:
             goal_met = False
 
         accepted_goal = goal_met

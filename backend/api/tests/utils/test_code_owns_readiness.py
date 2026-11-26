@@ -27,6 +27,7 @@ from ...utils.SessionStateMachine import (
     _STRIPPED_READINESS_FALLBACK,
     code_owns_readiness,
     confirm_readiness_reply,
+    consume_chip,
     handle_typed_while_awaiting,
     on_model_turn,
     readiness_path,
@@ -385,6 +386,144 @@ class CodeOwnsReadinessTests(BaseTest):
         self.assertEqual(passed.current_step_no, 2)
         self.assertTrue(passed.session_steps.get(order=0).completed)
         self.assertFalse(passed.session_steps.get(order=1).completed)
+
+    REFLECT_QUESTION = "You've named the worry. Is there anything you'd like to reflect on?"
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=True)
+    def test_a_trailing_question_still_checks_and_appends_on_the_last_step(self):
+        session = self._session(self._exercise(steps=1))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            message.text, f"{self.REFLECT_QUESTION} {CODE_READY_FINISH}"
+        )
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_FINISH, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertIsNotNone(session.session_steps.get(order=0).goal_met_at)
+        decision = message.usage["step_decision"]
+        self.assertEqual(decision["model"], {"step_goal_met": True, "asks_readiness": False})
+        self.assertTrue(decision["accepted"]["step_goal_met"])
+        self.assertEqual(decision["check_done_when"], {"met": True, "missing": ""})
+        self.assertEqual(decision["readiness_action"], "appended")
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=True)
+    def test_a_trailing_question_still_checks_and_appends_on_a_middle_step(self):
+        session = self._session(self._exercise(steps=2))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(
+            message.text, f"{self.REFLECT_QUESTION} {CODE_READY_NEXT_STEP}"
+        )
+        self.assertEqual(
+            message.suggested_responses,
+            [Constants.CHIP_READY_YES, Constants.CHIP_NOT_YET],
+        )
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertIsNotNone(session.session_steps.get(order=0).goal_met_at)
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=True)
+    def test_a_trailing_question_is_kept_when_the_check_fails(self):
+        session = self._session(self._exercise(steps=1))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": False, "missing": "the situation"},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(message.text, self.REFLECT_QUESTION)
+        self.assertNotIn(CODE_READY_FINISH, message.text)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        decision = message.usage["step_decision"]
+        self.assertFalse(decision["accepted"]["step_goal_met"])
+        self.assertEqual(
+            decision["check_done_when"], {"met": False, "missing": "the situation"}
+        )
+        self.assertEqual(decision["readiness_action"], "left")
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=True)
+    def test_a_trailing_question_waits_when_the_summary_is_not_confirmed(self):
+        done = "The user confirmed the summary is accurate."
+        session = self._session(self._exercise(steps=1, done_when=done))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ) as checker:
+            on_model_turn(session, message, response)
+        checker.assert_called_once()
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(message.text, self.REFLECT_QUESTION)
+        self.assertNotIn(CODE_READY_FINISH, message.text)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=False)
+    def test_a_trailing_question_still_blocks_the_goal_when_code_does_not_own_readiness(self):
+        session = self._session(self._exercise(steps=1))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch("api.utils.extraction.check_done_when") as checker:
+            on_model_turn(session, message, response)
+        checker.assert_not_called()
+        message.refresh_from_db()
+        session.refresh_from_db()
+        self.assertEqual(message.text, self.REFLECT_QUESTION)
+        self.assertEqual(message.suggested_responses, [])
+        self.assertEqual(session.state, Constants.SESSION_STATE_STEP_ACTIVE)
+        self.assertIsNone(session.session_steps.get(order=0).goal_met_at)
+        decision = message.usage["step_decision"]
+        self.assertFalse(decision["accepted"]["step_goal_met"])
+        self.assertIsNone(decision["check_done_when"])
+        self.assertEqual(decision["readiness_action"], "left")
+
+    @override_settings(EXERCISE_CODE_OWNS_READINESS=True)
+    def test_not_yet_after_the_appended_question_stays_on_the_step(self):
+        session = self._session(self._exercise(steps=1))
+        message, response = self._agent(session, self.REFLECT_QUESTION, asks=False)
+        with patch(
+            "api.utils.extraction.check_done_when",
+            return_value={"met": True, "missing": ""},
+        ):
+            on_model_turn(session, message, response)
+        message.refresh_from_db()
+        self.assertTrue(message.text.endswith(CODE_READY_FINISH))
+        user_message = self._user(session, Constants.CHIP_NOT_YET)
+        with patch(
+            "api.message.views.dispatch_chat_reply",
+            return_value=(message, False),
+        ) as chat:
+            outcome = consume_chip(user_message, True)
+        self.assertIsNotNone(outcome)
+        chat.assert_called_once()
+        session.refresh_from_db()
+        self.assertEqual(session.state, Constants.SESSION_STATE_AWAITING_READY)
+        self.assertEqual(session.current_step_no, 1)
+        self.assertFalse(session.session_steps.get(order=0).completed)
+        self.assertTrue((session.cached_prompt_meta or {}).get("not_ready_keep_gate"))
 
     def test_allow_list_selects_one_exercise(self):
         chosen = self._exercise(steps=2)
