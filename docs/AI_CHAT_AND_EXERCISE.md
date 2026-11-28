@@ -108,9 +108,9 @@ Admin edits `general_prompt` and `therapeutic_prompt` via `GET/POST /settings`. 
 | Prior runs of this exercise | `ExerciseSummary.detailed` | Indirect (summarizer) |
 | Output-field instructions (`text` must be second person, chips must be answers not questions, when `is_step_complete` may be true) | Pydantic `Field(description=…)` on `GeneralResponse` / `ExerciseResponse` | No |
 
-`PROMPT_PROGRAMMING_INSTRUCTIONS` still contains `{today_date}` and `{user_name}` brace tokens. Those live *inside* the substituted string, so they are **not** filled by `str.format` on the template. The template *does* fill `{user_name}` in `<CLIENT_SUMMARY>` and the chat triage block. `{today_date}` is passed into `format()` but is not referenced by either template file.
+`{user_name}` inside `PROMPT_PROGRAMMING_INSTRUCTIONS` is filled before the template is rendered. The model sees the account first name, or `there` when that name is empty. `{user_name}` in the client-knowledge setting is replaced the same way. `{today_date}` is not in the programming text. Both `general_prompt.txt` and `exercise_prompt.txt` contain it in the `<DATE>` block, and the template fill replaces it with the local date.
 
-The programming text also mentions `<FEEDBACK>` and `<ASSETS>` sections that are **not** present in the templates.
+The programming text does not mention `<FEEDBACK>` or `<ASSETS>`. Neither template has those sections.
 
 ### 3.2 Prompt cache
 
